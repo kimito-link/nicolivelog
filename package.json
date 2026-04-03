@@ -13,6 +13,10 @@
     "build": "esbuild src/extension/page-intercept-entry.js --bundle --outfile=extension/dist/page-intercept.js --format=iife --platform=browser --target=chrome111 && esbuild src/extension/content-entry.js --bundle --outfile=extension/dist/content.js --format=iife --platform=browser --target=chrome100 && esbuild src/extension/popup-entry.js --bundle --outfile=extension/dist/popup.js --format=iife --platform=browser --target=chrome100",
     "build:watch": "node scripts/build-watch.mjs",
     "test:e2e": "npm run build && node scripts/run-e2e.mjs",
+    "test:e2e:headed": "npm run build && node scripts/run-e2e.mjs --headed",
+    "test:e2e:smoke": "npm run build && node scripts/run-e2e.mjs --headed tests/e2e/smoke.spec.js",
+    "test:e2e:monkey": "npm run build && node scripts/run-e2e.mjs --headed tests/e2e/popup-monkey.spec.js",
+    "test:e2e:ui": "npm run build && npx playwright test --ui",
     "test:e2e:ci": "npx playwright test",
     "playwright:install": "playwright install chromium"
   },
