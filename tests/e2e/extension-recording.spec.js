@@ -17,12 +17,11 @@ test.describe('拡張機能（モック watch）', () => {
       'chrome-extension://'
     );
 
-    await sw.evaluate(async () => {
-      await chrome.storage.local.set({
-        nls_recording_enabled: true,
-        [STORAGE_COMMENTS]: []
-      });
-    });
+    await sw.evaluate(async (commentsKey) => {
+      const payload = { nls_recording_enabled: true };
+      payload[commentsKey] = [];
+      await chrome.storage.local.set(payload);
+    }, STORAGE_COMMENTS);
 
     const page = await context.newPage();
     await page.goto(MOCK_WATCH, { waitUntil: 'load', timeout: 60_000 });
