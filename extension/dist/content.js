@@ -738,6 +738,55 @@
     };
   }
 
+  // src/lib/inlinePanelLayout.js
+  function isValidBroadcastPlayerRect(rect, viewport) {
+    const w = Number(rect.width) || 0;
+    const h = Number(rect.height) || 0;
+    const top = Number(rect.top) || 0;
+    const left = Number(rect.left) || 0;
+    const vw = Number(viewport.innerWidth) || 0;
+    const vh = Number(viewport.innerHeight) || 0;
+    if (w < 280 || h < 150) return false;
+    if (top > vh - 80 || left > vw - 80) return false;
+    const aspect = w / Math.max(h, 1);
+    if (aspect < 1.02 || aspect > 3.2) return false;
+    return true;
+  }
+  function selectBestPlayerRectIndex(rects, viewport) {
+    let bestIdx = -1;
+    let bestArea = -1;
+    for (let i = 0; i < rects.length; i++) {
+      const r = rects[i];
+      if (!isValidBroadcastPlayerRect(r, viewport)) continue;
+      const area = r.width * r.height;
+      if (area > bestArea) {
+        bestArea = area;
+        bestIdx = i;
+      }
+    }
+    return bestIdx;
+  }
+  var DEFAULT_MIN_PANEL_WIDTH = 320;
+  var DEFAULT_EDGE_MARGIN = 12;
+  function computeInlinePanelSizeAndOffset(videoRect, parentRect, viewport, opts = {}) {
+    const minWidth = opts.minWidth ?? DEFAULT_MIN_PANEL_WIDTH;
+    const edgeMargin = opts.edgeMargin ?? DEFAULT_EDGE_MARGIN;
+    const vw = Number(viewport.innerWidth) || 0;
+    const vLeft = Number(videoRect.left) || 0;
+    const vWidth = Number(videoRect.width) || 0;
+    let panelWidthPx = Math.max(minWidth, Math.round(vWidth));
+    const maxByViewport = Math.max(minWidth, Math.floor(vw - vLeft - edgeMargin));
+    panelWidthPx = Math.min(panelWidthPx, maxByViewport);
+    let marginLeftPx = 0;
+    if (parentRect) {
+      marginLeftPx = Math.max(
+        0,
+        Math.round(vLeft - (Number(parentRect.left) || 0))
+      );
+    }
+    return { panelWidthPx, marginLeftPx };
+  }
+
   // src/lib/voiceComment.js
   var VOICE_COMMENT_MAX_CHARS = 250;
   function isVoiceCommentSupported() {
@@ -1296,10 +1345,48 @@
     host.appendChild(iframe);
     return host;
   }
+  function renderInlineHostAnchoredToVideo(video) {
+    const parent = video.parentElement;
+    if (!parent) return;
+    const host = ensureInlinePopupHost();
+    const vr = video.getBoundingClientRect();
+    if (vr.width < 260 || vr.height < 140) {
+      host.style.display = "none";
+      return;
+    }
+    const pr = parent.getBoundingClientRect();
+    const viewport = nlsViewportSize();
+    const { panelWidthPx, marginLeftPx } = computeInlinePanelSizeAndOffset(
+      { width: vr.width, height: vr.height, top: vr.top, left: vr.left },
+      { width: pr.width, height: pr.height, top: pr.top, left: pr.left },
+      viewport
+    );
+    if (host.parentElement !== parent || host.previousSibling !== video) {
+      const next = video.nextSibling;
+      if (next) parent.insertBefore(host, next);
+      else parent.appendChild(host);
+    }
+    host.style.boxSizing = "border-box";
+    host.style.marginLeft = `${marginLeftPx}px`;
+    host.style.maxWidth = "100%";
+    host.style.width = `${panelWidthPx}px`;
+    const iframe = (
+      /** @type {HTMLIFrameElement|null} */
+      host.querySelector(`#${INLINE_POPUP_IFRAME_ID}`)
+    );
+    if (iframe) iframe.style.width = `${panelWidthPx}px`;
+    host.style.display = "block";
+  }
   function renderInlinePopupHost(target) {
+    if (target instanceof HTMLVideoElement) {
+      renderInlineHostAnchoredToVideo(target);
+      return;
+    }
     const parent = target.parentElement;
     if (!parent) return;
     const host = ensureInlinePopupHost();
+    host.style.marginLeft = "";
+    host.style.maxWidth = "";
     const currentRect = target.getBoundingClientRect();
     if (currentRect.width < 260 || currentRect.height < 140) {
       host.style.display = "none";
@@ -1345,36 +1432,35 @@
     if (aspect < 1.02 || aspect > 3.2) return false;
     return true;
   }
-  function findFrameHostFromBase(base) {
-    const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
-    let best = null;
-    let cur = base;
-    for (let i = 0; i < 8 && cur; i++) {
-      if (cur.querySelector?.(`#${INLINE_POPUP_HOST_ID}`)) {
-        cur = cur.parentElement;
-        continue;
-      }
-      const rect = cur.getBoundingClientRect();
-      const area = rect.width * rect.height;
-      const aspect = rect.width / Math.max(rect.height, 1);
-      if (rect.width >= 260 && rect.height >= 140 && area <= viewportArea * 0.92 && aspect >= 1 && aspect <= 3.4) {
-        const score = area * (1.25 - Math.min(Math.abs(aspect - 1.78), 1.1) * 0.2);
-        if (!best || score > best.score) best = { el: cur, score };
-      }
-      cur = cur.parentElement;
-    }
-    return best?.el || base;
-  }
   var stableFrameTarget = null;
+  function nlsViewportSize() {
+    return { innerWidth: window.innerWidth, innerHeight: window.innerHeight };
+  }
+  function pickBestInlinePanelVideo() {
+    const viewport = nlsViewportSize();
+    const list = Array.from(document.querySelectorAll("video")).filter(
+      (v) => v instanceof HTMLVideoElement
+    );
+    if (!list.length) return null;
+    const rects = list.map((v) => {
+      const b = v.getBoundingClientRect();
+      return { width: b.width, height: b.height, top: b.top, left: b.left };
+    });
+    const idx = selectBestPlayerRectIndex(rects, viewport);
+    if (idx < 0) return null;
+    const video = list[idx];
+    const st = window.getComputedStyle(video);
+    if (st.visibility === "hidden" || st.display === "none") return null;
+    return video;
+  }
   function findWatchFrameTargetElement() {
-    if (stableFrameTarget && stableFrameTarget.isConnected && isValidFrameTargetElement(stableFrameTarget)) {
-      return stableFrameTarget;
+    const video = pickBestInlinePanelVideo();
+    if (video) {
+      stableFrameTarget = video;
+      return video;
     }
-    const video = document.querySelector("video");
-    if (video instanceof HTMLElement && isValidFrameTargetElement(video)) {
-      const host = findFrameHostFromBase(video);
-      stableFrameTarget = host;
-      return host;
+    if (stableFrameTarget && stableFrameTarget.isConnected && !(stableFrameTarget instanceof HTMLVideoElement) && isValidFrameTargetElement(stableFrameTarget)) {
+      return stableFrameTarget;
     }
     const selector = '[data-testid*="player" i], [class*="video-player" i], [class*="VideoPlayer" i], [class*="watch-player" i], [class*="player-container" i]';
     const candidates = Array.from(document.querySelectorAll(selector)).filter((el) => {

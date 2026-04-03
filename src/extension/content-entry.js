@@ -30,6 +30,10 @@ import { pickCommentMutationObserverRoot } from '../lib/observerTarget.js';
 import { resolveWatchPageContext } from '../lib/watchContext.js';
 import { buildStorageWriteErrorPayload } from '../lib/storageErrorState.js';
 import {
+  computeInlinePanelSizeAndOffset,
+  selectBestPlayerRectIndex
+} from '../lib/inlinePanelLayout.js';
+import {
   applyRecognitionResult,
   isVoiceCommentSupported,
   VOICE_COMMENT_MAX_CHARS
@@ -661,11 +665,50 @@ function ensureInlinePopupHost() {
   return host;
 }
 
+/** `<video>` の表示枠に幅・左位置を合わせて親内に挿入 */
+function renderInlineHostAnchoredToVideo(video) {
+  const parent = video.parentElement;
+  if (!parent) return;
+  const host = ensureInlinePopupHost();
+  const vr = video.getBoundingClientRect();
+  if (vr.width < 260 || vr.height < 140) {
+    host.style.display = 'none';
+    return;
+  }
+  const pr = parent.getBoundingClientRect();
+  const viewport = nlsViewportSize();
+  const { panelWidthPx, marginLeftPx } = computeInlinePanelSizeAndOffset(
+    { width: vr.width, height: vr.height, top: vr.top, left: vr.left },
+    { width: pr.width, height: pr.height, top: pr.top, left: pr.left },
+    viewport
+  );
+  if (host.parentElement !== parent || host.previousSibling !== video) {
+    const next = video.nextSibling;
+    if (next) parent.insertBefore(host, next);
+    else parent.appendChild(host);
+  }
+  host.style.boxSizing = 'border-box';
+  host.style.marginLeft = `${marginLeftPx}px`;
+  host.style.maxWidth = '100%';
+  host.style.width = `${panelWidthPx}px`;
+  const iframe = /** @type {HTMLIFrameElement|null} */ (
+    host.querySelector(`#${INLINE_POPUP_IFRAME_ID}`)
+  );
+  if (iframe) iframe.style.width = `${panelWidthPx}px`;
+  host.style.display = 'block';
+}
+
 /** @param {HTMLElement} target */
 function renderInlinePopupHost(target) {
+  if (target instanceof HTMLVideoElement) {
+    renderInlineHostAnchoredToVideo(target);
+    return;
+  }
   const parent = target.parentElement;
   if (!parent) return;
   const host = ensureInlinePopupHost();
+  host.style.marginLeft = '';
+  host.style.maxWidth = '';
   const currentRect = target.getBoundingClientRect();
   if (currentRect.width < 260 || currentRect.height < 140) {
     host.style.display = 'none';
@@ -716,52 +759,46 @@ function isValidFrameTargetElement(el) {
   return true;
 }
 
-/** @param {HTMLElement} base */
-function findFrameHostFromBase(base) {
-  const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
-  /** @type {{ el: HTMLElement, score: number }|null} */
-  let best = null;
-  let cur = base;
-  for (let i = 0; i < 8 && cur; i++) {
-    if (cur.querySelector?.(`#${INLINE_POPUP_HOST_ID}`)) {
-      cur = cur.parentElement;
-      continue;
-    }
-    const rect = cur.getBoundingClientRect();
-    const area = rect.width * rect.height;
-    const aspect = rect.width / Math.max(rect.height, 1);
-    if (
-      rect.width >= 260 &&
-      rect.height >= 140 &&
-      area <= viewportArea * 0.92 &&
-      aspect >= 1 &&
-      aspect <= 3.4
-    ) {
-      const score = area * (1.25 - Math.min(Math.abs(aspect - 1.78), 1.1) * 0.2);
-      if (!best || score > best.score) best = { el: cur, score };
-    }
-    cur = cur.parentElement;
-  }
-  return best?.el || base;
-}
-
 /** @type {HTMLElement|null} */
 let stableFrameTarget = null;
 
+function nlsViewportSize() {
+  return { innerWidth: window.innerWidth, innerHeight: window.innerHeight };
+}
+
+/** メインの配信 video（表示矩形が最大・かつプレイヤーとして妥当）を選ぶ */
+function pickBestInlinePanelVideo() {
+  const viewport = nlsViewportSize();
+  const list = Array.from(document.querySelectorAll('video')).filter(
+    (v) => v instanceof HTMLVideoElement
+  );
+  if (!list.length) return null;
+  const rects = list.map((v) => {
+    const b = v.getBoundingClientRect();
+    return { width: b.width, height: b.height, top: b.top, left: b.left };
+  });
+  const idx = selectBestPlayerRectIndex(rects, viewport);
+  if (idx < 0) return null;
+  const video = list[idx];
+  const st = window.getComputedStyle(video);
+  if (st.visibility === 'hidden' || st.display === 'none') return null;
+  return video;
+}
+
 function findWatchFrameTargetElement() {
+  const video = pickBestInlinePanelVideo();
+  if (video) {
+    stableFrameTarget = video;
+    return video;
+  }
+
   if (
     stableFrameTarget &&
     stableFrameTarget.isConnected &&
+    !(stableFrameTarget instanceof HTMLVideoElement) &&
     isValidFrameTargetElement(stableFrameTarget)
   ) {
     return stableFrameTarget;
-  }
-
-  const video = document.querySelector('video');
-  if (video instanceof HTMLElement && isValidFrameTargetElement(video)) {
-    const host = findFrameHostFromBase(video);
-    stableFrameTarget = host;
-    return host;
   }
 
   const selector =

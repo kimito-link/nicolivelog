@@ -1,0 +1,91 @@
+/**
+ * 視聴ページに埋め込む nicolivelog パネルの幅・位置を、動画要素の表示矩形に合わせるための純関数。
+ * （ニコ生のプレイヤー外周ラッパーは装飾込みで広いため、video の getBoundingClientRect を基準にする）
+ */
+
+/**
+ * @typedef {{ width: number, height: number, top: number, left: number }} ViewRect
+ */
+
+/**
+ * @typedef {{ innerWidth: number, innerHeight: number }} ViewportSize
+ */
+
+/**
+ * インライン用に「主役の動画」とみなせる表示矩形か（従来のフレームターゲット判定と同閾値）
+ * @param {ViewRect} rect
+ * @param {ViewportSize} viewport
+ * @returns {boolean}
+ */
+export function isValidBroadcastPlayerRect(rect, viewport) {
+  const w = Number(rect.width) || 0;
+  const h = Number(rect.height) || 0;
+  const top = Number(rect.top) || 0;
+  const left = Number(rect.left) || 0;
+  const vw = Number(viewport.innerWidth) || 0;
+  const vh = Number(viewport.innerHeight) || 0;
+  if (w < 280 || h < 150) return false;
+  if (top > vh - 80 || left > vw - 80) return false;
+  const aspect = w / Math.max(h, 1);
+  if (aspect < 1.02 || aspect > 3.2) return false;
+  return true;
+}
+
+/**
+ * 複数矩形のうち、有効なものの中で面積最大のインデックス（同一 document 内の複数 video 用）
+ * @param {ViewRect[]} rects
+ * @param {ViewportSize} viewport
+ * @returns {number} 該当なしは -1
+ */
+export function selectBestPlayerRectIndex(rects, viewport) {
+  let bestIdx = -1;
+  let bestArea = -1;
+  for (let i = 0; i < rects.length; i++) {
+    const r = rects[i];
+    if (!isValidBroadcastPlayerRect(r, viewport)) continue;
+    const area = r.width * r.height;
+    if (area > bestArea) {
+      bestArea = area;
+      bestIdx = i;
+    }
+  }
+  return bestIdx;
+}
+
+const DEFAULT_MIN_PANEL_WIDTH = 320;
+const DEFAULT_EDGE_MARGIN = 12;
+
+/**
+ * パネル幅（px）と親内での左オフセット（margin-left 用）
+ * @param {ViewRect} videoRect
+ * @param {ViewRect|null} parentRect video.parentElement の矩形。無ければ null
+ * @param {ViewportSize} viewport
+ * @param {{ minWidth?: number, edgeMargin?: number }} [opts]
+ * @returns {{ panelWidthPx: number, marginLeftPx: number }}
+ */
+export function computeInlinePanelSizeAndOffset(
+  videoRect,
+  parentRect,
+  viewport,
+  opts = {}
+) {
+  const minWidth = opts.minWidth ?? DEFAULT_MIN_PANEL_WIDTH;
+  const edgeMargin = opts.edgeMargin ?? DEFAULT_EDGE_MARGIN;
+  const vw = Number(viewport.innerWidth) || 0;
+  const vLeft = Number(videoRect.left) || 0;
+  const vWidth = Number(videoRect.width) || 0;
+
+  let panelWidthPx = Math.max(minWidth, Math.round(vWidth));
+  const maxByViewport = Math.max(minWidth, Math.floor(vw - vLeft - edgeMargin));
+  panelWidthPx = Math.min(panelWidthPx, maxByViewport);
+
+  let marginLeftPx = 0;
+  if (parentRect) {
+    marginLeftPx = Math.max(
+      0,
+      Math.round(vLeft - (Number(parentRect.left) || 0))
+    );
+  }
+
+  return { panelWidthPx, marginLeftPx };
+}
