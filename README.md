@@ -13,6 +13,18 @@ npm run build
 - ビルド成果物: `extension/dist/content.js`, `extension/dist/popup.js`
 - ウォッチ: `npm run build:watch`（別ターミナルで常駐）
 
+### E2E（Playwright・拡張の読み込み）
+
+実ニコ生ページはログインや配信状況に依存するため、**ローカル静的モック**（`http://127.0.0.1:3456/watch/lv888888888/`）で「記録 ON → `chrome.storage` にコメントが溜まる」経路を検証します。
+
+```bash
+npm run playwright:install   # 初回のみ Chromium を取得
+npm run test:e2e             # ビルド後、headed Chromium で実行（画面が開きます）
+```
+
+- ディスプレイのない CI では `SKIP_E2E=1 npm run test:e2e` でスキップできます。
+- 拡張の読み込み都合で **headless 非対応**のため、ローカルではウィンドウが表示されます。
+
 ## 拡張機能の読み込み
 
 1. Chrome で `chrome://extensions` を開く
@@ -33,5 +45,5 @@ npm run build
 
 ## 制限
 
-- 画面上に載っているコメントのみ（仮想リストでDOMから消えた過去コメントは含まれないことがあります）
+- コメント一覧は仮想スクロールのため、**開いた直後にスクロール走査で可能な限り拾い**、その後は新規 DOM と手動スクロールでも追記します。サーバにしかない全履歴の完全再現は保証しません。
 - 利用規約・ガイドラインは各自で確認してください
