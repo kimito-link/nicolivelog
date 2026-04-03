@@ -1,5 +1,78 @@
 (() => {
-  // src/extension/page-intercept.js
+  // src/lib/protobufVarint.js
+  function readUint32Varint(bytes, offset) {
+    if (offset < 0 || offset >= bytes.length) return null;
+    let result = 0n;
+    let shift = 0n;
+    let o = offset;
+    for (let i = 0; i < 10; i += 1) {
+      const b = bytes[o];
+      if (b === void 0) return null;
+      o += 1;
+      result |= BigInt(b & 127) << shift;
+      if (result > 0xffffffffn) return null;
+      if ((b & 128) === 0) {
+        return { value: Number(result), length: o - offset };
+      }
+      shift += 7n;
+    }
+    return null;
+  }
+
+  // src/lib/lengthDelimitedStream.js
+  function splitLengthDelimitedMessages(bytes) {
+    if (!bytes.length) return [];
+    const out = [];
+    let offset = 0;
+    while (offset < bytes.length) {
+      const vr = readUint32Varint(bytes, offset);
+      if (!vr) break;
+      offset += vr.length;
+      const len = vr.value;
+      if (offset + len > bytes.length) break;
+      out.push(bytes.subarray(offset, offset + len));
+      offset += len;
+    }
+    return out;
+  }
+
+  // src/lib/interceptBinaryTextExtract.js
+  var MAX_PAIR_DISTANCE = 600;
+  var UID_RE = /"(?:user_id|userId|uid|hashed_user_id|hashedUserId|raw_user_id)"\s*:\s*"?(\w{5,26})"?/g;
+  var NO_RE = /"(?:no|commentNo|comment_no)"\s*:\s*(\d+)/g;
+  function extractPairsFromBinaryUtf8(text) {
+    if (!text || text.length < 4) return [];
+    const uids = [];
+    const nos = [];
+    let m;
+    const uidRe = new RegExp(UID_RE.source, "g");
+    while ((m = uidRe.exec(text)) !== null) {
+      uids.push({ val: m[1], pos: m.index });
+    }
+    const noRe = new RegExp(NO_RE.source, "g");
+    while ((m = noRe.exec(text)) !== null) {
+      nos.push({ val: m[1], pos: m.index });
+    }
+    if (!uids.length || !nos.length) return [];
+    const out = [];
+    for (const u of uids) {
+      let best = null;
+      let bestDist = Infinity;
+      for (const n of nos) {
+        const dist = Math.abs(u.pos - n.pos);
+        if (dist < bestDist) {
+          bestDist = dist;
+          best = n;
+        }
+      }
+      if (best && bestDist < MAX_PAIR_DISTANCE) {
+        out.push({ no: best.val, uid: u.val });
+      }
+    }
+    return out;
+  }
+
+  // src/extension/page-intercept-entry.js
   (() => {
     "use strict";
     if (window.__NLS_PAGE_INTERCEPT__) return;
@@ -40,6 +113,7 @@
       "user_id",
       "userId",
       "uid",
+      "raw_user_id",
       "hashedUserId",
       "hashed_user_id",
       "senderUserId",
@@ -51,8 +125,7 @@
       "userName",
       "user_name",
       "displayName",
-      "display_name",
-      "raw_user_id"
+      "display_name"
     ];
     function dig(obj, depth) {
       if (!obj || typeof obj !== "object" || depth > 5) return;
@@ -123,6 +196,22 @@
         if (v && typeof v === "object") dig(v, depth + 1);
       }
     }
+    function extractFromBinaryText(text) {
+      for (const p of extractPairsFromBinaryUtf8(text)) {
+        enqueue(p.no, p.uid, "");
+      }
+    }
+    function tryProcessBinaryBuffer(u8) {
+      if (u8.byteLength < 8 || u8.byteLength > 2e6) return;
+      const chunks = splitLengthDelimitedMessages(u8);
+      const dec = new TextDecoder("utf-8", { fatal: false });
+      if (chunks.length > 0) {
+        for (const ch of chunks) {
+          extractFromBinaryText(dec.decode(ch));
+        }
+      }
+      extractFromBinaryText(dec.decode(u8));
+    }
     function tryProcess(raw) {
       if (typeof raw === "string") {
         if (raw.length < 4 || raw.length > 1e6) return;
@@ -134,41 +223,13 @@
       }
       if (raw instanceof ArrayBuffer || raw instanceof Uint8Array) {
         const buf = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
-        if (buf.byteLength < 8 || buf.byteLength > 2e6) return;
-        try {
-          const text = new TextDecoder("utf-8", { fatal: false }).decode(buf);
-          extractFromBinaryText(text);
-        } catch {
-        }
+        tryProcessBinaryBuffer(buf);
         return;
       }
       if (typeof Blob !== "undefined" && raw instanceof Blob) {
         if (raw.size > 2e6) return;
         raw.arrayBuffer().then((ab) => tryProcess(ab)).catch(() => {
         });
-      }
-    }
-    function extractFromBinaryText(text) {
-      const uidRe = /"(?:user_id|userId|uid|hashed_user_id|hashedUserId)"\s*:\s*"?(\w{5,26})"?/g;
-      const noRe = /"(?:no|commentNo|comment_no)"\s*:\s*(\d+)/g;
-      const uids = [];
-      const nos = [];
-      let m;
-      while ((m = uidRe.exec(text)) !== null) uids.push({ val: m[1], pos: m.index });
-      while ((m = noRe.exec(text)) !== null) nos.push({ val: m[1], pos: m.index });
-      for (const u of uids) {
-        let best = null;
-        let bestDist = Infinity;
-        for (const n of nos) {
-          const dist = Math.abs(u.pos - n.pos);
-          if (dist < bestDist) {
-            bestDist = dist;
-            best = n;
-          }
-        }
-        if (best && bestDist < 600) {
-          enqueue(best.val, u.val);
-        }
       }
     }
     const OrigWS = window.WebSocket;

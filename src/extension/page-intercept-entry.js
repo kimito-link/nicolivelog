@@ -1,9 +1,10 @@
+// @ts-nocheck — MAIN world IIFE; DOM/ページ型が広く any 相当
 /**
- * MAIN world script — ページコンテキストで実行し、WebSocket/fetch を
- * 非破壊的にフックしてコメントの userId をキャプチャする。
- * キャプチャした commentNo→userId ペアは window.postMessage 経由で
- * content script (ISOLATED world) に渡す。
+ * MAIN world エントリ（esbuild で単一 IIFE にバンドルされる）
  */
+import { splitLengthDelimitedMessages } from '../lib/lengthDelimitedStream.js';
+import { extractPairsFromBinaryUtf8 } from '../lib/interceptBinaryTextExtract.js';
+
 (() => {
   'use strict';
   if (window.__NLS_PAGE_INTERCEPT__) return;
@@ -50,12 +51,22 @@
 
   const NO_KEYS = ['no', 'commentNo', 'comment_no', 'number', 'vpos_no'];
   const UID_KEYS = [
-    'user_id', 'userId', 'uid',
-    'hashedUserId', 'hashed_user_id', 'senderUserId', 'accountId'
+    'user_id',
+    'userId',
+    'uid',
+    'raw_user_id',
+    'hashedUserId',
+    'hashed_user_id',
+    'senderUserId',
+    'accountId'
   ];
   const NAME_KEYS = [
-    'name', 'nickname', 'userName', 'user_name',
-    'displayName', 'display_name', 'raw_user_id'
+    'name',
+    'nickname',
+    'userName',
+    'user_name',
+    'displayName',
+    'display_name'
   ];
 
   /** @param {unknown} obj */
@@ -68,18 +79,54 @@
     let no = null;
     let uid = null;
     let name = null;
-    for (const k of NO_KEYS) { if (obj[k] != null) { no = obj[k]; break; } }
-    for (const k of UID_KEYS) { if (obj[k] != null) { uid = obj[k]; break; } }
-    for (const k of NAME_KEYS) { if (obj[k] != null && typeof obj[k] === 'string') { name = obj[k]; break; } }
+    for (const k of NO_KEYS) {
+      if (obj[k] != null) {
+        no = obj[k];
+        break;
+      }
+    }
+    for (const k of UID_KEYS) {
+      if (obj[k] != null) {
+        uid = obj[k];
+        break;
+      }
+    }
+    for (const k of NAME_KEYS) {
+      if (obj[k] != null && typeof obj[k] === 'string') {
+        name = obj[k];
+        break;
+      }
+    }
 
     const NESTED = ['chat', 'comment', 'data', 'message', 'body', 'user', 'sender'];
     if (no == null || uid == null || name == null) {
       for (const sub of NESTED) {
         const child = obj[sub];
         if (!child || typeof child !== 'object' || Array.isArray(child)) continue;
-        if (no == null) { for (const k of NO_KEYS) { if (child[k] != null) { no = child[k]; break; } } }
-        if (uid == null) { for (const k of UID_KEYS) { if (child[k] != null) { uid = child[k]; break; } } }
-        if (name == null) { for (const k of NAME_KEYS) { if (child[k] != null && typeof child[k] === 'string') { name = child[k]; break; } } }
+        if (no == null) {
+          for (const k of NO_KEYS) {
+            if (child[k] != null) {
+              no = child[k];
+              break;
+            }
+          }
+        }
+        if (uid == null) {
+          for (const k of UID_KEYS) {
+            if (child[k] != null) {
+              uid = child[k];
+              break;
+            }
+          }
+        }
+        if (name == null) {
+          for (const k of NAME_KEYS) {
+            if (child[k] != null && typeof child[k] === 'string') {
+              name = child[k];
+              break;
+            }
+          }
+        }
       }
     }
 
@@ -96,20 +143,40 @@
     }
   }
 
+  /** @param {string} text */
+  function extractFromBinaryText(text) {
+    for (const p of extractPairsFromBinaryUtf8(text)) {
+      enqueue(p.no, p.uid, '');
+    }
+  }
+
+  /** @param {Uint8Array} u8 */
+  function tryProcessBinaryBuffer(u8) {
+    if (u8.byteLength < 8 || u8.byteLength > 2_000_000) return;
+    const chunks = splitLengthDelimitedMessages(u8);
+    const dec = new TextDecoder('utf-8', { fatal: false });
+    if (chunks.length > 0) {
+      for (const ch of chunks) {
+        extractFromBinaryText(dec.decode(ch));
+      }
+    }
+    extractFromBinaryText(dec.decode(u8));
+  }
+
   /** @param {unknown} raw */
   function tryProcess(raw) {
     if (typeof raw === 'string') {
       if (raw.length < 4 || raw.length > 1_000_000) return;
-      try { dig(JSON.parse(raw), 0); } catch { /* not JSON */ }
+      try {
+        dig(JSON.parse(raw), 0);
+      } catch {
+        /* not JSON */
+      }
       return;
     }
     if (raw instanceof ArrayBuffer || raw instanceof Uint8Array) {
       const buf = raw instanceof Uint8Array ? raw : new Uint8Array(raw);
-      if (buf.byteLength < 8 || buf.byteLength > 2_000_000) return;
-      try {
-        const text = new TextDecoder('utf-8', { fatal: false }).decode(buf);
-        extractFromBinaryText(text);
-      } catch { /* ignore */ }
+      tryProcessBinaryBuffer(buf);
       return;
     }
     if (typeof Blob !== 'undefined' && raw instanceof Blob) {
@@ -118,37 +185,17 @@
     }
   }
 
-  /** @param {string} text */
-  function extractFromBinaryText(text) {
-    const uidRe = /"(?:user_id|userId|uid|hashed_user_id|hashedUserId)"\s*:\s*"?(\w{5,26})"?/g;
-    const noRe = /"(?:no|commentNo|comment_no)"\s*:\s*(\d+)/g;
-    const uids = [];
-    const nos = [];
-    let m;
-    while ((m = uidRe.exec(text)) !== null) uids.push({ val: m[1], pos: m.index });
-    while ((m = noRe.exec(text)) !== null) nos.push({ val: m[1], pos: m.index });
-
-    for (const u of uids) {
-      let best = null;
-      let bestDist = Infinity;
-      for (const n of nos) {
-        const dist = Math.abs(u.pos - n.pos);
-        if (dist < bestDist) { bestDist = dist; best = n; }
-      }
-      if (best && bestDist < 600) {
-        enqueue(best.val, u.val);
-      }
-    }
-  }
-
-  // --- WebSocket hook (Proxy で new WebSocket() を非破壊ラップ) ---
   const OrigWS = window.WebSocket;
   try {
     window.WebSocket = new Proxy(OrigWS, {
       construct(target, args) {
         const ws = new target(...args);
         ws.addEventListener('message', (/** @type {MessageEvent} */ e) => {
-          try { tryProcess(e.data); } catch { /* never break the page */ }
+          try {
+            tryProcess(e.data);
+          } catch {
+            /* never break the page */
+          }
         });
         return ws;
       }
@@ -158,9 +205,10 @@
       writable: false,
       configurable: false
     });
-  } catch { /* Proxy 失敗は無視してフォールバックなし */ }
+  } catch {
+    /* Proxy 失敗は無視 */
+  }
 
-  // --- fetch hook (レスポンスを非破壊的に clone して検査) ---
   const origFetch = window.fetch;
   window.fetch = function (...args) {
     return origFetch.apply(this, args).then((res) => {
@@ -179,7 +227,9 @@
             clone.arrayBuffer().then((ab) => tryProcess(ab)).catch(() => {});
           }
         }
-      } catch { /* never break fetch */ }
+      } catch {
+        /* never break fetch */
+      }
       return res;
     });
   };

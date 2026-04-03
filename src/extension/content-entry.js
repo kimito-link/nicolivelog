@@ -1,3 +1,4 @@
+// @ts-nocheck — content script; DOM/Chrome API が広く any 相当
 import { isNicoLiveWatchUrl } from '../lib/broadcastUrl.js';
 import {
   KEY_LAST_WATCH_URL,
@@ -394,7 +395,7 @@ window.addEventListener('pagehide', () => {
   nlsVoiceForceStop();
 });
 
-/** page-intercept.js (MAIN world) がキャプチャした commentNo→{userId, nickname} */
+/** page-intercept-entry.js (MAIN world) がキャプチャした commentNo→{userId, nickname} */
 /** @type {Map<string, { uid: string, name: string }>} */
 const interceptedUsers = new Map();
 /** userId→nickname の補助マップ */

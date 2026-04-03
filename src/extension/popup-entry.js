@@ -1,3 +1,4 @@
+// @ts-nocheck — popup UI; DOM/Chrome API が広く any 相当
 import { extractLiveIdFromUrl, isNicoLiveWatchUrl } from '../lib/broadcastUrl.js';
 import {
   KEY_POPUP_FRAME,
