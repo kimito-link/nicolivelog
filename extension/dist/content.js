@@ -1236,16 +1236,30 @@
       pointer-events: none;
       position: relative;
       z-index: 5;
+      border: none !important;
+      outline: none !important;
+      box-shadow: none !important;
+    }
+    #${INLINE_POPUP_HOST_ID}:focus,
+    #${INLINE_POPUP_HOST_ID}:focus-within {
+      outline: none !important;
+      box-shadow: none !important;
     }
     #${INLINE_POPUP_HOST_ID} iframe {
       width: 100%;
       height: 820px;
-      border: none;
-      border-radius: 14px;
-      box-shadow: 0 10px 24px rgb(2 6 23 / 28%);
+      border: none !important;
+      border-radius: 0;
+      box-shadow: none !important;
+      outline: none !important;
       pointer-events: auto;
       background: transparent;
       display: block;
+    }
+    #${INLINE_POPUP_HOST_ID} iframe:focus,
+    #${INLINE_POPUP_HOST_ID} iframe:focus-visible {
+      outline: none !important;
+      box-shadow: none !important;
     }
   `;
     document.head.appendChild(style);
@@ -1404,24 +1418,7 @@
       return;
     }
     const overlay = ensurePageFrameOverlay();
-    const pad = Math.round(Math.max(8, Math.min(14, rect.width * 0.017)));
-    const left = Math.max(2, Math.round(rect.left - pad));
-    const top = Math.max(2, Math.round(rect.top - pad));
-    const rightBound = window.innerWidth - 2;
-    const bottomBound = window.innerHeight - 2;
-    const width = Math.max(
-      40,
-      Math.min(Math.round(rect.width + pad * 2), rightBound - left)
-    );
-    const height = Math.max(
-      40,
-      Math.min(Math.round(rect.height + pad * 2), bottomBound - top)
-    );
-    overlay.style.left = `${left}px`;
-    overlay.style.top = `${top}px`;
-    overlay.style.width = `${width}px`;
-    overlay.style.height = `${height}px`;
-    overlay.style.display = "block";
+    overlay.style.display = "none";
     renderInlinePopupHost(target);
   }
   async function loadPageFrameSettings() {
