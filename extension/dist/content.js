@@ -33,6 +33,7 @@
 
   // src/lib/storageKeys.js
   var KEY_RECORDING = "nls_recording_enabled";
+  var KEY_LAST_WATCH_URL = "nls_last_watch_url";
   function commentsStorageKey(liveId2) {
     const id = String(liveId2 || "").trim().toLowerCase();
     return `nls_comments_${id}`;
@@ -415,6 +416,16 @@
   var observer = null;
   var harvestRunning = false;
   var scrollHooked = /* @__PURE__ */ new WeakMap();
+  var lastWatchUrlTimer = null;
+  function rememberWatchPageUrl() {
+    if (!isNicoLiveWatchUrl(window.location.href)) return;
+    if (lastWatchUrlTimer) clearTimeout(lastWatchUrlTimer);
+    lastWatchUrlTimer = setTimeout(() => {
+      lastWatchUrlTimer = null;
+      chrome.storage.local.set({ [KEY_LAST_WATCH_URL]: window.location.href }).catch(() => {
+      });
+    }, 400);
+  }
   async function readRecordingFlag() {
     const r = await chrome.storage.local.get(KEY_RECORDING);
     return r[KEY_RECORDING] === true;
@@ -424,16 +435,20 @@
       return;
     }
     const key = commentsStorageKey(liveId);
-    const bag = await chrome.storage.local.get(key);
-    const existing = Array.isArray(bag[key]) ? bag[key] : [];
-    const { next } = mergeNewComments(liveId, existing, rows);
-    await chrome.storage.local.set({ [key]: next });
+    try {
+      const bag = await chrome.storage.local.get(key);
+      const existing = Array.isArray(bag[key]) ? bag[key] : [];
+      const { next } = mergeNewComments(liveId, existing, rows);
+      await chrome.storage.local.set({ [key]: next });
+    } catch {
+    }
   }
   function syncLiveIdFromLocation() {
     if (!isNicoLiveWatchUrl(window.location.href)) {
       liveId = null;
       return;
     }
+    rememberWatchPageUrl();
     const next = extractLiveIdFromUrl(window.location.href);
     if (next !== liveId) {
       liveId = next;

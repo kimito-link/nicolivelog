@@ -33,6 +33,7 @@
 
   // src/lib/storageKeys.js
   var KEY_RECORDING = "nls_recording_enabled";
+  var KEY_LAST_WATCH_URL = "nls_last_watch_url";
   function commentsStorageKey(liveId) {
     const id = String(liveId || "").trim().toLowerCase();
     return `nls_comments_${id}`;
@@ -112,6 +113,19 @@
       ul.appendChild(li);
     }
   }
+  async function resolveWatchContextUrl() {
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    let url = tab?.url || "";
+    if (isNicoLiveWatchUrl(url)) {
+      return { url, fromActiveTab: true };
+    }
+    const stash = await chrome.storage.local.get(KEY_LAST_WATCH_URL);
+    const last = stash[KEY_LAST_WATCH_URL];
+    if (typeof last === "string" && isNicoLiveWatchUrl(last)) {
+      return { url: last, fromActiveTab: false };
+    }
+    return { url: "", fromActiveTab: true };
+  }
   async function refresh() {
     const liveEl = $("liveId");
     const countEl = $("count");
@@ -119,22 +133,26 @@
       /** @type {HTMLInputElement} */
       $("recordToggle")
     );
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const url = tab?.url || "";
+    const exportBtn = (
+      /** @type {HTMLButtonElement} */
+      $("exportJson")
+    );
+    const { url, fromActiveTab } = await resolveWatchContextUrl();
+    const bagRec = await chrome.storage.local.get(KEY_RECORDING);
+    toggle.checked = bagRec[KEY_RECORDING] === true;
+    toggle.disabled = false;
     if (!isNicoLiveWatchUrl(url)) {
-      liveEl.textContent = "\uFF08\u30CB\u30B3\u751Fwatch\u30DA\u30FC\u30B8\u3067\u958B\u3044\u3066\u304F\u3060\u3055\u3044\uFF09";
+      liveEl.textContent = "\uFF08\u30CB\u30B3\u751Fwatch\u3092\u958B\u3044\u3066\u304F\u3060\u3055\u3044\uFF09";
       countEl.textContent = "-";
-      toggle.disabled = true;
+      exportBtn.disabled = true;
       renderUserRooms([]);
       return;
     }
-    toggle.disabled = false;
     const lv = extractLiveIdFromUrl(url);
-    liveEl.textContent = lv || "-";
-    const bag = await chrome.storage.local.get(KEY_RECORDING);
-    toggle.checked = bag[KEY_RECORDING] === true;
+    liveEl.textContent = lv && !fromActiveTab ? `${lv}\uFF08\u76F4\u8FD1\u306E\u8996\u8074\u30DA\u30FC\u30B8\uFF09` : lv || "-";
     if (!lv) {
       countEl.textContent = "-";
+      exportBtn.disabled = true;
       renderUserRooms([]);
       return;
     }
@@ -142,16 +160,51 @@
     const data = await chrome.storage.local.get(key);
     const arr = Array.isArray(data[key]) ? data[key] : [];
     countEl.textContent = String(arr.length);
+    exportBtn.disabled = arr.length === 0;
+    exportBtn.dataset.liveId = lv;
+    exportBtn.dataset.storageKey = key;
     renderUserRooms(arr);
+  }
+  async function downloadCommentsJson(liveId, storageKey) {
+    const data = await chrome.storage.local.get(storageKey);
+    const arr = Array.isArray(data[storageKey]) ? data[storageKey] : [];
+    const payload = {
+      exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      liveId,
+      count: arr.length,
+      comments: arr
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json;charset=utf-8"
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `nicolivelog-${liveId}-${Date.now()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
   }
   function initPopup() {
     const toggle = (
       /** @type {HTMLInputElement} */
       $("recordToggle")
     );
+    const exportBtn = (
+      /** @type {HTMLButtonElement} */
+      $("exportJson")
+    );
     toggle.addEventListener("change", async () => {
       await chrome.storage.local.set({ [KEY_RECORDING]: toggle.checked });
       await refresh();
+    });
+    exportBtn.addEventListener("click", async () => {
+      const lv = exportBtn.dataset.liveId;
+      const key = exportBtn.dataset.storageKey;
+      if (!lv || !key || exportBtn.disabled) return;
+      try {
+        await downloadCommentsJson(lv, key);
+      } catch {
+      }
     });
     refresh();
     chrome.storage.onChanged.addListener((_, area) => {

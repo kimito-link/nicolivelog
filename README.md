@@ -58,7 +58,8 @@ npm run test:e2e             # ビルド後、headed Chromium で実行（画面
 2. ツールバーの nicolivelog アイコンからポップアップを開く
 3. **「このPCで記録する」** をオン
 4. ポップアップの **「ユーザー別（しおり）」** に、投稿者ごとの件数・最新文が並びます（`chrome.storage.onChanged` でリアルタイム更新）
-5. 詳細な生データは開発者ツール → Application → Extension storage の `nls_comments_lv...` で確認
+5. **「JSONをダウンロード」** で、いま表示中の放送 ID に対応するコメント配列をファイルに保存できます（アクティブタブが別ページでも、直近に開いた watch の URL があればその件数・エクスポート対象になります）
+6. 詳細な生データは開発者ツール → Application → Extension storage の `nls_comments_lv...` で確認
 
 記録は既定でオフです。UI改修でコメントが取れなくなった場合は [`src/lib/nicoliveDom.js`](src/lib/nicoliveDom.js) のセレクタ・パースだけを直してください。
 
@@ -68,3 +69,7 @@ npm run test:e2e             # ビルド後、headed Chromium で実行（画面
 
 - コメント一覧は仮想スクロールのため、**開いた直後にスクロール走査で可能な限り拾い**、その後は新規 DOM と手動スクロールでも追記します。サーバにしかない全履歴の完全再現は保証しません。
 - 利用規約・ガイドラインは各自で確認してください
+
+## Codex / Claude 向けの質問集
+
+外部の AI に設計レビューやデバッグ方針を聞くときのテンプレは [`docs/llm-handoff-questions.md`](docs/llm-handoff-questions.md) にまとめてあります。

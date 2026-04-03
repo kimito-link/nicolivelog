@@ -1,5 +1,9 @@
 import { extractLiveIdFromUrl, isNicoLiveWatchUrl } from '../lib/broadcastUrl.js';
-import { KEY_RECORDING, commentsStorageKey } from '../lib/storageKeys.js';
+import {
+  KEY_LAST_WATCH_URL,
+  KEY_RECORDING,
+  commentsStorageKey
+} from '../lib/storageKeys.js';
 import {
   aggregateCommentsByUser,
   displayUserLabel,
@@ -56,31 +60,48 @@ function renderUserRooms(entries) {
   }
 }
 
+/** @returns {Promise<{ url: string, fromActiveTab: boolean }>} */
+async function resolveWatchContextUrl() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  let url = tab?.url || '';
+  if (isNicoLiveWatchUrl(url)) {
+    return { url, fromActiveTab: true };
+  }
+  const stash = await chrome.storage.local.get(KEY_LAST_WATCH_URL);
+  const last = stash[KEY_LAST_WATCH_URL];
+  if (typeof last === 'string' && isNicoLiveWatchUrl(last)) {
+    return { url: last, fromActiveTab: false };
+  }
+  return { url: '', fromActiveTab: true };
+}
+
 async function refresh() {
   const liveEl = $('liveId');
   const countEl = $('count');
   const toggle = /** @type {HTMLInputElement} */ ($('recordToggle'));
+  const exportBtn = /** @type {HTMLButtonElement} */ ($('exportJson'));
 
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const url = tab?.url || '';
+  const { url, fromActiveTab } = await resolveWatchContextUrl();
+
+  const bagRec = await chrome.storage.local.get(KEY_RECORDING);
+  toggle.checked = bagRec[KEY_RECORDING] === true;
+  toggle.disabled = false;
 
   if (!isNicoLiveWatchUrl(url)) {
-    liveEl.textContent = '（ニコ生watchページで開いてください）';
+    liveEl.textContent = '（ニコ生watchを開いてください）';
     countEl.textContent = '-';
-    toggle.disabled = true;
+    exportBtn.disabled = true;
     renderUserRooms([]);
     return;
   }
 
-  toggle.disabled = false;
   const lv = extractLiveIdFromUrl(url);
-  liveEl.textContent = lv || '-';
-
-  const bag = await chrome.storage.local.get(KEY_RECORDING);
-  toggle.checked = bag[KEY_RECORDING] === true;
+  liveEl.textContent =
+    lv && !fromActiveTab ? `${lv}（直近の視聴ページ）` : lv || '-';
 
   if (!lv) {
     countEl.textContent = '-';
+    exportBtn.disabled = true;
     renderUserRooms([]);
     return;
   }
@@ -89,14 +110,50 @@ async function refresh() {
   const data = await chrome.storage.local.get(key);
   const arr = Array.isArray(data[key]) ? data[key] : [];
   countEl.textContent = String(arr.length);
+  exportBtn.disabled = arr.length === 0;
+  exportBtn.dataset.liveId = lv;
+  exportBtn.dataset.storageKey = key;
   renderUserRooms(arr);
+}
+
+async function downloadCommentsJson(liveId, storageKey) {
+  const data = await chrome.storage.local.get(storageKey);
+  const arr = Array.isArray(data[storageKey]) ? data[storageKey] : [];
+  const payload = {
+    exportedAt: new Date().toISOString(),
+    liveId,
+    count: arr.length,
+    comments: arr
+  };
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: 'application/json;charset=utf-8'
+  });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `nicolivelog-${liveId}-${Date.now()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function initPopup() {
   const toggle = /** @type {HTMLInputElement} */ ($('recordToggle'));
+  const exportBtn = /** @type {HTMLButtonElement} */ ($('exportJson'));
+
   toggle.addEventListener('change', async () => {
     await chrome.storage.local.set({ [KEY_RECORDING]: toggle.checked });
     await refresh();
+  });
+
+  exportBtn.addEventListener('click', async () => {
+    const lv = exportBtn.dataset.liveId;
+    const key = exportBtn.dataset.storageKey;
+    if (!lv || !key || exportBtn.disabled) return;
+    try {
+      await downloadCommentsJson(lv, key);
+    } catch {
+      // no-op
+    }
   });
 
   refresh();

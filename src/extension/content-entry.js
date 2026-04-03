@@ -1,5 +1,9 @@
 import { extractLiveIdFromUrl, isNicoLiveWatchUrl } from '../lib/broadcastUrl.js';
-import { KEY_RECORDING, commentsStorageKey } from '../lib/storageKeys.js';
+import {
+  KEY_LAST_WATCH_URL,
+  KEY_RECORDING,
+  commentsStorageKey
+} from '../lib/storageKeys.js';
 import { mergeNewComments } from '../lib/commentRecord.js';
 import { extractCommentsFromNode } from '../lib/nicoliveDom.js';
 import {
@@ -22,6 +26,18 @@ let observer = null;
 let harvestRunning = false;
 /** @type {WeakMap<Element, true>} */
 const scrollHooked = new WeakMap();
+let lastWatchUrlTimer = null;
+
+function rememberWatchPageUrl() {
+  if (!isNicoLiveWatchUrl(window.location.href)) return;
+  if (lastWatchUrlTimer) clearTimeout(lastWatchUrlTimer);
+  lastWatchUrlTimer = setTimeout(() => {
+    lastWatchUrlTimer = null;
+    chrome.storage.local
+      .set({ [KEY_LAST_WATCH_URL]: window.location.href })
+      .catch(() => {});
+  }, 400);
+}
 
 async function readRecordingFlag() {
   const r = await chrome.storage.local.get(KEY_RECORDING);
@@ -38,10 +54,14 @@ async function persistCommentRows(rows) {
     return;
   }
   const key = commentsStorageKey(liveId);
-  const bag = await chrome.storage.local.get(key);
-  const existing = Array.isArray(bag[key]) ? bag[key] : [];
-  const { next } = mergeNewComments(liveId, existing, rows);
-  await chrome.storage.local.set({ [key]: next });
+  try {
+    const bag = await chrome.storage.local.get(key);
+    const existing = Array.isArray(bag[key]) ? bag[key] : [];
+    const { next } = mergeNewComments(liveId, existing, rows);
+    await chrome.storage.local.set({ [key]: next });
+  } catch {
+    // クォータ超過など（UI はポップアップ側で件数が伸びないことに気づける）
+  }
 }
 
 function syncLiveIdFromLocation() {
@@ -49,6 +69,7 @@ function syncLiveIdFromLocation() {
     liveId = null;
     return;
   }
+  rememberWatchPageUrl();
   const next = extractLiveIdFromUrl(window.location.href);
   if (next !== liveId) {
     liveId = next;

@@ -88,6 +88,30 @@
         padding: 10px;
         text-align: center;
       }
+      .btn-row {
+        margin: 10px 0 0;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      .btn-row button {
+        font: inherit;
+        font-size: 12px;
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid #d1d5db;
+        background: #fff;
+        color: #111827;
+        cursor: pointer;
+      }
+      .btn-row button:disabled {
+        opacity: 0.45;
+        cursor: not-allowed;
+      }
+      .btn-row button:focus-visible {
+        outline: 2px solid #2563eb;
+        outline-offset: 2px;
+      }
     </style>
   </head>
   <body>
@@ -97,6 +121,9 @@
       <input type="checkbox" id="recordToggle" />
       このPCで記録する
     </label>
+    <div class="btn-row">
+      <button type="button" id="exportJson" disabled>JSONをダウンロード</button>
+    </div>
 
     <h2>ユーザー別（しおり）</h2>
     <ul id="userRoomList" aria-live="polite"></ul>
