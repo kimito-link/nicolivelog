@@ -6,12 +6,24 @@
 
 ```bash
 npm install
+npm run verify    # テスト + ビルド（本番読み込み前の確認に使う）
+# または
 npm test
 npm run build
 ```
 
 - ビルド成果物: `extension/dist/content.js`, `extension/dist/popup.js`
 - ウォッチ: `npm run build:watch`（別ターミナルで常駐）
+
+### 本番の放送で使う手順
+
+1. リポジトリで **`npm run verify`**（または `npm run build`）を実行する。  
+2. Chrome の **`chrome://extensions`** で nicolivelog を **再読み込み**する（コードを変えたあとは毎回）。  
+3. **`https://live.nicovideo.jp/watch/lv...`**（実際の放送ページ）を開く。  
+4. ツールバーの拡張アイコン → ポップアップで **「このPCで記録する」** をオンにする。  
+5. しばらく待つか、コメント一覧を少しスクロールすると件数が増えることがあります（仮想リストのため）。
+
+初回だけ拡張の読み込み（上記「拡張機能の読み込み」）が必要です。
 
 ### E2E（Playwright・拡張の読み込み）
 

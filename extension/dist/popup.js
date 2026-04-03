@@ -13,12 +13,19 @@
       return m ? m[0].toLowerCase() : null;
     }
   }
+  function isLocalE2EWatchHost(u) {
+    const host = u.hostname.toLowerCase();
+    const port = u.port || (u.protocol === "https:" ? "443" : "80");
+    return u.protocol === "http:" && (host === "127.0.0.1" || host === "localhost") && port === "3456";
+  }
   function isNicoLiveWatchUrl(url) {
     try {
       const u = new URL(String(url || ""));
       const host = u.hostname.toLowerCase();
+      const pathOk = /\/watch\/lv\d+/i.test(u.pathname);
+      if (isLocalE2EWatchHost(u)) return pathOk;
       if (!host.includes("nicovideo.jp")) return false;
-      return /\/watch\/lv\d+/i.test(u.pathname);
+      return pathOk;
     } catch {
       return false;
     }
