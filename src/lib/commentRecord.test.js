@@ -249,7 +249,7 @@ describe('mergeNewComments', () => {
     expect(storageTouched).toBe(true);
   });
 
-  it('既に userId がある重複行は上書きしない', () => {
+  it('重複行は再収集の userId で上書き（誤検知修正をストレージへ反映）', () => {
     const existing = [
       createCommentEntry({
         liveId: 'lv1',
@@ -259,10 +259,26 @@ describe('mergeNewComments', () => {
       })
     ];
     const { next, added, storageTouched } = mergeNewComments('lv1', existing, [
-      { commentNo: '1', text: 'a', userId: '000' }
+      { commentNo: '1', text: 'a', userId: '87654321' }
     ]);
     expect(added).toHaveLength(0);
-    expect(next[0].userId).toBe('999');
+    expect(next[0].userId).toBe('87654321');
+    expect(storageTouched).toBe(true);
+  });
+
+  it('incoming に userId が無いときは既存 userId を消さない', () => {
+    const existing = [
+      createCommentEntry({
+        liveId: 'lv1',
+        commentNo: '1',
+        text: 'a',
+        userId: '111'
+      })
+    ];
+    const { next, storageTouched } = mergeNewComments('lv1', existing, [
+      { commentNo: '1', text: 'a', userId: null }
+    ]);
+    expect(next[0].userId).toBe('111');
     expect(storageTouched).toBe(false);
   });
 

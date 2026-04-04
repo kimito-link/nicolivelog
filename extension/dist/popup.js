@@ -56,6 +56,7 @@
   var KEY_THUMB_INTERVAL_MS = "nls_thumb_interval_ms";
   var KEY_VOICE_AUTOSEND = "nls_voice_autosend";
   var KEY_COMMENT_ENTER_SEND = "nls_comment_enter_send";
+  var KEY_STORY_GROWTH_COLLAPSED = "nls_story_growth_collapsed";
   var KEY_VOICE_INPUT_DEVICE = "nls_voice_input_device";
   var KEY_SELF_POSTED_RECENTS = "nls_self_posted_recents";
   var KEY_INLINE_PANEL_WIDTH_MODE = "nls_inline_panel_width_mode";
@@ -175,10 +176,22 @@
     const s = String(url || "").trim();
     return /^https?:\/\//i.test(s);
   }
+  function niconicoDefaultUserIconUrl(userId) {
+    const s = String(userId || "").trim();
+    if (!/^\d{5,14}$/.test(s)) return "";
+    const n = Number(s);
+    if (!Number.isFinite(n) || n < 1) return "";
+    const bucket = Math.max(1, Math.floor(n / 1e4));
+    return `https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/${bucket}/${s}.jpg`;
+  }
   function resolveSupportGrowthTileSrc(p) {
     const def = String(p.defaultSrc || "");
     if (isHttpOrHttpsUrl(p.entryAvatarUrl)) {
       return String(p.entryAvatarUrl).trim();
+    }
+    const derived = niconicoDefaultUserIconUrl(p.userId);
+    if (isHttpOrHttpsUrl(derived)) {
+      return derived;
     }
     if (p.isOwnPosted && isHttpOrHttpsUrl(p.viewerAvatarUrl)) {
       return String(p.viewerAvatarUrl).trim();
@@ -826,9 +839,14 @@
   }
   function storyGrowthTileSrcForEntry(entry, liveId) {
     const snap = watchMetaCache.snapshot;
+    const own = isOwnPostedSupportComment(entry, String(liveId || ""));
+    const bc = String(snap?.broadcasterUserId || "").trim();
+    const entUid = String(entry?.userId || "").trim();
+    const mistakenBroadcaster = !own && Boolean(bc && entUid && bc === entUid);
     return resolveSupportGrowthTileSrc({
-      entryAvatarUrl: entry?.avatarUrl,
-      isOwnPosted: isOwnPostedSupportComment(entry, String(liveId || "")),
+      entryAvatarUrl: mistakenBroadcaster ? "" : entry?.avatarUrl,
+      userId: mistakenBroadcaster ? null : entry?.userId ?? null,
+      isOwnPosted: own,
       viewerAvatarUrl: snap?.viewerAvatarUrl,
       defaultSrc: STORY_RINK_TILE_IMG
     });
@@ -1793,6 +1811,19 @@
     if (!cb) return;
     const bag = await chrome.storage.local.get(KEY_COMMENT_ENTER_SEND);
     cb.checked = bag[KEY_COMMENT_ENTER_SEND] === true;
+  }
+  async function applyStoryGrowthCollapsedFromStorage() {
+    const btn = (
+      /** @type {HTMLButtonElement|null} */
+      $("storyGrowthCollapseBtn")
+    );
+    const bag = await chrome.storage.local.get(KEY_STORY_GROWTH_COLLAPSED);
+    const collapsed = bag[KEY_STORY_GROWTH_COLLAPSED] === true;
+    document.body?.classList.toggle("nl-story-growth-collapsed", collapsed);
+    if (btn) {
+      btn.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      btn.textContent = collapsed ? "\u30A2\u30A4\u30B3\u30F3\u5217\u3092\u8868\u793A" : "\u30A2\u30A4\u30B3\u30F3\u5217\u3092\u96A0\u3059";
+    }
   }
   function setVoiceDeviceCheckStatus(el, text, kind = "idle") {
     if (!el) return;
@@ -3149,6 +3180,17 @@
         [KEY_COMMENT_ENTER_SEND]: commentEnterSend.checked
       });
     });
+    const storyGrowthCollapseBtn = $("storyGrowthCollapseBtn");
+    storyGrowthCollapseBtn?.addEventListener("click", () => {
+      void (async () => {
+        const bag = await chrome.storage.local.get(KEY_STORY_GROWTH_COLLAPSED);
+        const collapsed = bag[KEY_STORY_GROWTH_COLLAPSED] === true;
+        await chrome.storage.local.set({
+          [KEY_STORY_GROWTH_COLLAPSED]: !collapsed
+        });
+        await applyStoryGrowthCollapsedFromStorage();
+      })();
+    });
     voiceDeviceSel?.addEventListener("change", async () => {
       await chrome.storage.local.set({
         [KEY_VOICE_INPUT_DEVICE]: voiceDeviceSel.value
@@ -3400,6 +3442,8 @@
       });
       applyCommentEnterSendFromStorage().catch(() => {
       });
+      applyStoryGrowthCollapsedFromStorage().catch(() => {
+      });
       refreshVoiceInputDeviceList().catch(() => {
       });
       safeRefresh();
@@ -3420,6 +3464,10 @@
       }
       if (changes[KEY_COMMENT_ENTER_SEND]) {
         applyCommentEnterSendFromStorage().catch(() => {
+        });
+      }
+      if (changes[KEY_STORY_GROWTH_COLLAPSED]) {
+        applyStoryGrowthCollapsedFromStorage().catch(() => {
         });
       }
       safeRefresh();

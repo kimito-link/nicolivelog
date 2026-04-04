@@ -495,6 +495,42 @@
         margin-top: 0;
       }
 
+      .nl-story-growth-head {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 6px;
+        margin-bottom: 4px;
+      }
+
+      .nl-story-growth-collapse-btn {
+        flex: 0 0 auto;
+        font-size: clamp(10px, calc(var(--nl-base-font) * 0.68), 12px);
+        font-weight: 600;
+        color: var(--nl-accent);
+        background: color-mix(in srgb, var(--nl-surface) 88%, var(--nl-bg-soft) 12%);
+        border: 1px solid var(--nl-border);
+        border-radius: 8px;
+        padding: 4px 10px;
+        cursor: pointer;
+        line-height: 1.25;
+        max-width: 100%;
+      }
+
+      .nl-story-growth-collapse-btn:hover {
+        background: var(--nl-bg-soft);
+      }
+
+      .nl-story-growth-collapse-btn:focus-visible {
+        outline: 2px solid var(--nl-accent);
+        outline-offset: 2px;
+      }
+
+      body.nl-story-growth-collapsed .nl-story-growth-collapsible {
+        display: none;
+      }
+
       .nl-story-meter {
         margin-top: 1px;
       }
@@ -2167,10 +2203,25 @@
               </div>
               <div id="sceneStorySub" class="nl-story-sub">応援コメントの増え方をここで見守るよ。</div>
               <div class="nl-story-meter-wrap">
-                <div id="sceneStoryGauge" class="nl-story-meter" aria-label="応援コメントアイコン表示">
-                  <div id="sceneStoryGrowth" class="nl-story-growth" aria-live="polite"></div>
+                <div class="nl-story-growth-head">
+                  <button
+                    type="button"
+                    id="storyGrowthCollapseBtn"
+                    class="nl-story-growth-collapse-btn"
+                    aria-expanded="true"
+                    aria-controls="storyGrowthCollapsible"
+                  >
+                    アイコン列を隠す
+                  </button>
                 </div>
-                <div id="sceneStoryGaugeLabel" class="nl-story-meter-label">1コメントごとに、りんくが左→右へ増えるよ</div>
+                <div id="storyGrowthCollapsible" class="nl-story-growth-collapsible">
+                  <div id="sceneStoryGauge" class="nl-story-meter" aria-label="応援コメントアイコン表示">
+                    <div id="sceneStoryGrowth" class="nl-story-growth" aria-live="polite"></div>
+                  </div>
+                  <div id="sceneStoryGaugeLabel" class="nl-story-meter-label">
+                    1コメントごとに、りんくが左→右へ増えるよ
+                  </div>
+                </div>
               </div>
               <div id="sceneStoryDetail" class="nl-story-detail" hidden>
                 <div class="nl-story-detail-head">

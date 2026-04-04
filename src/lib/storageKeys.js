@@ -28,6 +28,9 @@ export const KEY_VOICE_AUTOSEND = 'nls_voice_autosend';
 /** ポップアップコメント欄: Enter のみでも送信するか（音声入力メイン向け。既定オフ） */
 export const KEY_COMMENT_ENTER_SEND = 'nls_comment_enter_send';
 
+/** 応援アイコン列（りんくグリッド）を折りたたむか（true で非表示） */
+export const KEY_STORY_GROWTH_COLLAPSED = 'nls_story_growth_collapsed';
+
 /** 音声入力: 使用するマイクの deviceId（空は既定） */
 export const KEY_VOICE_INPUT_DEVICE = 'nls_voice_input_device';
 

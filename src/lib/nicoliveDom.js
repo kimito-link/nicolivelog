@@ -218,6 +218,73 @@ export function extractUserIdFromReactFiber(el) {
   return null;
 }
 
+/**
+ * コメント table-row 自身の fiber のみ見る（親リストの配信者コンテキストを拾わない）
+ * @param {Element} el
+ * @returns {string|null}
+ */
+export function extractUserIdFromReactFiberSelfOnly(el) {
+  if (!el || el.nodeType !== 1) return null;
+  const fiber = getReactFiber(el);
+  if (!fiber) return null;
+  return walkFiberForUserId(fiber, 6);
+}
+
+/**
+ * 行サブツリー内の要素だけを幅優先でたどり、各ノードの fiber（return 連鎖含む）から userId を探す。
+ * 行ルートの fiber は配信者コンテキストになりやすいので既定ではスキップする。
+ *
+ * @param {Element} root
+ * @param {number} [maxNodes]
+ * @param {{ skipRoot?: boolean }} [opts]
+ * @returns {string|null}
+ */
+export function extractUserIdFromReactFiberInSubtree(
+  root,
+  maxNodes = 56,
+  opts = {}
+) {
+  if (!root || root.nodeType !== 1) return null;
+  const skipRoot = Boolean(opts.skipRoot);
+  /** @type {Element[]} */
+  const queue = [];
+  if (!skipRoot) queue.push(root);
+  for (const c of root.children) queue.push(c);
+  let seen = 0;
+  while (queue.length > 0 && seen < maxNodes) {
+    const el = queue.shift();
+    if (!el || el.nodeType !== 1) continue;
+    seen += 1;
+    const id = extractUserIdFromReactFiberSelfOnly(el);
+    if (id) return id;
+    for (const c of el.children) queue.push(c);
+  }
+  return null;
+}
+
+/**
+ * PC コメント一覧の1行に閉じた userId 推定（親DOM・祖先 fiber に上らない）
+ * @param {Element} row
+ * @returns {string|null}
+ */
+export function resolveUserIdForNicoLiveCommentRow(row) {
+  if (!row || row.nodeType !== 1) return null;
+  const fromAttr =
+    row.getAttribute('data-user-id') ||
+    row.getAttribute('data-userid') ||
+    row.getAttribute('data-owner-id') ||
+    '';
+  let userId = String(fromAttr || '').trim() || null;
+  if (!userId) userId = extractUserIdFromLinks(row);
+  if (!userId) userId = extractUserIdFromIconSrc(row);
+  if (!userId) userId = extractUserIdFromDataAttributes(row);
+  if (!userId) {
+    userId = extractUserIdFromReactFiberInSubtree(row, 56, { skipRoot: true });
+  }
+  if (!userId) userId = extractUserIdFromOuterHtml(row);
+  return userId;
+}
+
 /** @param {Element|null} el */
 function getReactFiber(el) {
   if (!el) return null;
@@ -372,7 +439,7 @@ export function parseNicoLiveTableRow(el) {
     .trim();
   if (!text) return null;
 
-  const userId = resolveUserIdOnElement(row);
+  const userId = resolveUserIdForNicoLiveCommentRow(row);
   const base =
     documentBaseHref(row.ownerDocument) || 'https://live.nicovideo.jp/';
   const avatarUrl = extractUserIconUrlFromElement(row, base);

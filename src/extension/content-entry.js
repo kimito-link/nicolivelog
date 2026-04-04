@@ -1319,7 +1319,8 @@ async function postCommentFromContentAsync(rawText) {
  *   noopenerLinks: { text: string, href: string }[],
  *   viewerAvatarUrl: string,
  *   viewerNickname: string,
- *   viewerUserId: string
+ *   viewerUserId: string,
+ *   broadcasterUserId: string
  * }}
  */
 function collectWatchPageSnapshot() {
@@ -1424,6 +1425,12 @@ function collectWatchPageSnapshot() {
     );
   const broadcasterName = broadcasterNameFromDom || broadcasterNameFromMeta;
 
+  const broadcasterUserId = (() => {
+    const href = String(streamLink?.getAttribute('href') || '');
+    const m = href.match(/\/user\/(\d+)/);
+    return m ? m[1] : '';
+  })();
+
   const thumbnailUrl = toAbsoluteUrl(
     clean(metaGet(metaMap, ['og:image', 'twitter:image']))
   );
@@ -1467,7 +1474,8 @@ function collectWatchPageSnapshot() {
     noopenerLinks,
     viewerAvatarUrl: viewer.viewerAvatarUrl,
     viewerNickname: viewer.viewerNickname,
-    viewerUserId: viewer.viewerUserId
+    viewerUserId: viewer.viewerUserId,
+    broadcasterUserId
   };
 }
 

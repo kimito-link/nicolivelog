@@ -15,6 +15,7 @@ import {
   KEY_THUMB_AUTO,
   KEY_THUMB_INTERVAL_MS,
   KEY_COMMENT_ENTER_SEND,
+  KEY_STORY_GROWTH_COLLAPSED,
   KEY_VOICE_AUTOSEND,
   KEY_VOICE_INPUT_DEVICE,
   INLINE_PANEL_WIDTH_PLAYER_ROW,
@@ -75,7 +76,8 @@ import { storageErrorRelevantToLiveId } from '../lib/storageErrorState.js';
  *   noopenerLinks: { text: string, href: string }[],
  *   viewerAvatarUrl?: string,
  *   viewerNickname?: string,
- *   viewerUserId?: string
+ *   viewerUserId?: string,
+ *   broadcasterUserId?: string
  * }} WatchPageSnapshot
  */
 
@@ -730,9 +732,16 @@ function isOwnPostedSupportComment(entry, liveId) {
  */
 function storyGrowthTileSrcForEntry(entry, liveId) {
   const snap = watchMetaCache.snapshot;
+  const own = isOwnPostedSupportComment(entry, String(liveId || ''));
+  const bc = String(snap?.broadcasterUserId || '').trim();
+  const entUid = String(entry?.userId || '').trim();
+  /** 祖先 fiber 等で配信者IDが誤って付いた行はアイコン推定しない（全タイルが配信者化するのを防ぐ） */
+  const mistakenBroadcaster =
+    !own && Boolean(bc && entUid && bc === entUid);
   return resolveSupportGrowthTileSrc({
-    entryAvatarUrl: entry?.avatarUrl,
-    isOwnPosted: isOwnPostedSupportComment(entry, String(liveId || '')),
+    entryAvatarUrl: mistakenBroadcaster ? '' : entry?.avatarUrl,
+    userId: mistakenBroadcaster ? null : entry?.userId ?? null,
+    isOwnPosted: own,
     viewerAvatarUrl: snap?.viewerAvatarUrl,
     defaultSrc: STORY_RINK_TILE_IMG
   });
@@ -1856,6 +1865,17 @@ async function applyCommentEnterSendFromStorage() {
   if (!cb) return;
   const bag = await chrome.storage.local.get(KEY_COMMENT_ENTER_SEND);
   cb.checked = bag[KEY_COMMENT_ENTER_SEND] === true;
+}
+
+async function applyStoryGrowthCollapsedFromStorage() {
+  const btn = /** @type {HTMLButtonElement|null} */ ($('storyGrowthCollapseBtn'));
+  const bag = await chrome.storage.local.get(KEY_STORY_GROWTH_COLLAPSED);
+  const collapsed = bag[KEY_STORY_GROWTH_COLLAPSED] === true;
+  document.body?.classList.toggle('nl-story-growth-collapsed', collapsed);
+  if (btn) {
+    btn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    btn.textContent = collapsed ? 'アイコン列を表示' : 'アイコン列を隠す';
+  }
 }
 
 /** @param {HTMLElement|null} el @param {string} text @param {'idle'|'error'|'success'} [kind] */
@@ -3329,6 +3349,18 @@ function initPopup() {
     });
   });
 
+  const storyGrowthCollapseBtn = $('storyGrowthCollapseBtn');
+  storyGrowthCollapseBtn?.addEventListener('click', () => {
+    void (async () => {
+      const bag = await chrome.storage.local.get(KEY_STORY_GROWTH_COLLAPSED);
+      const collapsed = bag[KEY_STORY_GROWTH_COLLAPSED] === true;
+      await chrome.storage.local.set({
+        [KEY_STORY_GROWTH_COLLAPSED]: !collapsed
+      });
+      await applyStoryGrowthCollapsedFromStorage();
+    })();
+  });
+
   voiceDeviceSel?.addEventListener('change', async () => {
     await chrome.storage.local.set({
       [KEY_VOICE_INPUT_DEVICE]: voiceDeviceSel.value
@@ -3587,6 +3619,7 @@ function initPopup() {
       applyThumbSelectFromStorage().catch(() => {});
       applyVoiceAutosendFromStorage().catch(() => {});
       applyCommentEnterSendFromStorage().catch(() => {});
+      applyStoryGrowthCollapsedFromStorage().catch(() => {});
       refreshVoiceInputDeviceList().catch(() => {});
       safeRefresh();
     });
@@ -3604,6 +3637,9 @@ function initPopup() {
     }
     if (changes[KEY_COMMENT_ENTER_SEND]) {
       applyCommentEnterSendFromStorage().catch(() => {});
+    }
+    if (changes[KEY_STORY_GROWTH_COLLAPSED]) {
+      applyStoryGrowthCollapsedFromStorage().catch(() => {});
     }
     safeRefresh();
   });

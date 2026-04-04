@@ -338,7 +338,7 @@
             }
           }
           const incUid = row.userId ? String(row.userId).trim() : "";
-          if (incUid && !ex.userId) {
+          if (incUid && String(ex.userId || "").trim() !== incUid) {
             patched = { ...patched, userId: incUid };
             touched = true;
           }
@@ -514,6 +514,42 @@
     }
     return null;
   }
+  function extractUserIdFromReactFiberSelfOnly(el) {
+    if (!el || el.nodeType !== 1) return null;
+    const fiber = getReactFiber(el);
+    if (!fiber) return null;
+    return walkFiberForUserId(fiber, 6);
+  }
+  function extractUserIdFromReactFiberInSubtree(root, maxNodes = 56, opts = {}) {
+    if (!root || root.nodeType !== 1) return null;
+    const skipRoot = Boolean(opts.skipRoot);
+    const queue = [];
+    if (!skipRoot) queue.push(root);
+    for (const c of root.children) queue.push(c);
+    let seen = 0;
+    while (queue.length > 0 && seen < maxNodes) {
+      const el = queue.shift();
+      if (!el || el.nodeType !== 1) continue;
+      seen += 1;
+      const id = extractUserIdFromReactFiberSelfOnly(el);
+      if (id) return id;
+      for (const c of el.children) queue.push(c);
+    }
+    return null;
+  }
+  function resolveUserIdForNicoLiveCommentRow(row) {
+    if (!row || row.nodeType !== 1) return null;
+    const fromAttr = row.getAttribute("data-user-id") || row.getAttribute("data-userid") || row.getAttribute("data-owner-id") || "";
+    let userId = String(fromAttr || "").trim() || null;
+    if (!userId) userId = extractUserIdFromLinks(row);
+    if (!userId) userId = extractUserIdFromIconSrc(row);
+    if (!userId) userId = extractUserIdFromDataAttributes(row);
+    if (!userId) {
+      userId = extractUserIdFromReactFiberInSubtree(row, 56, { skipRoot: true });
+    }
+    if (!userId) userId = extractUserIdFromOuterHtml(row);
+    return userId;
+  }
   function getReactFiber(el) {
     if (!el) return null;
     const keys = Object.keys(el);
@@ -630,7 +666,7 @@
     if (!commentNo || !/^\d{1,9}$/.test(commentNo)) return null;
     const text = String(textEl.textContent || "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
     if (!text) return null;
-    const userId = resolveUserIdOnElement(row);
+    const userId = resolveUserIdForNicoLiveCommentRow(row);
     const base = documentBaseHref(row.ownerDocument) || "https://live.nicovideo.jp/";
     const avatarUrl = extractUserIconUrlFromElement(row, base);
     const out = { commentNo, text, userId };
@@ -2211,6 +2247,11 @@
       document.querySelector('[class*="userName"], [class*="streamerName"]')?.textContent || ""
     );
     const broadcasterName = broadcasterNameFromDom || broadcasterNameFromMeta;
+    const broadcasterUserId = (() => {
+      const href = String(streamLink?.getAttribute("href") || "");
+      const m = href.match(/\/user\/(\d+)/);
+      return m ? m[1] : "";
+    })();
     const thumbnailUrl = toAbsoluteUrl(
       clean(metaGet(metaMap, ["og:image", "twitter:image"]))
     );
@@ -2245,7 +2286,8 @@
       noopenerLinks,
       viewerAvatarUrl: viewer.viewerAvatarUrl,
       viewerNickname: viewer.viewerNickname,
-      viewerUserId: viewer.viewerUserId
+      viewerUserId: viewer.viewerUserId,
+      broadcasterUserId
     };
   }
   function isWatchPageMainFrameForMessages() {

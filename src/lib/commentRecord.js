@@ -130,7 +130,8 @@ export function mergeNewComments(liveId, existing, incoming) {
         }
 
         const incUid = row.userId ? String(row.userId).trim() : '';
-        if (incUid && !ex.userId) {
+        /** 再収集で正しい ID が付いたとき上書き（fiber 誤検知の修正をストレージに反映） */
+        if (incUid && String(ex.userId || '').trim() !== incUid) {
           patched = { ...patched, userId: incUid };
           touched = true;
         }

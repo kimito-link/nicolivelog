@@ -10,7 +10,8 @@ import {
   extractUserIdFromOuterHtml,
   extractUserIdFromIconSrc,
   extractUserIconUrlFromElement,
-  extractUserIdFromReactFiber
+  extractUserIdFromReactFiber,
+  resolveUserIdForNicoLiveCommentRow
 } from './nicoliveDom.js';
 
 describe('parseCommentLineText', () => {
@@ -340,6 +341,43 @@ describe('extractCommentsFromNode', () => {
   });
 });
 
+describe('resolveUserIdForNicoLiveCommentRow', () => {
+  it('親要素の React fiber userId は参照しない（配信者コンテキストの誤検知防止）', () => {
+    const parent = document.createElement('div');
+    parent['__reactFiber$parent'] = {
+      memoizedProps: { userId: '11111111' },
+      return: null
+    };
+    const row = document.createElement('div');
+    row.className = 'table-row';
+    row.setAttribute('data-comment-type', 'normal');
+    row.innerHTML =
+      '<span class="comment-number">1</span><span class="comment-text">a</span>';
+    parent.appendChild(row);
+    expect(resolveUserIdForNicoLiveCommentRow(row)).toBe(null);
+  });
+
+  it('行ルートはスキップし、行内子の fiber userId を採用', () => {
+    const row = document.createElement('div');
+    row.className = 'table-row';
+    row.setAttribute('data-comment-type', 'normal');
+    row['__reactFiber$shell'] = {
+      memoizedProps: { userId: '11111111' },
+      return: null
+    };
+    const cell = document.createElement('span');
+    cell.className = 'content-area';
+    cell.innerHTML =
+      '<span class="comment-number">2</span><span class="comment-text">b</span>';
+    cell['__reactFiber$cell'] = {
+      memoizedProps: { userId: '87654321' },
+      return: null
+    };
+    row.appendChild(cell);
+    expect(resolveUserIdForNicoLiveCommentRow(row)).toBe('87654321');
+  });
+});
+
 describe('extractUserIdFromReactFiber', () => {
   it('fiber の memoizedProps.userId を取得', () => {
     const el = document.createElement('div');
@@ -394,15 +432,18 @@ describe('extractUserIdFromReactFiber', () => {
     expect(extractUserIdFromReactFiber(el)).toBe('9988776');
   });
 
-  it('parseNicoLiveTableRow が fiber 経由で userId を返す', () => {
+  it('parseNicoLiveTableRow が行内子の fiber 経由で userId を返す', () => {
     const wrap = document.createElement('div');
     wrap.innerHTML = `
       <div class="table-row" role="row" data-comment-type="normal">
-        <span class="comment-number">42</span>
-        <span class="comment-text">fiber test</span>
+        <span class="content-area">
+          <span class="comment-number">42</span>
+          <span class="comment-text">fiber test</span>
+        </span>
       </div>`;
     const row = wrap.querySelector('.table-row');
-    row['__reactFiber$fiberKey'] = {
+    const cell = wrap.querySelector('.content-area');
+    cell['__reactFiber$fiberKey'] = {
       memoizedProps: { comment: { userId: '5544332' } },
       return: null
     };
