@@ -10,6 +10,7 @@ import {
   INLINE_PANEL_WIDTH_VIDEO,
   commentsStorageKey,
   isCommentEnterSendEnabled,
+  isRecordingEnabled,
   normalizeInlinePanelWidthMode
 } from './storageKeys.js';
 
@@ -45,5 +46,12 @@ describe('storage key constants', () => {
     expect(isCommentEnterSendEnabled(null)).toBe(true);
     expect(isCommentEnterSendEnabled(true)).toBe(true);
     expect(isCommentEnterSendEnabled(false)).toBe(false);
+  });
+
+  it('isRecordingEnabled は false のみ無効（未設定時は既定ON）', () => {
+    expect(isRecordingEnabled(undefined)).toBe(true);
+    expect(isRecordingEnabled(null)).toBe(true);
+    expect(isRecordingEnabled(true)).toBe(true);
+    expect(isRecordingEnabled(false)).toBe(false);
   });
 });

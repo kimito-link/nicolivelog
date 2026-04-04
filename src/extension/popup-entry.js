@@ -22,6 +22,7 @@ import {
   INLINE_PANEL_WIDTH_VIDEO,
   commentsStorageKey,
   isCommentEnterSendEnabled,
+  isRecordingEnabled,
   normalizeInlinePanelWidthMode
 } from '../lib/storageKeys.js';
 import { commentComposeKeyAction } from '../lib/commentComposeShortcuts.js';
@@ -35,6 +36,8 @@ import {
   buildDedupeKey,
   normalizeCommentText
 } from '../lib/commentRecord.js';
+import { summarizeRecordedCommenters } from '../lib/liveCommenterStats.js';
+import { parseViewerCountFromLooseText } from '../lib/liveAudienceDom.js';
 import { pickLatestCommentEntry } from '../lib/pickLatestComment.js';
 import {
   aggregateCommentsByUser,
@@ -78,7 +81,8 @@ import { storageErrorRelevantToLiveId } from '../lib/storageErrorState.js';
  *   viewerAvatarUrl?: string,
  *   viewerNickname?: string,
  *   viewerUserId?: string,
- *   broadcasterUserId?: string
+ *   broadcasterUserId?: string,
+ *   viewerCountFromDom?: number|null
  * }} WatchPageSnapshot
  */
 
@@ -88,6 +92,7 @@ function $(id) {
 }
 
 function syncVoiceCommentButton() {
+  if (!hasExtensionContext()) return;
   const post = /** @type {HTMLButtonElement|null} */ ($('postCommentBtn'));
   const voice = /** @type {HTMLButtonElement|null} */ ($('voiceCommentBtn'));
   const srCheck = /** @type {HTMLButtonElement|null} */ ($('voiceSrCheck'));
@@ -252,6 +257,83 @@ function withCommentSendTroubleshootHint(message) {
   return `${s}\n※うまくいかないとき：watchページを再読み込み（F5）。拡張を直したあとは chrome://extensions で nicolivelog を「更新」。`;
 }
 
+/** @param {unknown} err */
+function isExtensionContextInvalidatedError(err) {
+  const msg =
+    err && typeof err === 'object' && 'message' in err
+      ? String(/** @type {{ message?: unknown }} */ (err).message || '')
+      : String(err || '');
+  return /Extension context invalidated/i.test(msg);
+}
+
+function hasExtensionContext() {
+  try {
+    return Boolean(globalThis.chrome?.runtime?.id);
+  } catch {
+    return false;
+  }
+}
+
+let extensionContextErrorGuardInstalled = false;
+function installExtensionContextErrorGuard() {
+  if (extensionContextErrorGuardInstalled) return;
+  extensionContextErrorGuardInstalled = true;
+  globalThis.addEventListener('unhandledrejection', (ev) => {
+    if (!isExtensionContextInvalidatedError(ev.reason)) return;
+    ev.preventDefault();
+  });
+  globalThis.addEventListener('error', (ev) => {
+    if (!isExtensionContextInvalidatedError(ev.error || ev.message)) return;
+    ev.preventDefault();
+  });
+}
+
+/**
+ * @param {Record<string, unknown>} bag
+ * @returns {Promise<boolean>}
+ */
+async function storageSetSafe(bag) {
+  if (!hasExtensionContext()) return false;
+  try {
+    await chrome.storage.local.set(bag);
+    return true;
+  } catch (e) {
+    if (isExtensionContextInvalidatedError(e)) return false;
+    throw e;
+  }
+}
+
+/**
+ * @param {string|string[]} key
+ * @returns {Promise<boolean>}
+ */
+async function storageRemoveSafe(key) {
+  if (!hasExtensionContext()) return false;
+  try {
+    await chrome.storage.local.remove(key);
+    return true;
+  } catch (e) {
+    if (isExtensionContextInvalidatedError(e)) return false;
+    throw e;
+  }
+}
+
+/**
+ * @template T
+ * @param {string|string[]} key
+ * @param {T} fallback
+ * @returns {Promise<T>}
+ */
+async function storageGetSafe(key, fallback) {
+  if (!hasExtensionContext()) return fallback;
+  try {
+    return /** @type {T} */ (await chrome.storage.local.get(key));
+  } catch (e) {
+    if (isExtensionContextInvalidatedError(e)) return fallback;
+    throw e;
+  }
+}
+
 /** @param {unknown} s */
 function escapeHtml(s) {
   return String(s || '')
@@ -270,6 +352,11 @@ function escapeAttr(s) {
 const watchMetaCache = {
   key: '',
   snapshot: null
+};
+
+const INTERCEPT_BACKFILL_STATE = {
+  liveId: '',
+  deepTried: false
 };
 
 const DEFAULT_FRAME_ID = 'light';
@@ -662,7 +749,7 @@ async function appendSelfPostedComment(liveId, rawText) {
   while (next.length > MAX_SELF_POSTED_ITEMS) next.shift();
   selfPostedRecentsCache = next;
   try {
-    await chrome.storage.local.set({
+    await storageSetSafe({
       [KEY_SELF_POSTED_RECENTS]: { items: next }
     });
   } catch {
@@ -695,7 +782,7 @@ async function revertLastSelfPostedComment(liveId, rawText) {
   const next = selfPostedRecentsCache.filter((_, i) => i !== bestIdx);
   selfPostedRecentsCache = next;
   try {
-    await chrome.storage.local.set({
+    await storageSetSafe({
       [KEY_SELF_POSTED_RECENTS]: { items: next }
     });
   } catch {
@@ -728,24 +815,110 @@ function isOwnPostedSupportComment(entry, liveId) {
 }
 
 /**
+ * 同一 userId で過去に取れた avatarUrl を再利用する（仮想スクロールの欠落補完）
+ * @param {unknown} userId
+ */
+function rememberedAvatarUrlForUserId(userId) {
+  const uid = String(userId || '').trim();
+  if (!uid) return '';
+  const list = STORY_SOURCE_STATE?.entries;
+  if (!Array.isArray(list) || list.length === 0) return '';
+  for (let i = list.length - 1; i >= 0; i -= 1) {
+    const e = list[i];
+    if (String(e?.userId || '').trim() !== uid) continue;
+    const av = String(e?.avatarUrl || '').trim();
+    if (isHttpOrHttpsUrl(av)) return av;
+  }
+  return '';
+}
+
+/** @param {string} raw */
+function avatarCompareKey(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  try {
+    const u = new URL(s);
+    u.search = '';
+    u.hash = '';
+    return u.href;
+  } catch {
+    return s;
+  }
+}
+
+/** @param {string} a @param {string} b */
+function isSameAvatarUrl(a, b) {
+  const ka = avatarCompareKey(a);
+  const kb = avatarCompareKey(b);
+  return Boolean(ka && kb && ka === kb);
+}
+
+/** @param {PopupCommentEntry[]} entries */
+function countEntriesWithUserId(entries) {
+  let n = 0;
+  for (const e of entries) {
+    if (String(e?.userId || '').trim()) n += 1;
+  }
+  return n;
+}
+
+/** @param {PopupCommentEntry[]} entries */
+function countEntriesWithAvatar(entries) {
+  let n = 0;
+  for (const e of entries) {
+    if (isHttpOrHttpsUrl(String(e?.avatarUrl || '').trim())) n += 1;
+  }
+  return n;
+}
+
+/** @param {PopupCommentEntry[]} entries */
+function countUniqueAvatarEntries(entries) {
+  const set = new Set();
+  for (const e of entries) {
+    const k = avatarCompareKey(String(e?.avatarUrl || '').trim());
+    if (k) set.add(k);
+  }
+  return set.size;
+}
+
+/**
  * @param {PopupCommentEntry|null|undefined} entry
  * @param {string} [liveId]
+ * @returns {string} user icon URL。無ければ空
  */
-function storyGrowthTileSrcForEntry(entry, liveId) {
+function storyGrowthAvatarSrcCandidate(entry, liveId) {
   const snap = watchMetaCache.snapshot;
   const own = isOwnPostedSupportComment(entry, String(liveId || ''));
   const bc = String(snap?.broadcasterUserId || '').trim();
   const entUid = String(entry?.userId || '').trim();
-  /** 祖先 fiber 等で配信者IDが誤って付いた行はアイコン推定しない（全タイルが配信者化するのを防ぐ） */
+  const avatarUrl = String(entry?.avatarUrl || '').trim();
+  const viewerAvatarUrl = String(snap?.viewerAvatarUrl || '').trim();
   const mistakenBroadcaster =
     !own && Boolean(bc && entUid && bc === entUid);
-  return resolveSupportGrowthTileSrc({
-    entryAvatarUrl: mistakenBroadcaster ? '' : entry?.avatarUrl,
+  const fallbackAvatar =
+    mistakenBroadcaster || (viewerAvatarUrl && isSameAvatarUrl(avatarUrl, viewerAvatarUrl) && !own)
+      ? ''
+      : rememberedAvatarUrlForUserId(entUid);
+  const effectiveAvatar =
+    viewerAvatarUrl && isSameAvatarUrl(avatarUrl, viewerAvatarUrl) && !own
+      ? ''
+      : avatarUrl;
+  const src = resolveSupportGrowthTileSrc({
+    entryAvatarUrl: effectiveAvatar || fallbackAvatar,
     userId: mistakenBroadcaster ? null : entry?.userId ?? null,
     isOwnPosted: own,
     viewerAvatarUrl: snap?.viewerAvatarUrl,
-    defaultSrc: STORY_RINK_TILE_IMG
+    defaultSrc: ''
   });
+  return isHttpOrHttpsUrl(src) ? src : '';
+}
+
+/**
+ * @param {PopupCommentEntry|null|undefined} entry
+ * @param {string} [liveId]
+ */
+function storyGrowthTileSrcForEntry(entry, liveId) {
+  return storyGrowthAvatarSrcCandidate(entry, liveId) || STORY_RINK_TILE_IMG;
 }
 
 const STORY_HOP_STATE = {
@@ -883,6 +1056,19 @@ const STORY_SOURCE_STATE = {
   entries: /** @type {PopupCommentEntry[]} */ ([])
 };
 
+const STORY_AVATAR_DIAG_STATE = {
+  total: 0,
+  withUid: 0,
+  withAvatar: 0,
+  uniqueAvatar: 0,
+  interceptItems: 0,
+  interceptWithUid: 0,
+  interceptWithAvatar: 0,
+  mergedPatched: 0,
+  mergedUidReplaced: 0,
+  stripped: 0
+};
+
 /** @param {PopupCommentEntry|null|undefined} entry */
 function commentStableId(entry) {
   if (!entry) return '';
@@ -993,6 +1179,99 @@ function bindStoryDetailHoverBridge() {
   });
 }
 
+function renderStoryUserLane() {
+  const lane = /** @type {HTMLElement|null} */ ($('sceneStoryUserLane'));
+  if (!lane) return;
+  const entries = Array.isArray(STORY_SOURCE_STATE.entries)
+    ? STORY_SOURCE_STATE.entries
+    : [];
+  if (!entries.length) {
+    lane.innerHTML = '';
+    lane.hidden = true;
+    return;
+  }
+
+  const limit = INLINE_MODE ? 48 : 24;
+  /** @type {{ src: string, title: string }[]} */
+  const picked = [];
+  const seen = new Set();
+  const liveId = String(STORY_SOURCE_STATE.liveId || '');
+  for (let i = entries.length - 1; i >= 0 && picked.length < limit; i -= 1) {
+    const e = entries[i];
+    const src = storyGrowthAvatarSrcCandidate(e, liveId);
+    if (!src) continue;
+    const uid = String(e?.userId || '').trim();
+    const key = uid || src;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const label = storyGrowthDisplayLabel(e, liveId) || 'ユーザー';
+    picked.push({ src, title: label });
+  }
+
+  lane.innerHTML = '';
+  if (!picked.length) {
+    lane.hidden = true;
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  for (const p of picked) {
+    const img = document.createElement('img');
+    img.className = 'nl-story-userlane-avatar';
+    img.src = p.src;
+    img.alt = '';
+    img.title = p.title;
+    img.decoding = 'async';
+    if (isHttpOrHttpsUrl(p.src)) {
+      img.referrerPolicy = 'no-referrer';
+    }
+    frag.appendChild(img);
+  }
+  lane.appendChild(frag);
+  lane.setAttribute(
+    'aria-label',
+    `最近の応援ユーザーサムネイル ${picked.length}件`
+  );
+  lane.hidden = false;
+}
+
+function renderStoryAvatarDiag() {
+  const el = /** @type {HTMLElement|null} */ ($('storyAvatarDiag'));
+  if (!el) return;
+  const s = STORY_AVATAR_DIAG_STATE;
+  const severe =
+    s.total >= 50 &&
+    (s.withAvatar <= Math.max(2, Math.floor(s.total * 0.02)) ||
+      s.uniqueAvatar <= 2);
+  if (!severe) {
+    el.hidden = true;
+    el.textContent = '';
+    return;
+  }
+  el.textContent =
+    `診断: avatar ${s.withAvatar}/${s.total}（種類 ${s.uniqueAvatar}）` +
+    ` / uid ${s.withUid}/${s.total}` +
+    ` / intercept ${s.interceptItems}件（uid ${s.interceptWithUid}, avatar ${s.interceptWithAvatar}）` +
+    ` / 補完 ${s.mergedPatched}件` +
+    (s.mergedUidReplaced > 0 ? `（UID置換 ${s.mergedUidReplaced}）` : '') +
+    (s.stripped > 0 ? ` / 汚染除去 ${s.stripped}件` : '');
+  el.hidden = false;
+}
+
+function resetStoryAvatarDiagState() {
+  STORY_AVATAR_DIAG_STATE.total = 0;
+  STORY_AVATAR_DIAG_STATE.withUid = 0;
+  STORY_AVATAR_DIAG_STATE.withAvatar = 0;
+  STORY_AVATAR_DIAG_STATE.uniqueAvatar = 0;
+  STORY_AVATAR_DIAG_STATE.interceptItems = 0;
+  STORY_AVATAR_DIAG_STATE.interceptWithUid = 0;
+  STORY_AVATAR_DIAG_STATE.interceptWithAvatar = 0;
+  STORY_AVATAR_DIAG_STATE.mergedPatched = 0;
+  STORY_AVATAR_DIAG_STATE.mergedUidReplaced = 0;
+  STORY_AVATAR_DIAG_STATE.stripped = 0;
+  renderStoryAvatarDiag();
+}
+
 /**
  * @param {string} liveId
  * @param {PopupCommentEntry[]} arr
@@ -1018,6 +1297,8 @@ function syncStorySourceEntries(liveId, arr) {
   }
 
   syncGrowthIconSelection(STORY_GROWTH_STATE.root);
+  renderStoryUserLane();
+  renderStoryAvatarDiag();
   renderStoryCommentDetailPanel();
 }
 
@@ -1579,6 +1860,11 @@ function clearWatchMetaCard() {
   const broadcaster = $('watchBroadcaster');
   const thumb = /** @type {HTMLImageElement} */ ($('watchThumb'));
   const tags = $('watchTags');
+  const audience = $('watchAudience');
+  const viewerDomEl = $('watchViewerDom');
+  const uniqueEl = $('watchUniqueUsers');
+  const noIdEl = $('watchCommentsNoId');
+  const noteEl = $('watchAudienceNote');
   if (!wrap || !title || !broadcaster || !thumb || !tags) return;
   wrap.hidden = true;
   title.textContent = '-';
@@ -1586,15 +1872,31 @@ function clearWatchMetaCard() {
   thumb.hidden = true;
   thumb.removeAttribute('src');
   tags.innerHTML = '';
+  if (audience) audience.hidden = true;
+  if (viewerDomEl) viewerDomEl.textContent = '—';
+  if (uniqueEl) {
+    uniqueEl.textContent = '—';
+    uniqueEl.removeAttribute('title');
+  }
+  if (noIdEl) noIdEl.textContent = '—';
+  if (noteEl) noteEl.textContent = '';
 }
 
-/** @param {WatchPageSnapshot|null} snapshot */
-function renderWatchMetaCard(snapshot) {
+/**
+ * @param {WatchPageSnapshot|null} snapshot
+ * @param {PopupCommentEntry[]} [commentEntries]
+ */
+function renderWatchMetaCard(snapshot, commentEntries = []) {
   const wrap = $('watchMeta');
   const title = $('watchTitle');
   const broadcaster = $('watchBroadcaster');
   const thumb = /** @type {HTMLImageElement} */ ($('watchThumb'));
   const tags = $('watchTags');
+  const audience = $('watchAudience');
+  const viewerDomEl = $('watchViewerDom');
+  const uniqueEl = $('watchUniqueUsers');
+  const noIdEl = $('watchCommentsNoId');
+  const noteEl = $('watchAudienceNote');
   if (!wrap || !title || !broadcaster || !thumb || !tags) return;
   if (!snapshot) {
     clearWatchMetaCard();
@@ -1625,6 +1927,41 @@ function renderWatchMetaCard(snapshot) {
     thumb.hidden = true;
     thumb.removeAttribute('src');
   }
+
+  const vc = snapshot.viewerCountFromDom;
+  if (viewerDomEl) {
+    viewerDomEl.textContent =
+      typeof vc === 'number' && Number.isFinite(vc) && vc >= 0
+        ? String(vc)
+        : '—';
+  }
+  const st = summarizeRecordedCommenters(
+    Array.isArray(commentEntries) ? commentEntries : []
+  );
+  if (uniqueEl) {
+    if (st.uniqueKnownUserIds > 0) {
+      uniqueEl.textContent = String(st.uniqueKnownUserIds);
+      uniqueEl.title = 'userId が取れたコメントについての distinct 数';
+    } else if (st.distinctAvatarUrls > 0) {
+      uniqueEl.textContent = `≈${st.distinctAvatarUrls}`;
+      uniqueEl.title =
+        'userId 未取得のため、記録された https アイコン URL の種類数を参考表示（重複アイコンは1にまとまります）';
+    } else {
+      uniqueEl.textContent = '0';
+      uniqueEl.title =
+        'userId も有効な avatarUrl も無いコメントのみのときは 0 のままです';
+    }
+  }
+  if (noIdEl) noIdEl.textContent = String(st.commentsWithoutUserId);
+  if (noteEl) {
+    const parts = [
+      '公式の数値ではありません。同時接続は embedded-data / WebSocket / ページ再取得からの読み取りで、約45秒ごとに更新されます。',
+      'ユニークは userId の種類数（未取得時は https のアイコン URL の種類数を ≈ で表示）です。'
+    ];
+    noteEl.textContent = parts.join('');
+  }
+  if (audience) audience.hidden = false;
+
   wrap.hidden = false;
 }
 
@@ -1659,21 +1996,28 @@ async function renderStorageErrorBanner(viewerLiveId = '') {
   }
 }
 
+/**
+ * @param {number} totalRecent
+ * @param {number} activeUsers
+ * @param {number} heatPercent
+ * @param {string} heatText
+ */
+function renderRoomHeatSummary(totalRecent, activeUsers, heatPercent, heatText) {
+  const summary = /** @type {HTMLElement|null} */ ($('roomHeatSummary'));
+  const meta = $('roomHeatMeta');
+  const fill = /** @type {HTMLElement|null} */ ($('roomHeatFill'));
+  const note = $('roomHeatNote');
+  if (!summary || !meta || !fill || !note) return;
+  summary.hidden = false;
+  meta.textContent = `+${totalRecent}件 / ${activeUsers}人`;
+  fill.style.width = `${Math.max(0, Math.min(100, Number(heatPercent) || 0)).toFixed(2)}%`;
+  note.textContent = `${heatText}（この5分で増えた件数）`;
+}
+
 /** @param {PopupCommentEntry[]} entries */
 function renderUserRooms(entries) {
   const ul = /** @type {HTMLUListElement} */ ($('userRoomList'));
   if (!ul) return;
-
-  const rooms = aggregateCommentsByUser(entries);
-  ul.innerHTML = '';
-
-  if (!rooms.length) {
-    const li = document.createElement('li');
-    li.className = 'empty-hint';
-    li.textContent = 'まだコメントがありません';
-    ul.appendChild(li);
-    return;
-  }
 
   const list = Array.isArray(entries) ? entries : [];
   const latestAt = list.reduce((max, e) => {
@@ -1690,6 +2034,30 @@ function renderUserRooms(entries) {
     const uid = e?.userId ? String(e.userId).trim() : '';
     const userKey = uid || UNKNOWN_USER_KEY;
     recentMap.set(userKey, (recentMap.get(userKey) || 0) + 1);
+  }
+  const recentCounts = Array.from(recentMap.values());
+  const totalRecent = recentCounts.reduce((sum, v) => sum + v, 0);
+  const activeUsers = recentCounts.filter((v) => v > 0).length;
+  const heatPercent = totalRecent > 0 ? Math.min(100, Math.log10(totalRecent + 1) * 38) : 0;
+  const heatText =
+    totalRecent >= 50
+      ? '増加がとても大きい'
+      : totalRecent >= 20
+        ? '増加が大きい'
+        : totalRecent >= 5
+          ? '増加あり'
+          : '増加は少なめ';
+  renderRoomHeatSummary(totalRecent, activeUsers, heatPercent, heatText);
+
+  const rooms = aggregateCommentsByUser(list);
+  ul.innerHTML = '';
+
+  if (!rooms.length) {
+    const li = document.createElement('li');
+    li.className = 'empty-hint';
+    li.textContent = 'まだコメントがありません';
+    ul.appendChild(li);
+    return;
   }
 
   const rankedRooms = rooms
@@ -1711,33 +2079,6 @@ function renderUserRooms(entries) {
   const visibleRooms = rankedRooms.slice(0, MAX_VISIBLE_ROOMS);
   const maxTotal = Math.max(1, ...visibleRooms.map((v) => v.count));
   const maxRecent = Math.max(1, ...visibleRooms.map((v) => v.recentCount));
-  const totalRecent = rankedRooms.reduce((sum, v) => sum + v.recentCount, 0);
-  const activeUsers = rankedRooms.filter((v) => v.recentCount > 0).length;
-  const heatPercent = totalRecent > 0 ? Math.min(100, Math.log10(totalRecent + 1) * 38) : 0;
-  const heatText =
-    totalRecent >= 50
-      ? '増加がとても大きい'
-      : totalRecent >= 20
-        ? '増加が大きい'
-        : totalRecent >= 5
-          ? '増加あり'
-          : '増加は少なめ';
-
-  if (!compactRooms) {
-    const summaryLi = document.createElement('li');
-    summaryLi.className = 'room-heat';
-    summaryLi.innerHTML = `
-      <div class="room-heat-head">
-        <span class="room-heat-title">直近5分の応援増加</span>
-        <span class="room-heat-meta">+${totalRecent}件 / ${activeUsers}人</span>
-      </div>
-      <div class="room-heat-track">
-        <div class="room-heat-fill" style="width:${heatPercent.toFixed(2)}%"></div>
-      </div>
-      <div class="room-heat-note">${heatText}（この5分で増えた件数）</div>
-    `;
-    ul.appendChild(summaryLi);
-  }
 
   for (const r of visibleRooms) {
     const li = document.createElement('li');
@@ -1806,6 +2147,197 @@ async function sendMessageToWatchTabs(watchUrl, message) {
     }
   }
   return null;
+}
+
+/**
+ * @param {unknown} raw
+ * @returns {{ no: string, uid: string, name: string, av: string }[]}
+ */
+function normalizeInterceptCacheItems(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  for (const v of raw) {
+    if (!v || typeof v !== 'object') continue;
+    const item = /** @type {{ no?: unknown, uid?: unknown, name?: unknown, av?: unknown }} */ (
+      v
+    );
+    const no = String(item.no || '').trim();
+    const uid = String(item.uid || '').trim();
+    if (!no) continue;
+    const name = String(item.name || '').trim();
+    const av = isHttpOrHttpsUrl(item.av) ? String(item.av || '').trim() : '';
+    if (!uid && !name && !av) continue;
+    out.push({ no, uid, name, av });
+  }
+  return out;
+}
+
+/**
+ * @param {string} watchUrl
+ * @param {{ deep?: boolean }} [opts]
+ * @returns {Promise<{ no: string, uid: string, name: string, av: string }[]>}
+ */
+async function requestInterceptCacheFromOpenTab(watchUrl, opts = {}) {
+  const res = /** @type {{ ok?: boolean, items?: unknown }|null} */ (
+    await sendMessageToWatchTabs(watchUrl, {
+      type: 'NLS_EXPORT_INTERCEPT_CACHE',
+      ...(opts.deep ? { deep: true } : {})
+    })
+  );
+  if (!res || res.ok !== true) return [];
+  return normalizeInterceptCacheItems(res.items);
+}
+
+/**
+ * @param {PopupCommentEntry[]} entries
+ * @param {{ no: string, uid: string, name: string, av: string }[]} items
+ * @param {{ preferInterceptUidSet?: Set<string> }} [opts]
+ * @returns {{ next: PopupCommentEntry[], patched: number, uidReplaced: number }}
+ */
+function mergeCommentsWithInterceptCache(entries, items, opts = {}) {
+  if (!Array.isArray(entries) || entries.length === 0 || items.length === 0) {
+    return {
+      next: Array.isArray(entries) ? entries : [],
+      patched: 0,
+      uidReplaced: 0
+    };
+  }
+
+  /** @type {Map<string, { no: string, uid: string, name: string, av: string }>} */
+  const byNo = new Map();
+  for (const it of items) {
+    const prev = byNo.get(it.no);
+    if (!prev) {
+      byNo.set(it.no, it);
+      continue;
+    }
+    byNo.set(it.no, {
+      no: it.no,
+      uid: it.uid || prev.uid,
+      name: it.name || prev.name,
+      av: it.av || prev.av
+    });
+  }
+
+  /** @type {Map<string, { total: number, mismatch: number, hitUids: Set<string> }>} */
+  const mismatchByCurrentUid = new Map();
+  for (const e of entries) {
+    const no = String(e?.commentNo || '').trim();
+    if (!no) continue;
+    const hit = byNo.get(no);
+    if (!hit?.uid) continue;
+    const curUid = String(e?.userId || '').trim();
+    if (!curUid) continue;
+    const st =
+      mismatchByCurrentUid.get(curUid) || {
+        total: 0,
+        mismatch: 0,
+        hitUids: new Set()
+      };
+    st.total += 1;
+    if (curUid !== hit.uid) {
+      st.mismatch += 1;
+      st.hitUids.add(hit.uid);
+    }
+    mismatchByCurrentUid.set(curUid, st);
+  }
+  const preferInterceptUidSet =
+    opts.preferInterceptUidSet instanceof Set ? opts.preferInterceptUidSet : new Set();
+  /** @param {string} curUid */
+  const shouldReplaceUid = (curUid) => {
+    if (!curUid) return false;
+    if (preferInterceptUidSet.has(curUid)) return true;
+    const st = mismatchByCurrentUid.get(curUid);
+    if (!st || st.total < 4) return false;
+    if (st.hitUids.size < 3) return false;
+    return st.mismatch >= Math.ceil(st.total * 0.6);
+  };
+
+  let patched = 0;
+  let uidReplaced = 0;
+  const next = entries.map((e) => {
+    const no = String(e?.commentNo || '').trim();
+    if (!no) return e;
+    const hit = byNo.get(no);
+    if (!hit) return e;
+
+    const curUid = String(e?.userId || '').trim();
+    const curName = String(e?.nickname || '').trim();
+    const curAv = String(e?.avatarUrl || '').trim();
+    let changed = false;
+    /** @type {PopupCommentEntry} */
+    let out = e;
+
+    if (hit.uid && (!curUid || shouldReplaceUid(curUid))) {
+      if (curUid && curUid !== hit.uid) uidReplaced += 1;
+      out = { ...out, userId: hit.uid };
+      changed = true;
+    }
+    if (hit.name && !curName) {
+      out = { ...out, nickname: hit.name };
+      changed = true;
+    }
+    if (hit.av && !curAv) {
+      out = { ...out, avatarUrl: hit.av };
+      changed = true;
+    }
+
+    if (changed) patched += 1;
+    return out;
+  });
+
+  return { next, patched, uidReplaced };
+}
+
+/**
+ * 誤って「自分のサムネ」を他者コメントに付けた履歴を除去する。
+ * @param {PopupCommentEntry[]} entries
+ * @param {string} liveId
+ * @param {WatchPageSnapshot|null|undefined} snapshot
+ * @returns {{ next: PopupCommentEntry[], patched: number }}
+ */
+function stripViewerAvatarContamination(entries, liveId, snapshot) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    return { next: Array.isArray(entries) ? entries : [], patched: 0 };
+  }
+  const viewerAvatar = String(snapshot?.viewerAvatarUrl || '').trim();
+  const viewerUid = String(snapshot?.viewerUserId || '').trim();
+  const broadcasterUid = String(snapshot?.broadcasterUserId || '').trim();
+  if (!isHttpOrHttpsUrl(viewerAvatar) && !viewerUid && !broadcasterUid) {
+    return { next: entries, patched: 0 };
+  }
+
+  let patched = 0;
+  const next = entries.map((e) => {
+    let changed = false;
+    const out = { ...e };
+    if (viewerUid && String(e?.userId || '').trim() === viewerUid) {
+      if (!isOwnPostedSupportComment(e, liveId)) {
+        delete out.userId;
+        changed = true;
+      }
+    }
+    if (broadcasterUid && String(e?.userId || '').trim() === broadcasterUid) {
+      if (!isOwnPostedSupportComment(e, liveId)) {
+        delete out.userId;
+        changed = true;
+      }
+    }
+    const av = String(e?.avatarUrl || '').trim();
+    if (
+      isHttpOrHttpsUrl(viewerAvatar) &&
+      av &&
+      isSameAvatarUrl(av, viewerAvatar) &&
+      !isOwnPostedSupportComment(e, liveId)
+    ) {
+      delete out.avatarUrl;
+      changed = true;
+    }
+    if (!changed) return e;
+    patched += 1;
+    return out;
+  });
+  return { next, patched };
 }
 
 /**
@@ -1973,7 +2505,7 @@ async function refresh() {
     KEY_RECORDING,
     KEY_INLINE_PANEL_WIDTH_MODE
   ]);
-  toggle.checked = bagRec[KEY_RECORDING] === true;
+  toggle.checked = isRecordingEnabled(bagRec[KEY_RECORDING]);
   toggle.disabled = false;
 
   const panelMode = normalizeInlinePanelWidthMode(
@@ -2012,6 +2544,7 @@ async function refresh() {
     watchMetaCache.snapshot = null;
     clearWatchMetaCard();
     syncStorySourceEntries('', []);
+    resetStoryAvatarDiagState();
     renderCharacterScene({
       hasWatch: false,
       recording: toggle.checked,
@@ -2048,6 +2581,7 @@ async function refresh() {
     watchMetaCache.snapshot = null;
     clearWatchMetaCard();
     syncStorySourceEntries('', []);
+    resetStoryAvatarDiagState();
     renderCharacterScene({
       hasWatch: true,
       recording: toggle.checked,
@@ -2065,9 +2599,85 @@ async function refresh() {
     return;
   }
 
+  const snapshotKey = `${lv}|${url}|s10`;
+  if (watchMetaCache.key !== snapshotKey || !watchMetaCache.snapshot) {
+    watchMetaCache.key = snapshotKey;
+    const { snapshot } = await requestWatchPageSnapshotFromOpenTab(url);
+    watchMetaCache.snapshot = snapshot;
+  }
+  const watchSnapshot = watchMetaCache.snapshot;
+
   const key = commentsStorageKey(lv);
   const data = await chrome.storage.local.get(key);
-  const arr = Array.isArray(data[key]) ? data[key] : [];
+  let arr = Array.isArray(data[key]) ? data[key] : [];
+  STORY_AVATAR_DIAG_STATE.total = arr.length;
+  STORY_AVATAR_DIAG_STATE.withUid = countEntriesWithUserId(arr);
+  STORY_AVATAR_DIAG_STATE.withAvatar = countEntriesWithAvatar(arr);
+  STORY_AVATAR_DIAG_STATE.uniqueAvatar = countUniqueAvatarEntries(arr);
+  STORY_AVATAR_DIAG_STATE.interceptItems = 0;
+  STORY_AVATAR_DIAG_STATE.interceptWithUid = 0;
+  STORY_AVATAR_DIAG_STATE.interceptWithAvatar = 0;
+  STORY_AVATAR_DIAG_STATE.mergedPatched = 0;
+  STORY_AVATAR_DIAG_STATE.mergedUidReplaced = 0;
+  STORY_AVATAR_DIAG_STATE.stripped = 0;
+  const strippedViewerAvatar = stripViewerAvatarContamination(
+    arr,
+    lv,
+    watchSnapshot
+  );
+  if (strippedViewerAvatar.patched > 0) {
+    arr = strippedViewerAvatar.next;
+    await storageSetSafe({ [key]: arr });
+  }
+  STORY_AVATAR_DIAG_STATE.stripped = strippedViewerAvatar.patched;
+  if (INTERCEPT_BACKFILL_STATE.liveId !== lv) {
+    INTERCEPT_BACKFILL_STATE.liveId = lv;
+    INTERCEPT_BACKFILL_STATE.deepTried = false;
+  }
+  const missingIdCount = arr.reduce(
+    (sum, e) => (String(e?.userId || '').trim() ? sum : sum + 1),
+    0
+  );
+  const shouldDeep =
+    !INTERCEPT_BACKFILL_STATE.deepTried &&
+    arr.length >= 30 &&
+    missingIdCount >= Math.ceil(arr.length * 0.4);
+  const interceptItems = await requestInterceptCacheFromOpenTab(url, {
+    deep: shouldDeep
+  });
+  if (shouldDeep) {
+    INTERCEPT_BACKFILL_STATE.deepTried = true;
+  }
+  if (interceptItems.length > 0) {
+    STORY_AVATAR_DIAG_STATE.interceptItems = interceptItems.length;
+    STORY_AVATAR_DIAG_STATE.interceptWithUid = interceptItems.reduce(
+      (sum, it) => (it.uid ? sum + 1 : sum),
+      0
+    );
+    STORY_AVATAR_DIAG_STATE.interceptWithAvatar = interceptItems.reduce(
+      (sum, it) => (it.av ? sum + 1 : sum),
+      0
+    );
+    const suspectUidSet = new Set(
+      [
+        String(watchSnapshot?.viewerUserId || '').trim(),
+        String(watchSnapshot?.broadcasterUserId || '').trim()
+      ].filter(Boolean)
+    );
+    const merged = mergeCommentsWithInterceptCache(arr, interceptItems, {
+      preferInterceptUidSet: suspectUidSet
+    });
+    STORY_AVATAR_DIAG_STATE.mergedPatched = merged.patched;
+    STORY_AVATAR_DIAG_STATE.mergedUidReplaced = merged.uidReplaced;
+    if (merged.patched > 0) {
+      arr = merged.next;
+      await storageSetSafe({ [key]: arr });
+    }
+  }
+  STORY_AVATAR_DIAG_STATE.total = arr.length;
+  STORY_AVATAR_DIAG_STATE.withUid = countEntriesWithUserId(arr);
+  STORY_AVATAR_DIAG_STATE.withAvatar = countEntriesWithAvatar(arr);
+  STORY_AVATAR_DIAG_STATE.uniqueAvatar = countUniqueAvatarEntries(arr);
   setCountDisplay(String(arr.length));
   renderCommentTicker(/** @type {PopupCommentEntry[]} */ (arr));
   exportBtn.disabled = false;
@@ -2100,22 +2710,16 @@ async function refresh() {
     recording: toggle.checked,
     commentCount: arr.length,
     liveId: lv,
-    snapshot: null
+    snapshot: watchSnapshot
   });
-
-  const snapshotKey = `${lv}|${url}|s3`;
-  if (watchMetaCache.key !== snapshotKey || !watchMetaCache.snapshot) {
-    watchMetaCache.key = snapshotKey;
-    const { snapshot } = await requestWatchPageSnapshotFromOpenTab(url);
-    watchMetaCache.snapshot = snapshot;
-  }
-  renderWatchMetaCard(watchMetaCache.snapshot);
+  renderWatchMetaCard(watchSnapshot, arr);
+  renderStoryUserLane();
   renderCharacterScene({
     hasWatch: true,
     recording: toggle.checked,
     commentCount: arr.length,
     liveId: lv,
-    snapshot: watchMetaCache.snapshot
+    snapshot: watchSnapshot
   });
   const growthEl = /** @type {HTMLElement|null} */ ($('sceneStoryGrowth'));
   if (growthEl) patchStoryGrowthIconsFromSource(growthEl);
@@ -2230,16 +2834,88 @@ async function reloadWatchTabForUrl(watchUrl) {
 }
 
 /**
+ * 全フレームをスコア付けし innerText 断片を返す（about:blank の子フレームも含む）
+ * @param {number} tabId
+ * @returns {Promise<{ frameId: number, score: number, text: string }[]>}
+ */
+async function listWatchFramesWithInnerText(tabId) {
+  try {
+    const results = await chrome.scripting.executeScript({
+      target: { tabId, allFrames: true },
+      func: () => {
+        const href = String(location.href || '');
+        const panel = !!(
+          document.querySelector('.ga-ns-comment-panel') ||
+          document.querySelector('.comment-panel') ||
+          document.querySelector('[class*="comment-data-grid"]')
+        );
+        const hasVideo = !!document.querySelector('video');
+        const inner = document.body?.innerText || '';
+        const len = inner.length;
+        const text = inner.slice(0, 120_000);
+        const score =
+          (panel ? 8_000_000 : 0) +
+          (hasVideo ? 400_000 : 0) +
+          Math.min(len, 5_000_000) +
+          (/\/watch\/lv\d+/i.test(href) ? 50_000 : 0) +
+          (href.includes('nicovideo.jp') && href.includes('watch') ? 25_000 : 0);
+        return { score, text, href };
+      }
+    });
+    /** @type {{ frameId: number, score: number, text: string }[]} */
+    const out = [];
+    for (const row of results || []) {
+      const res = row?.result;
+      if (!res || typeof res.score !== 'number') continue;
+      const fid = typeof row.frameId === 'number' ? row.frameId : 0;
+      out.push({
+        frameId: fid,
+        score: res.score,
+        text: String(res.text || '')
+      });
+    }
+    out.sort((a, b) => b.score - a.score);
+    return out;
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * innerText 断片から視聴者数を拾う（content より先にポップアップ側で試す）
+ * @param {{ frameId: number, score: number, text: string }[]} frames
+ * @returns {number|null}
+ */
+function probeViewerCountFromFrameTexts(frames) {
+  for (const f of frames) {
+    const n = parseViewerCountFromLooseText(f.text);
+    if (n != null) return n;
+  }
+  return null;
+}
+
+/**
+ * @param {WatchPageSnapshot} snap
+ * @param {number|null} probe
+ */
+function mergeViewerProbeIntoSnapshot(snap, probe) {
+  if (!snap || probe == null) return snap;
+  const cur = snap.viewerCountFromDom;
+  if (typeof cur === 'number' && Number.isFinite(cur) && cur >= 0) return snap;
+  return { ...snap, viewerCountFromDom: probe };
+}
+
+/**
  * content script 注入直後はReceiving end does not existになりやすいので再試行
  * @param {number} tabId
  * @param {object} message
- * @param {{ maxAttempts?: number, delayMs?: number }} [retryOpts]
+ * @param {{ maxAttempts?: number, delayMs?: number, frameId?: number }} [retryOpts]
  */
 async function tabsSendMessageWithRetry(tabId, message, retryOpts = {}) {
   const max = retryOpts.maxAttempts ?? 8;
   const delayMs = retryOpts.delayMs ?? 75;
-  /** メイン文書のみ。iframe 側が先に「入力欄なし」等で応答すると送信が失敗するのを防ぐ */
-  const opts = { frameId: 0 };
+  const frameId = retryOpts.frameId !== undefined ? retryOpts.frameId : 0;
+  const opts = { frameId };
   /** @type {unknown} */
   let lastErr = null;
   for (let i = 0; i < max; i++) {
@@ -2271,17 +2947,35 @@ async function requestWatchPageSnapshotFromOpenTab(watchUrl) {
 
   for (const candidate of candidates) {
     try {
-      const res = await tabsSendMessageWithRetry(candidate.id, {
-        type: 'NLS_EXPORT_WATCH_SNAPSHOT'
-      });
-      if (res?.ok && res.snapshot) {
-        return {
-          snapshot: /** @type {WatchPageSnapshot} */ (res.snapshot),
-          error: ''
-        };
+      const ranked = await listWatchFramesWithInnerText(candidate.id);
+      const viewerProbe = probeViewerCountFromFrameTexts(ranked);
+      const tried = new Set();
+      const tryOrder = [
+        ...ranked.map((r) => r.frameId),
+        0
+      ];
+      for (const fid of tryOrder) {
+        if (tried.has(fid)) continue;
+        tried.add(fid);
+        try {
+          const res = await tabsSendMessageWithRetry(
+            candidate.id,
+            { type: 'NLS_EXPORT_WATCH_SNAPSHOT' },
+            { frameId: fid, maxAttempts: 5, delayMs: 90 }
+          );
+          if (res?.ok && res.snapshot) {
+            const merged = mergeViewerProbeIntoSnapshot(
+              /** @type {WatchPageSnapshot} */ (res.snapshot),
+              viewerProbe
+            );
+            return { snapshot: merged, error: '' };
+          }
+        } catch {
+          // 次の frameId
+        }
       }
     } catch {
-      // try next candidate
+      // try next candidate tab
     }
   }
 
@@ -3034,6 +3728,7 @@ async function downloadCommentsHtml(liveId, storageKey, watchUrl) {
 }
 
 function initPopup() {
+  installExtensionContextErrorGuard();
   applyResponsivePopupLayout();
   window.addEventListener('resize', applyResponsivePopupLayout);
 
@@ -3067,8 +3762,13 @@ function initPopup() {
   const applyFrameCodeBtn = $('applyFrameCode');
 
   const safeRefresh = () => {
+    if (!hasExtensionContext()) return;
     refresh()
-      .catch(() => {})
+      .catch((e) => {
+        if (!isExtensionContextInvalidatedError(e)) {
+          // no-op
+        }
+      })
       .finally(() => {
         requestAnimationFrame(() => {
           applyResponsivePopupLayout();
@@ -3099,13 +3799,23 @@ function initPopup() {
   };
 
   dismissErr?.addEventListener('click', async () => {
-    await chrome.storage.local.remove(KEY_STORAGE_WRITE_ERROR);
-    safeRefresh();
+    try {
+      const ok = await storageRemoveSafe(KEY_STORAGE_WRITE_ERROR);
+      if (!ok) return;
+      safeRefresh();
+    } catch {
+      //
+    }
   });
 
   toggle.addEventListener('change', async () => {
-    await chrome.storage.local.set({ [KEY_RECORDING]: toggle.checked });
-    safeRefresh();
+    try {
+      const ok = await storageSetSafe({ [KEY_RECORDING]: toggle.checked });
+      if (!ok) return;
+      safeRefresh();
+    } catch {
+      //
+    }
   });
 
   const saveInlinePanelWidthMode = async (value) => {
@@ -3113,7 +3823,8 @@ function initPopup() {
       value === INLINE_PANEL_WIDTH_VIDEO
         ? INLINE_PANEL_WIDTH_VIDEO
         : INLINE_PANEL_WIDTH_PLAYER_ROW;
-    await chrome.storage.local.set({ [KEY_INLINE_PANEL_WIDTH_MODE]: v });
+    const ok = await storageSetSafe({ [KEY_INLINE_PANEL_WIDTH_MODE]: v });
+    if (!ok) return;
     safeRefresh();
   };
 
@@ -3237,16 +3948,20 @@ function initPopup() {
 
   thumbIntervalSel?.addEventListener('change', async () => {
     const v = Number(thumbIntervalSel.value);
-    if (v === 0) {
-      await chrome.storage.local.set({
-        [KEY_THUMB_AUTO]: false,
-        [KEY_THUMB_INTERVAL_MS]: 0
-      });
-    } else {
-      await chrome.storage.local.set({
-        [KEY_THUMB_AUTO]: true,
-        [KEY_THUMB_INTERVAL_MS]: v
-      });
+    try {
+      if (v === 0) {
+        await storageSetSafe({
+          [KEY_THUMB_AUTO]: false,
+          [KEY_THUMB_INTERVAL_MS]: 0
+        });
+      } else {
+        await storageSetSafe({
+          [KEY_THUMB_AUTO]: true,
+          [KEY_THUMB_INTERVAL_MS]: v
+        });
+      }
+    } catch {
+      //
     }
   });
 
@@ -3273,32 +3988,48 @@ function initPopup() {
       setPostStatus('watchページを開いてから送信してください。', 'error');
       return;
     }
+    const lvPost = String(exportBtn.dataset.liveId || '').trim().toLowerCase();
+    let optimisticLogged = false;
     if (postBtn) postBtn.disabled = true;
     syncVoiceCommentButton();
     setPostStatus('送信中…', 'idle');
-    const lvPost = String(exportBtn.dataset.liveId || '').trim().toLowerCase();
-    if (lvPost) {
-      await appendSelfPostedComment(lvPost, text);
+    try {
+      if (lvPost) {
+        await appendSelfPostedComment(lvPost, text);
+        optimisticLogged = true;
+      }
+      if (!hasExtensionContext()) return;
+      const result = await requestPostCommentToOpenTab(text, watchUrl);
+      if (!hasExtensionContext()) return;
+      if (result.ok) {
+        if (commentInput) commentInput.value = '';
+        setPostStatus('コメントを送信しました。', 'success');
+        const growthEl = /** @type {HTMLElement|null} */ ($('sceneStoryGrowth'));
+        if (growthEl) patchStoryGrowthIconsFromSource(growthEl);
+        return;
+      }
+      if (optimisticLogged && lvPost) {
+        await revertLastSelfPostedComment(lvPost, text);
+        optimisticLogged = false;
+      }
+      setPostStatus(
+        withCommentSendTroubleshootHint(
+          result.error || '送信に失敗しました。'
+        ),
+        'error'
+      );
+    } catch (e) {
+      if (optimisticLogged && lvPost) {
+        await revertLastSelfPostedComment(lvPost, text).catch(() => {});
+      }
+      if (isExtensionContextInvalidatedError(e) || !hasExtensionContext()) return;
+      throw e;
+    } finally {
+      if (hasExtensionContext()) {
+        if (postBtn) postBtn.disabled = false;
+        syncVoiceCommentButton();
+      }
     }
-    const result = await requestPostCommentToOpenTab(text, watchUrl);
-    if (postBtn) postBtn.disabled = false;
-    syncVoiceCommentButton();
-    if (result.ok) {
-      if (commentInput) commentInput.value = '';
-      setPostStatus('コメントを送信しました。', 'success');
-      const growthEl = /** @type {HTMLElement|null} */ ($('sceneStoryGrowth'));
-      if (growthEl) patchStoryGrowthIconsFromSource(growthEl);
-      return;
-    }
-    if (lvPost) {
-      await revertLastSelfPostedComment(lvPost, text);
-    }
-    setPostStatus(
-      withCommentSendTroubleshootHint(
-        result.error || '送信に失敗しました。'
-      ),
-      'error'
-    );
   }
 
   let voiceListeningUi = false;
@@ -3339,33 +4070,46 @@ function initPopup() {
   });
 
   voiceAutoSend?.addEventListener('change', async () => {
-    await chrome.storage.local.set({
-      [KEY_VOICE_AUTOSEND]: voiceAutoSend.checked
-    });
+    try {
+      await storageSetSafe({
+        [KEY_VOICE_AUTOSEND]: voiceAutoSend.checked
+      });
+    } catch {
+      //
+    }
   });
 
   commentEnterSend?.addEventListener('change', async () => {
-    await chrome.storage.local.set({
-      [KEY_COMMENT_ENTER_SEND]: commentEnterSend.checked
-    });
+    try {
+      await storageSetSafe({
+        [KEY_COMMENT_ENTER_SEND]: commentEnterSend.checked
+      });
+    } catch {
+      //
+    }
   });
 
   const storyGrowthCollapseBtn = $('storyGrowthCollapseBtn');
   storyGrowthCollapseBtn?.addEventListener('click', () => {
     void (async () => {
-      const bag = await chrome.storage.local.get(KEY_STORY_GROWTH_COLLAPSED);
+      const bag = await storageGetSafe(KEY_STORY_GROWTH_COLLAPSED, {});
       const collapsed = bag[KEY_STORY_GROWTH_COLLAPSED] === true;
-      await chrome.storage.local.set({
+      const ok = await storageSetSafe({
         [KEY_STORY_GROWTH_COLLAPSED]: !collapsed
       });
+      if (!ok) return;
       await applyStoryGrowthCollapsedFromStorage();
     })();
   });
 
   voiceDeviceSel?.addEventListener('change', async () => {
-    await chrome.storage.local.set({
-      [KEY_VOICE_INPUT_DEVICE]: voiceDeviceSel.value
-    });
+    try {
+      await storageSetSafe({
+        [KEY_VOICE_INPUT_DEVICE]: voiceDeviceSel.value
+      });
+    } catch {
+      //
+    }
   });
 
   voiceDeviceRefreshBtn?.addEventListener('click', () => {

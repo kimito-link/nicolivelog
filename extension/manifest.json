@@ -5,7 +5,7 @@
   "description": "ニコニコ生放送のコメントをローカルに記録するプロトタイプ（オプトイン）",
   "permissions": ["storage", "scripting", "downloads"],
   "host_permissions": [
-    "https://live.nicovideo.jp/*",
+    "https://*.nicovideo.jp/*",
     "http://127.0.0.1:3456/*",
     "http://localhost:3456/*"
   ],
@@ -18,7 +18,7 @@
   "content_scripts": [
     {
       "matches": [
-        "https://live.nicovideo.jp/*",
+        "https://*.nicovideo.jp/*",
         "http://127.0.0.1:3456/*",
         "http://localhost:3456/*"
       ],
@@ -28,12 +28,13 @@
     },
     {
       "matches": [
-        "https://live.nicovideo.jp/*",
+        "https://*.nicovideo.jp/*",
         "http://127.0.0.1:3456/*",
         "http://localhost:3456/*"
       ],
       "js": ["dist/content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
   "web_accessible_resources": [
@@ -45,7 +46,7 @@
         "images/yukkuri-charactore-english/*/*.png"
       ],
       "matches": [
-        "https://live.nicovideo.jp/*",
+        "https://*.nicovideo.jp/*",
         "http://127.0.0.1:3456/*",
         "http://localhost:3456/*"
       ]

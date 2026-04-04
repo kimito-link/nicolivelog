@@ -22,10 +22,13 @@
     try {
       const u = new URL(String(url || ""));
       const host = u.hostname.toLowerCase();
-      const pathOk = /\/watch\/lv\d+/i.test(u.pathname);
-      if (isLocalE2EWatchHost(u)) return pathOk;
+      const hasWatchOrEmbed = /\/watch\//.test(u.pathname) || /\/embed\//.test(u.pathname);
+      if (isLocalE2EWatchHost(u)) return hasWatchOrEmbed;
       if (!host.includes("nicovideo.jp")) return false;
-      return pathOk;
+      if (host === "live.nicovideo.jp" || host === "sp.live.nicovideo.jp") {
+        return hasWatchOrEmbed;
+      }
+      return /\/watch\/(lv|ch)\d+/i.test(u.pathname);
     } catch {
       return false;
     }
@@ -66,6 +69,9 @@
     const s = String(raw || "").trim();
     if (s === INLINE_PANEL_WIDTH_VIDEO) return INLINE_PANEL_WIDTH_VIDEO;
     return INLINE_PANEL_WIDTH_PLAYER_ROW;
+  }
+  function isRecordingEnabled(raw) {
+    return raw !== false;
   }
   function isCommentEnterSendEnabled(raw) {
     return raw !== false;
@@ -216,6 +222,74 @@
     return `${liveId}||${text}|${sec}`;
   }
 
+  // src/lib/liveCommenterStats.js
+  function normalizedUserIdFromRow(row) {
+    if (row == null || typeof row !== "object") return "";
+    const raw = row.userId;
+    if (raw == null) return "";
+    const s = String(raw).trim();
+    return s;
+  }
+  function summarizeRecordedCommenters(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    let commentsWithoutUserId = 0;
+    const set = /* @__PURE__ */ new Set();
+    const avatars = /* @__PURE__ */ new Set();
+    for (const row of list) {
+      const uid = normalizedUserIdFromRow(row);
+      if (!uid) commentsWithoutUserId += 1;
+      else set.add(uid);
+      const av = row && typeof row === "object" ? String(row.avatarUrl || "").trim() : "";
+      if (isHttpOrHttpsUrl(av)) avatars.add(av);
+    }
+    return {
+      totalComments: list.length,
+      uniqueKnownUserIds: set.size,
+      commentsWithoutUserId,
+      distinctAvatarUrls: avatars.size
+    };
+  }
+
+  // src/lib/liveAudienceDom.js
+  var MAX_REASONABLE_VIEWERS = 12e6;
+  function normalizeDigitsForViewerScan(text) {
+    let s = String(text || "");
+    const fw = "\uFF10\uFF11\uFF12\uFF13\uFF14\uFF15\uFF16\uFF17\uFF18\uFF19\uFF0C";
+    const hw = "0123456789,";
+    for (let i = 0; i < fw.length; i++) {
+      s = s.split(fw[i]).join(hw[i]);
+    }
+    return s;
+  }
+  function parseViewerCountFromLooseText(chunk) {
+    const raw = normalizeDigitsForViewerScan(chunk);
+    const s = String(raw || "").replace(/\s+/g, " ");
+    const patterns = [
+      /(\d[\d,]*)\s*人が視聴/,
+      /(\d[\d,]*)\s*人\s*が\s*視聴/,
+      /(\d[\d,]*)\s*人\s*視聴中/,
+      /(\d[\d,]*)\s*名が視聴/,
+      /視聴者数\s*[：:　\s]*(\d[\d,]*)(?!\d)/,
+      /視聴者\s*(\d[\d,]*)(?!\d)/,
+      /(\d[\d,]*)\s*人\s*が\s*オンライン/,
+      /同時視聴\s*[:：]?\s*(\d[\d,]*)(?!\d)/,
+      /(\d[\d,]*)\s*人\s*が\s*見てます/,
+      /([\d,]+)\s+viewers?\b/i,
+      /(\d[\d,]*)\s*人(?=[^\d]{0,16}視聴)/,
+      /視聴[^0-9]{0,40}(\d[\d,]*)\s*人/,
+      /来場\s*(\d[\d,]*)\s*人/,
+      /(\d[\d,]*)\s*人\s*来場/
+    ];
+    for (const re of patterns) {
+      const m = s.match(re);
+      if (!m?.[1]) continue;
+      const n = parseInt(String(m[1]).replace(/,/g, ""), 10);
+      if (!Number.isFinite(n) || n < 0 || n > MAX_REASONABLE_VIEWERS) continue;
+      return n;
+    }
+    return null;
+  }
+
   // src/lib/pickLatestComment.js
   function pickLatestCommentEntry(list) {
     if (!Array.isArray(list) || !list.length) return null;
@@ -312,6 +386,7 @@
     return document.getElementById(id);
   }
   function syncVoiceCommentButton() {
+    if (!hasExtensionContext()) return;
     const post = (
       /** @type {HTMLButtonElement|null} */
       $("postCommentBtn")
@@ -457,6 +532,65 @@
     return `${s}
 \u203B\u3046\u307E\u304F\u3044\u304B\u306A\u3044\u3068\u304D\uFF1Awatch\u30DA\u30FC\u30B8\u3092\u518D\u8AAD\u307F\u8FBC\u307F\uFF08F5\uFF09\u3002\u62E1\u5F35\u3092\u76F4\u3057\u305F\u3042\u3068\u306F chrome://extensions \u3067 nicolivelog \u3092\u300C\u66F4\u65B0\u300D\u3002`;
   }
+  function isExtensionContextInvalidatedError(err) {
+    const msg = err && typeof err === "object" && "message" in err ? String(
+      /** @type {{ message?: unknown }} */
+      err.message || ""
+    ) : String(err || "");
+    return /Extension context invalidated/i.test(msg);
+  }
+  function hasExtensionContext() {
+    try {
+      return Boolean(globalThis.chrome?.runtime?.id);
+    } catch {
+      return false;
+    }
+  }
+  var extensionContextErrorGuardInstalled = false;
+  function installExtensionContextErrorGuard() {
+    if (extensionContextErrorGuardInstalled) return;
+    extensionContextErrorGuardInstalled = true;
+    globalThis.addEventListener("unhandledrejection", (ev) => {
+      if (!isExtensionContextInvalidatedError(ev.reason)) return;
+      ev.preventDefault();
+    });
+    globalThis.addEventListener("error", (ev) => {
+      if (!isExtensionContextInvalidatedError(ev.error || ev.message)) return;
+      ev.preventDefault();
+    });
+  }
+  async function storageSetSafe(bag) {
+    if (!hasExtensionContext()) return false;
+    try {
+      await chrome.storage.local.set(bag);
+      return true;
+    } catch (e) {
+      if (isExtensionContextInvalidatedError(e)) return false;
+      throw e;
+    }
+  }
+  async function storageRemoveSafe(key) {
+    if (!hasExtensionContext()) return false;
+    try {
+      await chrome.storage.local.remove(key);
+      return true;
+    } catch (e) {
+      if (isExtensionContextInvalidatedError(e)) return false;
+      throw e;
+    }
+  }
+  async function storageGetSafe(key, fallback) {
+    if (!hasExtensionContext()) return fallback;
+    try {
+      return (
+        /** @type {T} */
+        await chrome.storage.local.get(key)
+      );
+    } catch (e) {
+      if (isExtensionContextInvalidatedError(e)) return fallback;
+      throw e;
+    }
+  }
   function escapeHtml(s) {
     return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
   }
@@ -466,6 +600,10 @@
   var watchMetaCache = {
     key: "",
     snapshot: null
+  };
+  var INTERCEPT_BACKFILL_STATE = {
+    liveId: "",
+    deepTried: false
   };
   var DEFAULT_FRAME_ID = "light";
   var LEGACY_FRAME_ALIAS = {
@@ -792,7 +930,7 @@
     while (next.length > MAX_SELF_POSTED_ITEMS) next.shift();
     selfPostedRecentsCache = next;
     try {
-      await chrome.storage.local.set({
+      await storageSetSafe({
         [KEY_SELF_POSTED_RECENTS]: { items: next }
       });
     } catch {
@@ -818,7 +956,7 @@
     const next = selfPostedRecentsCache.filter((_, i) => i !== bestIdx);
     selfPostedRecentsCache = next;
     try {
-      await chrome.storage.local.set({
+      await storageSetSafe({
         [KEY_SELF_POSTED_RECENTS]: { items: next }
       });
     } catch {
@@ -840,19 +978,79 @@
     }
     return false;
   }
-  function storyGrowthTileSrcForEntry(entry, liveId) {
+  function rememberedAvatarUrlForUserId(userId) {
+    const uid = String(userId || "").trim();
+    if (!uid) return "";
+    const list = STORY_SOURCE_STATE?.entries;
+    if (!Array.isArray(list) || list.length === 0) return "";
+    for (let i = list.length - 1; i >= 0; i -= 1) {
+      const e = list[i];
+      if (String(e?.userId || "").trim() !== uid) continue;
+      const av = String(e?.avatarUrl || "").trim();
+      if (isHttpOrHttpsUrl(av)) return av;
+    }
+    return "";
+  }
+  function avatarCompareKey(raw) {
+    const s = String(raw || "").trim();
+    if (!s) return "";
+    try {
+      const u = new URL(s);
+      u.search = "";
+      u.hash = "";
+      return u.href;
+    } catch {
+      return s;
+    }
+  }
+  function isSameAvatarUrl(a, b) {
+    const ka = avatarCompareKey(a);
+    const kb = avatarCompareKey(b);
+    return Boolean(ka && kb && ka === kb);
+  }
+  function countEntriesWithUserId(entries) {
+    let n = 0;
+    for (const e of entries) {
+      if (String(e?.userId || "").trim()) n += 1;
+    }
+    return n;
+  }
+  function countEntriesWithAvatar(entries) {
+    let n = 0;
+    for (const e of entries) {
+      if (isHttpOrHttpsUrl(String(e?.avatarUrl || "").trim())) n += 1;
+    }
+    return n;
+  }
+  function countUniqueAvatarEntries(entries) {
+    const set = /* @__PURE__ */ new Set();
+    for (const e of entries) {
+      const k = avatarCompareKey(String(e?.avatarUrl || "").trim());
+      if (k) set.add(k);
+    }
+    return set.size;
+  }
+  function storyGrowthAvatarSrcCandidate(entry, liveId) {
     const snap = watchMetaCache.snapshot;
     const own = isOwnPostedSupportComment(entry, String(liveId || ""));
     const bc = String(snap?.broadcasterUserId || "").trim();
     const entUid = String(entry?.userId || "").trim();
+    const avatarUrl = String(entry?.avatarUrl || "").trim();
+    const viewerAvatarUrl = String(snap?.viewerAvatarUrl || "").trim();
     const mistakenBroadcaster = !own && Boolean(bc && entUid && bc === entUid);
-    return resolveSupportGrowthTileSrc({
-      entryAvatarUrl: mistakenBroadcaster ? "" : entry?.avatarUrl,
+    const fallbackAvatar = mistakenBroadcaster || viewerAvatarUrl && isSameAvatarUrl(avatarUrl, viewerAvatarUrl) && !own ? "" : rememberedAvatarUrlForUserId(entUid);
+    const effectiveAvatar = viewerAvatarUrl && isSameAvatarUrl(avatarUrl, viewerAvatarUrl) && !own ? "" : avatarUrl;
+    const src = resolveSupportGrowthTileSrc({
+      entryAvatarUrl: effectiveAvatar || fallbackAvatar,
       userId: mistakenBroadcaster ? null : entry?.userId ?? null,
       isOwnPosted: own,
       viewerAvatarUrl: snap?.viewerAvatarUrl,
-      defaultSrc: STORY_RINK_TILE_IMG
+      defaultSrc: ""
     });
+    return isHttpOrHttpsUrl(src) ? src : "";
+  }
+  function storyGrowthTileSrcForEntry(entry, liveId) {
+    return storyGrowthAvatarSrcCandidate(entry, liveId) || STORY_RINK_TILE_IMG;
   }
   var STORY_HOP_STATE = {
     clearTimer: (
@@ -999,6 +1197,18 @@
       []
     )
   };
+  var STORY_AVATAR_DIAG_STATE = {
+    total: 0,
+    withUid: 0,
+    withAvatar: 0,
+    uniqueAvatar: 0,
+    interceptItems: 0,
+    interceptWithUid: 0,
+    interceptWithAvatar: 0,
+    mergedPatched: 0,
+    mergedUidReplaced: 0,
+    stripped: 0
+  };
   function commentStableId(entry) {
     if (!entry) return "";
     const id = String(entry.id || "").trim();
@@ -1096,6 +1306,87 @@
       renderStoryCommentDetailPanel();
     });
   }
+  function renderStoryUserLane() {
+    const lane = (
+      /** @type {HTMLElement|null} */
+      $("sceneStoryUserLane")
+    );
+    if (!lane) return;
+    const entries = Array.isArray(STORY_SOURCE_STATE.entries) ? STORY_SOURCE_STATE.entries : [];
+    if (!entries.length) {
+      lane.innerHTML = "";
+      lane.hidden = true;
+      return;
+    }
+    const limit = INLINE_MODE ? 48 : 24;
+    const picked = [];
+    const seen = /* @__PURE__ */ new Set();
+    const liveId = String(STORY_SOURCE_STATE.liveId || "");
+    for (let i = entries.length - 1; i >= 0 && picked.length < limit; i -= 1) {
+      const e = entries[i];
+      const src = storyGrowthAvatarSrcCandidate(e, liveId);
+      if (!src) continue;
+      const uid = String(e?.userId || "").trim();
+      const key = uid || src;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const label = storyGrowthDisplayLabel(e, liveId) || "\u30E6\u30FC\u30B6\u30FC";
+      picked.push({ src, title: label });
+    }
+    lane.innerHTML = "";
+    if (!picked.length) {
+      lane.hidden = true;
+      return;
+    }
+    const frag = document.createDocumentFragment();
+    for (const p of picked) {
+      const img = document.createElement("img");
+      img.className = "nl-story-userlane-avatar";
+      img.src = p.src;
+      img.alt = "";
+      img.title = p.title;
+      img.decoding = "async";
+      if (isHttpOrHttpsUrl(p.src)) {
+        img.referrerPolicy = "no-referrer";
+      }
+      frag.appendChild(img);
+    }
+    lane.appendChild(frag);
+    lane.setAttribute(
+      "aria-label",
+      `\u6700\u8FD1\u306E\u5FDC\u63F4\u30E6\u30FC\u30B6\u30FC\u30B5\u30E0\u30CD\u30A4\u30EB ${picked.length}\u4EF6`
+    );
+    lane.hidden = false;
+  }
+  function renderStoryAvatarDiag() {
+    const el = (
+      /** @type {HTMLElement|null} */
+      $("storyAvatarDiag")
+    );
+    if (!el) return;
+    const s = STORY_AVATAR_DIAG_STATE;
+    const severe = s.total >= 50 && (s.withAvatar <= Math.max(2, Math.floor(s.total * 0.02)) || s.uniqueAvatar <= 2);
+    if (!severe) {
+      el.hidden = true;
+      el.textContent = "";
+      return;
+    }
+    el.textContent = `\u8A3A\u65AD: avatar ${s.withAvatar}/${s.total}\uFF08\u7A2E\u985E ${s.uniqueAvatar}\uFF09 / uid ${s.withUid}/${s.total} / intercept ${s.interceptItems}\u4EF6\uFF08uid ${s.interceptWithUid}, avatar ${s.interceptWithAvatar}\uFF09 / \u88DC\u5B8C ${s.mergedPatched}\u4EF6` + (s.mergedUidReplaced > 0 ? `\uFF08UID\u7F6E\u63DB ${s.mergedUidReplaced}\uFF09` : "") + (s.stripped > 0 ? ` / \u6C5A\u67D3\u9664\u53BB ${s.stripped}\u4EF6` : "");
+    el.hidden = false;
+  }
+  function resetStoryAvatarDiagState() {
+    STORY_AVATAR_DIAG_STATE.total = 0;
+    STORY_AVATAR_DIAG_STATE.withUid = 0;
+    STORY_AVATAR_DIAG_STATE.withAvatar = 0;
+    STORY_AVATAR_DIAG_STATE.uniqueAvatar = 0;
+    STORY_AVATAR_DIAG_STATE.interceptItems = 0;
+    STORY_AVATAR_DIAG_STATE.interceptWithUid = 0;
+    STORY_AVATAR_DIAG_STATE.interceptWithAvatar = 0;
+    STORY_AVATAR_DIAG_STATE.mergedPatched = 0;
+    STORY_AVATAR_DIAG_STATE.mergedUidReplaced = 0;
+    STORY_AVATAR_DIAG_STATE.stripped = 0;
+    renderStoryAvatarDiag();
+  }
   function syncStorySourceEntries(liveId, arr) {
     const nextLiveId = String(liveId || "");
     const list = Array.isArray(arr) ? arr : [];
@@ -1113,6 +1404,8 @@
       cancelStoryHoverClearTimer();
     }
     syncGrowthIconSelection(STORY_GROWTH_STATE.root);
+    renderStoryUserLane();
+    renderStoryAvatarDiag();
     renderStoryCommentDetailPanel();
   }
   function getStoryEntryByIndex(index) {
@@ -1575,6 +1868,11 @@
       $("watchThumb")
     );
     const tags = $("watchTags");
+    const audience = $("watchAudience");
+    const viewerDomEl = $("watchViewerDom");
+    const uniqueEl = $("watchUniqueUsers");
+    const noIdEl = $("watchCommentsNoId");
+    const noteEl = $("watchAudienceNote");
     if (!wrap || !title || !broadcaster || !thumb || !tags) return;
     wrap.hidden = true;
     title.textContent = "-";
@@ -1582,8 +1880,16 @@
     thumb.hidden = true;
     thumb.removeAttribute("src");
     tags.innerHTML = "";
+    if (audience) audience.hidden = true;
+    if (viewerDomEl) viewerDomEl.textContent = "\u2014";
+    if (uniqueEl) {
+      uniqueEl.textContent = "\u2014";
+      uniqueEl.removeAttribute("title");
+    }
+    if (noIdEl) noIdEl.textContent = "\u2014";
+    if (noteEl) noteEl.textContent = "";
   }
-  function renderWatchMetaCard(snapshot) {
+  function renderWatchMetaCard(snapshot, commentEntries = []) {
     const wrap = $("watchMeta");
     const title = $("watchTitle");
     const broadcaster = $("watchBroadcaster");
@@ -1592,6 +1898,11 @@
       $("watchThumb")
     );
     const tags = $("watchTags");
+    const audience = $("watchAudience");
+    const viewerDomEl = $("watchViewerDom");
+    const uniqueEl = $("watchUniqueUsers");
+    const noIdEl = $("watchCommentsNoId");
+    const noteEl = $("watchAudienceNote");
     if (!wrap || !title || !broadcaster || !thumb || !tags) return;
     if (!snapshot) {
       clearWatchMetaCard();
@@ -1617,6 +1928,34 @@
       thumb.hidden = true;
       thumb.removeAttribute("src");
     }
+    const vc = snapshot.viewerCountFromDom;
+    if (viewerDomEl) {
+      viewerDomEl.textContent = typeof vc === "number" && Number.isFinite(vc) && vc >= 0 ? String(vc) : "\u2014";
+    }
+    const st = summarizeRecordedCommenters(
+      Array.isArray(commentEntries) ? commentEntries : []
+    );
+    if (uniqueEl) {
+      if (st.uniqueKnownUserIds > 0) {
+        uniqueEl.textContent = String(st.uniqueKnownUserIds);
+        uniqueEl.title = "userId \u304C\u53D6\u308C\u305F\u30B3\u30E1\u30F3\u30C8\u306B\u3064\u3044\u3066\u306E distinct \u6570";
+      } else if (st.distinctAvatarUrls > 0) {
+        uniqueEl.textContent = `\u2248${st.distinctAvatarUrls}`;
+        uniqueEl.title = "userId \u672A\u53D6\u5F97\u306E\u305F\u3081\u3001\u8A18\u9332\u3055\u308C\u305F https \u30A2\u30A4\u30B3\u30F3 URL \u306E\u7A2E\u985E\u6570\u3092\u53C2\u8003\u8868\u793A\uFF08\u91CD\u8907\u30A2\u30A4\u30B3\u30F3\u306F1\u306B\u307E\u3068\u307E\u308A\u307E\u3059\uFF09";
+      } else {
+        uniqueEl.textContent = "0";
+        uniqueEl.title = "userId \u3082\u6709\u52B9\u306A avatarUrl \u3082\u7121\u3044\u30B3\u30E1\u30F3\u30C8\u306E\u307F\u306E\u3068\u304D\u306F 0 \u306E\u307E\u307E\u3067\u3059";
+      }
+    }
+    if (noIdEl) noIdEl.textContent = String(st.commentsWithoutUserId);
+    if (noteEl) {
+      const parts = [
+        "\u516C\u5F0F\u306E\u6570\u5024\u3067\u306F\u3042\u308A\u307E\u305B\u3093\u3002\u540C\u6642\u63A5\u7D9A\u306F embedded-data / WebSocket / \u30DA\u30FC\u30B8\u518D\u53D6\u5F97\u304B\u3089\u306E\u8AAD\u307F\u53D6\u308A\u3067\u3001\u7D0445\u79D2\u3054\u3068\u306B\u66F4\u65B0\u3055\u308C\u307E\u3059\u3002",
+        "\u30E6\u30CB\u30FC\u30AF\u306F userId \u306E\u7A2E\u985E\u6570\uFF08\u672A\u53D6\u5F97\u6642\u306F https \u306E\u30A2\u30A4\u30B3\u30F3 URL \u306E\u7A2E\u985E\u6570\u3092 \u2248 \u3067\u8868\u793A\uFF09\u3067\u3059\u3002"
+      ];
+      noteEl.textContent = parts.join("");
+    }
+    if (audience) audience.hidden = false;
     wrap.hidden = false;
   }
   async function renderStorageErrorBanner(viewerLiveId = "") {
@@ -1646,21 +1985,29 @@
       detail.textContent = "";
     }
   }
+  function renderRoomHeatSummary(totalRecent, activeUsers, heatPercent, heatText) {
+    const summary = (
+      /** @type {HTMLElement|null} */
+      $("roomHeatSummary")
+    );
+    const meta = $("roomHeatMeta");
+    const fill = (
+      /** @type {HTMLElement|null} */
+      $("roomHeatFill")
+    );
+    const note = $("roomHeatNote");
+    if (!summary || !meta || !fill || !note) return;
+    summary.hidden = false;
+    meta.textContent = `+${totalRecent}\u4EF6 / ${activeUsers}\u4EBA`;
+    fill.style.width = `${Math.max(0, Math.min(100, Number(heatPercent) || 0)).toFixed(2)}%`;
+    note.textContent = `${heatText}\uFF08\u3053\u306E5\u5206\u3067\u5897\u3048\u305F\u4EF6\u6570\uFF09`;
+  }
   function renderUserRooms(entries) {
     const ul = (
       /** @type {HTMLUListElement} */
       $("userRoomList")
     );
     if (!ul) return;
-    const rooms = aggregateCommentsByUser(entries);
-    ul.innerHTML = "";
-    if (!rooms.length) {
-      const li = document.createElement("li");
-      li.className = "empty-hint";
-      li.textContent = "\u307E\u3060\u30B3\u30E1\u30F3\u30C8\u304C\u3042\u308A\u307E\u305B\u3093";
-      ul.appendChild(li);
-      return;
-    }
     const list = Array.isArray(entries) ? entries : [];
     const latestAt = list.reduce((max, e) => {
       const at = Number(e?.capturedAt || 0);
@@ -1676,6 +2023,21 @@
       const userKey = uid || UNKNOWN_USER_KEY;
       recentMap.set(userKey, (recentMap.get(userKey) || 0) + 1);
     }
+    const recentCounts = Array.from(recentMap.values());
+    const totalRecent = recentCounts.reduce((sum, v) => sum + v, 0);
+    const activeUsers = recentCounts.filter((v) => v > 0).length;
+    const heatPercent = totalRecent > 0 ? Math.min(100, Math.log10(totalRecent + 1) * 38) : 0;
+    const heatText = totalRecent >= 50 ? "\u5897\u52A0\u304C\u3068\u3066\u3082\u5927\u304D\u3044" : totalRecent >= 20 ? "\u5897\u52A0\u304C\u5927\u304D\u3044" : totalRecent >= 5 ? "\u5897\u52A0\u3042\u308A" : "\u5897\u52A0\u306F\u5C11\u306A\u3081";
+    renderRoomHeatSummary(totalRecent, activeUsers, heatPercent, heatText);
+    const rooms = aggregateCommentsByUser(list);
+    ul.innerHTML = "";
+    if (!rooms.length) {
+      const li = document.createElement("li");
+      li.className = "empty-hint";
+      li.textContent = "\u307E\u3060\u30B3\u30E1\u30F3\u30C8\u304C\u3042\u308A\u307E\u305B\u3093";
+      ul.appendChild(li);
+      return;
+    }
     const rankedRooms = rooms.map((room) => ({
       ...room,
       recentCount: recentMap.get(room.userKey) || 0
@@ -1690,25 +2052,6 @@
     const visibleRooms = rankedRooms.slice(0, MAX_VISIBLE_ROOMS);
     const maxTotal = Math.max(1, ...visibleRooms.map((v) => v.count));
     const maxRecent = Math.max(1, ...visibleRooms.map((v) => v.recentCount));
-    const totalRecent = rankedRooms.reduce((sum, v) => sum + v.recentCount, 0);
-    const activeUsers = rankedRooms.filter((v) => v.recentCount > 0).length;
-    const heatPercent = totalRecent > 0 ? Math.min(100, Math.log10(totalRecent + 1) * 38) : 0;
-    const heatText = totalRecent >= 50 ? "\u5897\u52A0\u304C\u3068\u3066\u3082\u5927\u304D\u3044" : totalRecent >= 20 ? "\u5897\u52A0\u304C\u5927\u304D\u3044" : totalRecent >= 5 ? "\u5897\u52A0\u3042\u308A" : "\u5897\u52A0\u306F\u5C11\u306A\u3081";
-    if (!compactRooms) {
-      const summaryLi = document.createElement("li");
-      summaryLi.className = "room-heat";
-      summaryLi.innerHTML = `
-      <div class="room-heat-head">
-        <span class="room-heat-title">\u76F4\u8FD15\u5206\u306E\u5FDC\u63F4\u5897\u52A0</span>
-        <span class="room-heat-meta">+${totalRecent}\u4EF6 / ${activeUsers}\u4EBA</span>
-      </div>
-      <div class="room-heat-track">
-        <div class="room-heat-fill" style="width:${heatPercent.toFixed(2)}%"></div>
-      </div>
-      <div class="room-heat-note">${heatText}\uFF08\u3053\u306E5\u5206\u3067\u5897\u3048\u305F\u4EF6\u6570\uFF09</div>
-    `;
-      ul.appendChild(summaryLi);
-    }
     for (const r of visibleRooms) {
       const li = document.createElement("li");
       li.classList.add("room-card");
@@ -1758,6 +2101,154 @@
       }
     }
     return null;
+  }
+  function normalizeInterceptCacheItems(raw) {
+    if (!Array.isArray(raw)) return [];
+    const out = [];
+    for (const v of raw) {
+      if (!v || typeof v !== "object") continue;
+      const item = (
+        /** @type {{ no?: unknown, uid?: unknown, name?: unknown, av?: unknown }} */
+        v
+      );
+      const no = String(item.no || "").trim();
+      const uid = String(item.uid || "").trim();
+      if (!no) continue;
+      const name = String(item.name || "").trim();
+      const av = isHttpOrHttpsUrl(item.av) ? String(item.av || "").trim() : "";
+      if (!uid && !name && !av) continue;
+      out.push({ no, uid, name, av });
+    }
+    return out;
+  }
+  async function requestInterceptCacheFromOpenTab(watchUrl, opts = {}) {
+    const res = (
+      /** @type {{ ok?: boolean, items?: unknown }|null} */
+      await sendMessageToWatchTabs(watchUrl, {
+        type: "NLS_EXPORT_INTERCEPT_CACHE",
+        ...opts.deep ? { deep: true } : {}
+      })
+    );
+    if (!res || res.ok !== true) return [];
+    return normalizeInterceptCacheItems(res.items);
+  }
+  function mergeCommentsWithInterceptCache(entries, items, opts = {}) {
+    if (!Array.isArray(entries) || entries.length === 0 || items.length === 0) {
+      return {
+        next: Array.isArray(entries) ? entries : [],
+        patched: 0,
+        uidReplaced: 0
+      };
+    }
+    const byNo = /* @__PURE__ */ new Map();
+    for (const it of items) {
+      const prev = byNo.get(it.no);
+      if (!prev) {
+        byNo.set(it.no, it);
+        continue;
+      }
+      byNo.set(it.no, {
+        no: it.no,
+        uid: it.uid || prev.uid,
+        name: it.name || prev.name,
+        av: it.av || prev.av
+      });
+    }
+    const mismatchByCurrentUid = /* @__PURE__ */ new Map();
+    for (const e of entries) {
+      const no = String(e?.commentNo || "").trim();
+      if (!no) continue;
+      const hit = byNo.get(no);
+      if (!hit?.uid) continue;
+      const curUid = String(e?.userId || "").trim();
+      if (!curUid) continue;
+      const st = mismatchByCurrentUid.get(curUid) || {
+        total: 0,
+        mismatch: 0,
+        hitUids: /* @__PURE__ */ new Set()
+      };
+      st.total += 1;
+      if (curUid !== hit.uid) {
+        st.mismatch += 1;
+        st.hitUids.add(hit.uid);
+      }
+      mismatchByCurrentUid.set(curUid, st);
+    }
+    const preferInterceptUidSet = opts.preferInterceptUidSet instanceof Set ? opts.preferInterceptUidSet : /* @__PURE__ */ new Set();
+    const shouldReplaceUid = (curUid) => {
+      if (!curUid) return false;
+      if (preferInterceptUidSet.has(curUid)) return true;
+      const st = mismatchByCurrentUid.get(curUid);
+      if (!st || st.total < 4) return false;
+      if (st.hitUids.size < 3) return false;
+      return st.mismatch >= Math.ceil(st.total * 0.6);
+    };
+    let patched = 0;
+    let uidReplaced = 0;
+    const next = entries.map((e) => {
+      const no = String(e?.commentNo || "").trim();
+      if (!no) return e;
+      const hit = byNo.get(no);
+      if (!hit) return e;
+      const curUid = String(e?.userId || "").trim();
+      const curName = String(e?.nickname || "").trim();
+      const curAv = String(e?.avatarUrl || "").trim();
+      let changed = false;
+      let out = e;
+      if (hit.uid && (!curUid || shouldReplaceUid(curUid))) {
+        if (curUid && curUid !== hit.uid) uidReplaced += 1;
+        out = { ...out, userId: hit.uid };
+        changed = true;
+      }
+      if (hit.name && !curName) {
+        out = { ...out, nickname: hit.name };
+        changed = true;
+      }
+      if (hit.av && !curAv) {
+        out = { ...out, avatarUrl: hit.av };
+        changed = true;
+      }
+      if (changed) patched += 1;
+      return out;
+    });
+    return { next, patched, uidReplaced };
+  }
+  function stripViewerAvatarContamination(entries, liveId, snapshot) {
+    if (!Array.isArray(entries) || entries.length === 0) {
+      return { next: Array.isArray(entries) ? entries : [], patched: 0 };
+    }
+    const viewerAvatar = String(snapshot?.viewerAvatarUrl || "").trim();
+    const viewerUid = String(snapshot?.viewerUserId || "").trim();
+    const broadcasterUid = String(snapshot?.broadcasterUserId || "").trim();
+    if (!isHttpOrHttpsUrl(viewerAvatar) && !viewerUid && !broadcasterUid) {
+      return { next: entries, patched: 0 };
+    }
+    let patched = 0;
+    const next = entries.map((e) => {
+      let changed = false;
+      const out = { ...e };
+      if (viewerUid && String(e?.userId || "").trim() === viewerUid) {
+        if (!isOwnPostedSupportComment(e, liveId)) {
+          delete out.userId;
+          changed = true;
+        }
+      }
+      if (broadcasterUid && String(e?.userId || "").trim() === broadcasterUid) {
+        if (!isOwnPostedSupportComment(e, liveId)) {
+          delete out.userId;
+          changed = true;
+        }
+      }
+      const av = String(e?.avatarUrl || "").trim();
+      if (isHttpOrHttpsUrl(viewerAvatar) && av && isSameAvatarUrl(av, viewerAvatar) && !isOwnPostedSupportComment(e, liveId)) {
+        delete out.avatarUrl;
+        changed = true;
+      }
+      if (!changed) return e;
+      patched += 1;
+      return out;
+    });
+    return { next, patched };
   }
   async function findWatchTabIdForVoice(watchUrl) {
     const list = await collectWatchTabCandidates(watchUrl);
@@ -1929,7 +2420,7 @@
       KEY_RECORDING,
       KEY_INLINE_PANEL_WIDTH_MODE
     ]);
-    toggle.checked = bagRec[KEY_RECORDING] === true;
+    toggle.checked = isRecordingEnabled(bagRec[KEY_RECORDING]);
     toggle.disabled = false;
     const panelMode = normalizeInlinePanelWidthMode(
       bagRec[KEY_INLINE_PANEL_WIDTH_MODE]
@@ -1968,6 +2459,7 @@
       watchMetaCache.snapshot = null;
       clearWatchMetaCard();
       syncStorySourceEntries("", []);
+      resetStoryAvatarDiagState();
       renderCharacterScene({
         hasWatch: false,
         recording: toggle.checked,
@@ -2002,6 +2494,7 @@
       watchMetaCache.snapshot = null;
       clearWatchMetaCard();
       syncStorySourceEntries("", []);
+      resetStoryAvatarDiagState();
       renderCharacterScene({
         hasWatch: true,
         recording: toggle.checked,
@@ -2018,9 +2511,81 @@
       renderUserRooms([]);
       return;
     }
+    const snapshotKey = `${lv}|${url}|s10`;
+    if (watchMetaCache.key !== snapshotKey || !watchMetaCache.snapshot) {
+      watchMetaCache.key = snapshotKey;
+      const { snapshot } = await requestWatchPageSnapshotFromOpenTab(url);
+      watchMetaCache.snapshot = snapshot;
+    }
+    const watchSnapshot = watchMetaCache.snapshot;
     const key = commentsStorageKey(lv);
     const data = await chrome.storage.local.get(key);
-    const arr = Array.isArray(data[key]) ? data[key] : [];
+    let arr = Array.isArray(data[key]) ? data[key] : [];
+    STORY_AVATAR_DIAG_STATE.total = arr.length;
+    STORY_AVATAR_DIAG_STATE.withUid = countEntriesWithUserId(arr);
+    STORY_AVATAR_DIAG_STATE.withAvatar = countEntriesWithAvatar(arr);
+    STORY_AVATAR_DIAG_STATE.uniqueAvatar = countUniqueAvatarEntries(arr);
+    STORY_AVATAR_DIAG_STATE.interceptItems = 0;
+    STORY_AVATAR_DIAG_STATE.interceptWithUid = 0;
+    STORY_AVATAR_DIAG_STATE.interceptWithAvatar = 0;
+    STORY_AVATAR_DIAG_STATE.mergedPatched = 0;
+    STORY_AVATAR_DIAG_STATE.mergedUidReplaced = 0;
+    STORY_AVATAR_DIAG_STATE.stripped = 0;
+    const strippedViewerAvatar = stripViewerAvatarContamination(
+      arr,
+      lv,
+      watchSnapshot
+    );
+    if (strippedViewerAvatar.patched > 0) {
+      arr = strippedViewerAvatar.next;
+      await storageSetSafe({ [key]: arr });
+    }
+    STORY_AVATAR_DIAG_STATE.stripped = strippedViewerAvatar.patched;
+    if (INTERCEPT_BACKFILL_STATE.liveId !== lv) {
+      INTERCEPT_BACKFILL_STATE.liveId = lv;
+      INTERCEPT_BACKFILL_STATE.deepTried = false;
+    }
+    const missingIdCount = arr.reduce(
+      (sum, e) => String(e?.userId || "").trim() ? sum : sum + 1,
+      0
+    );
+    const shouldDeep = !INTERCEPT_BACKFILL_STATE.deepTried && arr.length >= 30 && missingIdCount >= Math.ceil(arr.length * 0.4);
+    const interceptItems = await requestInterceptCacheFromOpenTab(url, {
+      deep: shouldDeep
+    });
+    if (shouldDeep) {
+      INTERCEPT_BACKFILL_STATE.deepTried = true;
+    }
+    if (interceptItems.length > 0) {
+      STORY_AVATAR_DIAG_STATE.interceptItems = interceptItems.length;
+      STORY_AVATAR_DIAG_STATE.interceptWithUid = interceptItems.reduce(
+        (sum, it) => it.uid ? sum + 1 : sum,
+        0
+      );
+      STORY_AVATAR_DIAG_STATE.interceptWithAvatar = interceptItems.reduce(
+        (sum, it) => it.av ? sum + 1 : sum,
+        0
+      );
+      const suspectUidSet = new Set(
+        [
+          String(watchSnapshot?.viewerUserId || "").trim(),
+          String(watchSnapshot?.broadcasterUserId || "").trim()
+        ].filter(Boolean)
+      );
+      const merged = mergeCommentsWithInterceptCache(arr, interceptItems, {
+        preferInterceptUidSet: suspectUidSet
+      });
+      STORY_AVATAR_DIAG_STATE.mergedPatched = merged.patched;
+      STORY_AVATAR_DIAG_STATE.mergedUidReplaced = merged.uidReplaced;
+      if (merged.patched > 0) {
+        arr = merged.next;
+        await storageSetSafe({ [key]: arr });
+      }
+    }
+    STORY_AVATAR_DIAG_STATE.total = arr.length;
+    STORY_AVATAR_DIAG_STATE.withUid = countEntriesWithUserId(arr);
+    STORY_AVATAR_DIAG_STATE.withAvatar = countEntriesWithAvatar(arr);
+    STORY_AVATAR_DIAG_STATE.uniqueAvatar = countUniqueAvatarEntries(arr);
     setCountDisplay(String(arr.length));
     renderCommentTicker(
       /** @type {PopupCommentEntry[]} */
@@ -2054,21 +2619,16 @@
       recording: toggle.checked,
       commentCount: arr.length,
       liveId: lv,
-      snapshot: null
+      snapshot: watchSnapshot
     });
-    const snapshotKey = `${lv}|${url}|s3`;
-    if (watchMetaCache.key !== snapshotKey || !watchMetaCache.snapshot) {
-      watchMetaCache.key = snapshotKey;
-      const { snapshot } = await requestWatchPageSnapshotFromOpenTab(url);
-      watchMetaCache.snapshot = snapshot;
-    }
-    renderWatchMetaCard(watchMetaCache.snapshot);
+    renderWatchMetaCard(watchSnapshot, arr);
+    renderStoryUserLane();
     renderCharacterScene({
       hasWatch: true,
       recording: toggle.checked,
       commentCount: arr.length,
       liveId: lv,
-      snapshot: watchMetaCache.snapshot
+      snapshot: watchSnapshot
     });
     const growthEl = (
       /** @type {HTMLElement|null} */
@@ -2158,10 +2718,56 @@
       error: "watch\u30BF\u30D6\u306E\u518D\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002\u30BF\u30D6\u3092\u624B\u52D5\u3067\u66F4\u65B0\u3057\u3066\u304F\u3060\u3055\u3044\u3002"
     };
   }
+  async function listWatchFramesWithInnerText(tabId) {
+    try {
+      const results = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        func: () => {
+          const href = String(location.href || "");
+          const panel = !!(document.querySelector(".ga-ns-comment-panel") || document.querySelector(".comment-panel") || document.querySelector('[class*="comment-data-grid"]'));
+          const hasVideo = !!document.querySelector("video");
+          const inner = document.body?.innerText || "";
+          const len = inner.length;
+          const text = inner.slice(0, 12e4);
+          const score = (panel ? 8e6 : 0) + (hasVideo ? 4e5 : 0) + Math.min(len, 5e6) + (/\/watch\/lv\d+/i.test(href) ? 5e4 : 0) + (href.includes("nicovideo.jp") && href.includes("watch") ? 25e3 : 0);
+          return { score, text, href };
+        }
+      });
+      const out = [];
+      for (const row of results || []) {
+        const res = row?.result;
+        if (!res || typeof res.score !== "number") continue;
+        const fid = typeof row.frameId === "number" ? row.frameId : 0;
+        out.push({
+          frameId: fid,
+          score: res.score,
+          text: String(res.text || "")
+        });
+      }
+      out.sort((a, b) => b.score - a.score);
+      return out;
+    } catch {
+      return [];
+    }
+  }
+  function probeViewerCountFromFrameTexts(frames) {
+    for (const f of frames) {
+      const n = parseViewerCountFromLooseText(f.text);
+      if (n != null) return n;
+    }
+    return null;
+  }
+  function mergeViewerProbeIntoSnapshot(snap, probe) {
+    if (!snap || probe == null) return snap;
+    const cur = snap.viewerCountFromDom;
+    if (typeof cur === "number" && Number.isFinite(cur) && cur >= 0) return snap;
+    return { ...snap, viewerCountFromDom: probe };
+  }
   async function tabsSendMessageWithRetry(tabId, message, retryOpts = {}) {
     const max = retryOpts.maxAttempts ?? 8;
     const delayMs = retryOpts.delayMs ?? 75;
-    const opts = { frameId: 0 };
+    const frameId = retryOpts.frameId !== void 0 ? retryOpts.frameId : 0;
+    const opts = { frameId };
     let lastErr = null;
     for (let i = 0; i < max; i++) {
       try {
@@ -2185,17 +2791,32 @@
     }
     for (const candidate of candidates) {
       try {
-        const res = await tabsSendMessageWithRetry(candidate.id, {
-          type: "NLS_EXPORT_WATCH_SNAPSHOT"
-        });
-        if (res?.ok && res.snapshot) {
-          return {
-            snapshot: (
-              /** @type {WatchPageSnapshot} */
-              res.snapshot
-            ),
-            error: ""
-          };
+        const ranked = await listWatchFramesWithInnerText(candidate.id);
+        const viewerProbe = probeViewerCountFromFrameTexts(ranked);
+        const tried = /* @__PURE__ */ new Set();
+        const tryOrder = [
+          ...ranked.map((r) => r.frameId),
+          0
+        ];
+        for (const fid of tryOrder) {
+          if (tried.has(fid)) continue;
+          tried.add(fid);
+          try {
+            const res = await tabsSendMessageWithRetry(
+              candidate.id,
+              { type: "NLS_EXPORT_WATCH_SNAPSHOT" },
+              { frameId: fid, maxAttempts: 5, delayMs: 90 }
+            );
+            if (res?.ok && res.snapshot) {
+              const merged = mergeViewerProbeIntoSnapshot(
+                /** @type {WatchPageSnapshot} */
+                res.snapshot,
+                viewerProbe
+              );
+              return { snapshot: merged, error: "" };
+            }
+          } catch {
+          }
         }
       } catch {
       }
@@ -2839,6 +3460,7 @@
     URL.revokeObjectURL(blobUrl);
   }
   function initPopup() {
+    installExtensionContextErrorGuard();
     applyResponsivePopupLayout();
     window.addEventListener("resize", applyResponsivePopupLayout);
     const toggle = (
@@ -2924,7 +3546,10 @@
     );
     const applyFrameCodeBtn = $("applyFrameCode");
     const safeRefresh = () => {
-      refresh().catch(() => {
+      if (!hasExtensionContext()) return;
+      refresh().catch((e) => {
+        if (!isExtensionContextInvalidatedError(e)) {
+        }
       }).finally(() => {
         requestAnimationFrame(() => {
           applyResponsivePopupLayout();
@@ -2957,16 +3582,25 @@
       await savePopupFrameSettings();
     };
     dismissErr?.addEventListener("click", async () => {
-      await chrome.storage.local.remove(KEY_STORAGE_WRITE_ERROR);
-      safeRefresh();
+      try {
+        const ok = await storageRemoveSafe(KEY_STORAGE_WRITE_ERROR);
+        if (!ok) return;
+        safeRefresh();
+      } catch {
+      }
     });
     toggle.addEventListener("change", async () => {
-      await chrome.storage.local.set({ [KEY_RECORDING]: toggle.checked });
-      safeRefresh();
+      try {
+        const ok = await storageSetSafe({ [KEY_RECORDING]: toggle.checked });
+        if (!ok) return;
+        safeRefresh();
+      } catch {
+      }
     });
     const saveInlinePanelWidthMode = async (value) => {
       const v = value === INLINE_PANEL_WIDTH_VIDEO ? INLINE_PANEL_WIDTH_VIDEO : INLINE_PANEL_WIDTH_PLAYER_ROW;
-      await chrome.storage.local.set({ [KEY_INLINE_PANEL_WIDTH_MODE]: v });
+      const ok = await storageSetSafe({ [KEY_INLINE_PANEL_WIDTH_MODE]: v });
+      if (!ok) return;
       safeRefresh();
     };
     const radioPlayerRowEl = $("inlinePanelWidthPlayerRow");
@@ -3080,16 +3714,19 @@
     });
     thumbIntervalSel?.addEventListener("change", async () => {
       const v = Number(thumbIntervalSel.value);
-      if (v === 0) {
-        await chrome.storage.local.set({
-          [KEY_THUMB_AUTO]: false,
-          [KEY_THUMB_INTERVAL_MS]: 0
-        });
-      } else {
-        await chrome.storage.local.set({
-          [KEY_THUMB_AUTO]: true,
-          [KEY_THUMB_INTERVAL_MS]: v
-        });
+      try {
+        if (v === 0) {
+          await storageSetSafe({
+            [KEY_THUMB_AUTO]: false,
+            [KEY_THUMB_INTERVAL_MS]: 0
+          });
+        } else {
+          await storageSetSafe({
+            [KEY_THUMB_AUTO]: true,
+            [KEY_THUMB_INTERVAL_MS]: v
+          });
+        }
+      } catch {
       }
     });
     exportBtn.addEventListener("click", async () => {
@@ -3113,35 +3750,52 @@
         setPostStatus("watch\u30DA\u30FC\u30B8\u3092\u958B\u3044\u3066\u304B\u3089\u9001\u4FE1\u3057\u3066\u304F\u3060\u3055\u3044\u3002", "error");
         return;
       }
+      const lvPost = String(exportBtn.dataset.liveId || "").trim().toLowerCase();
+      let optimisticLogged = false;
       if (postBtn) postBtn.disabled = true;
       syncVoiceCommentButton();
       setPostStatus("\u9001\u4FE1\u4E2D\u2026", "idle");
-      const lvPost = String(exportBtn.dataset.liveId || "").trim().toLowerCase();
-      if (lvPost) {
-        await appendSelfPostedComment(lvPost, text);
-      }
-      const result = await requestPostCommentToOpenTab(text, watchUrl);
-      if (postBtn) postBtn.disabled = false;
-      syncVoiceCommentButton();
-      if (result.ok) {
-        if (commentInput) commentInput.value = "";
-        setPostStatus("\u30B3\u30E1\u30F3\u30C8\u3092\u9001\u4FE1\u3057\u307E\u3057\u305F\u3002", "success");
-        const growthEl = (
-          /** @type {HTMLElement|null} */
-          $("sceneStoryGrowth")
+      try {
+        if (lvPost) {
+          await appendSelfPostedComment(lvPost, text);
+          optimisticLogged = true;
+        }
+        if (!hasExtensionContext()) return;
+        const result = await requestPostCommentToOpenTab(text, watchUrl);
+        if (!hasExtensionContext()) return;
+        if (result.ok) {
+          if (commentInput) commentInput.value = "";
+          setPostStatus("\u30B3\u30E1\u30F3\u30C8\u3092\u9001\u4FE1\u3057\u307E\u3057\u305F\u3002", "success");
+          const growthEl = (
+            /** @type {HTMLElement|null} */
+            $("sceneStoryGrowth")
+          );
+          if (growthEl) patchStoryGrowthIconsFromSource(growthEl);
+          return;
+        }
+        if (optimisticLogged && lvPost) {
+          await revertLastSelfPostedComment(lvPost, text);
+          optimisticLogged = false;
+        }
+        setPostStatus(
+          withCommentSendTroubleshootHint(
+            result.error || "\u9001\u4FE1\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002"
+          ),
+          "error"
         );
-        if (growthEl) patchStoryGrowthIconsFromSource(growthEl);
-        return;
+      } catch (e) {
+        if (optimisticLogged && lvPost) {
+          await revertLastSelfPostedComment(lvPost, text).catch(() => {
+          });
+        }
+        if (isExtensionContextInvalidatedError(e) || !hasExtensionContext()) return;
+        throw e;
+      } finally {
+        if (hasExtensionContext()) {
+          if (postBtn) postBtn.disabled = false;
+          syncVoiceCommentButton();
+        }
       }
-      if (lvPost) {
-        await revertLastSelfPostedComment(lvPost, text);
-      }
-      setPostStatus(
-        withCommentSendTroubleshootHint(
-          result.error || "\u9001\u4FE1\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002"
-        ),
-        "error"
-      );
     }
     let voiceListeningUi = false;
     const setVoiceLevelMeter = (level) => {
@@ -3174,30 +3828,40 @@
       setVoiceListeningUi(false);
     });
     voiceAutoSend?.addEventListener("change", async () => {
-      await chrome.storage.local.set({
-        [KEY_VOICE_AUTOSEND]: voiceAutoSend.checked
-      });
+      try {
+        await storageSetSafe({
+          [KEY_VOICE_AUTOSEND]: voiceAutoSend.checked
+        });
+      } catch {
+      }
     });
     commentEnterSend?.addEventListener("change", async () => {
-      await chrome.storage.local.set({
-        [KEY_COMMENT_ENTER_SEND]: commentEnterSend.checked
-      });
+      try {
+        await storageSetSafe({
+          [KEY_COMMENT_ENTER_SEND]: commentEnterSend.checked
+        });
+      } catch {
+      }
     });
     const storyGrowthCollapseBtn = $("storyGrowthCollapseBtn");
     storyGrowthCollapseBtn?.addEventListener("click", () => {
       void (async () => {
-        const bag = await chrome.storage.local.get(KEY_STORY_GROWTH_COLLAPSED);
+        const bag = await storageGetSafe(KEY_STORY_GROWTH_COLLAPSED, {});
         const collapsed = bag[KEY_STORY_GROWTH_COLLAPSED] === true;
-        await chrome.storage.local.set({
+        const ok = await storageSetSafe({
           [KEY_STORY_GROWTH_COLLAPSED]: !collapsed
         });
+        if (!ok) return;
         await applyStoryGrowthCollapsedFromStorage();
       })();
     });
     voiceDeviceSel?.addEventListener("change", async () => {
-      await chrome.storage.local.set({
-        [KEY_VOICE_INPUT_DEVICE]: voiceDeviceSel.value
-      });
+      try {
+        await storageSetSafe({
+          [KEY_VOICE_INPUT_DEVICE]: voiceDeviceSel.value
+        });
+      } catch {
+      }
     });
     voiceDeviceRefreshBtn?.addEventListener("click", () => {
       refreshVoiceInputDeviceList().catch(() => {

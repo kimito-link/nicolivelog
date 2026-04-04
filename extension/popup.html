@@ -111,6 +111,15 @@
         font-size: 11px;
       }
 
+      /* watch 埋め込み時は上部のブランド帯を非表示（視聴導線を優先） */
+      html.nl-inline body .nl-header {
+        display: none;
+      }
+
+      html.nl-inline body .nl-main {
+        padding-top: 3px;
+      }
+
       /* 視聴ページ埋め込み時は「浮いた白箱」枠を付けない（ボーダー・影・大きな角丸を外す） */
       html.nl-inline body .nl-stats,
       html.nl-inline body .nl-record,
@@ -535,6 +544,45 @@
         margin-top: 1px;
       }
 
+      .nl-story-userlane {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 4px;
+        margin: 0 0 4px;
+        min-height: 0;
+        max-height: 44px;
+        overflow: hidden;
+      }
+
+      html.nl-inline body .nl-story-userlane {
+        max-height: none;
+      }
+
+      .nl-story-userlane-avatar {
+        width: 20px;
+        height: 20px;
+        border-radius: 999px;
+        object-fit: cover;
+        object-position: center;
+        border: 1px solid color-mix(in srgb, var(--nl-border) 82%, #fff 18%);
+        box-shadow: 0 1px 2px rgb(2 17 31 / 20%);
+        background: var(--nl-surface);
+        flex-shrink: 0;
+      }
+
+      html.nl-inline body .nl-story-userlane-avatar {
+        width: 24px;
+        height: 24px;
+      }
+
+      .nl-story-avatar-diag {
+        margin: 0 0 4px;
+        font-size: 11px;
+        color: var(--nl-text-sub);
+        line-height: 1.25;
+      }
+
       .nl-story-growth {
         display: grid;
         grid-template-columns: repeat(auto-fill, minmax(var(--nl-story-icon-size), var(--nl-story-icon-size)));
@@ -948,6 +996,46 @@
         border: 1px solid #bae6fd;
         border-radius: 999px;
         padding: 1px 6px;
+      }
+
+      .nl-watch-audience {
+        margin-top: 6px;
+        padding-top: 6px;
+        border-top: 1px solid var(--nl-border);
+      }
+
+      .nl-watch-audience-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 4px 8px;
+        font-size: clamp(10px, calc(var(--nl-base-font) * 0.78), 13px);
+        line-height: 1.45;
+        margin-bottom: 3px;
+      }
+
+      .nl-watch-audience-label {
+        color: var(--nl-muted);
+        flex: 1 1 8rem;
+        min-width: 0;
+      }
+
+      .nl-watch-audience-val {
+        font-weight: 800;
+        color: var(--nl-text);
+        font-variant-numeric: tabular-nums;
+      }
+
+      .nl-watch-audience-sub {
+        color: var(--nl-muted);
+        font-size: clamp(9px, calc(var(--nl-base-font) * 0.72), 12px);
+      }
+
+      .nl-watch-audience-note {
+        margin: 4px 0 0;
+        font-size: clamp(9px, calc(var(--nl-base-font) * 0.7), 11.5px);
+        color: var(--nl-muted);
+        line-height: 1.4;
       }
 
       .nl-count-wrap {
@@ -1429,7 +1517,7 @@
       }
 
       .nl-compose-troubleshoot {
-        margin: 6px 0 0;
+        margin: 8px 0 0;
         padding: 8px 10px;
         font-size: clamp(10px, calc(var(--nl-base-font) * 0.78), 13px);
         color: var(--nl-muted);
@@ -1437,6 +1525,22 @@
         background: rgb(248 250 252 / 90%);
         border: 1px solid var(--nl-border);
         border-radius: 8px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px 10px;
+        align-items: flex-start;
+      }
+
+      .nl-compose-troubleshoot-text {
+        margin: 0;
+        flex: 1 1 260px;
+        min-width: 0;
+      }
+
+      .nl-compose-troubleshoot #reloadWatchTabBtn {
+        margin-left: auto;
+        min-height: 34px;
+        padding: 7px 10px;
       }
 
       .nl-voice-os-guide {
@@ -1828,7 +1932,20 @@
 
       .room-heat {
         padding: 6px 7px;
+        border: 1px solid var(--nl-border);
+        border-radius: 10px;
         background: linear-gradient(145deg, var(--nl-surface), var(--nl-bg-soft));
+        box-shadow: inset 0 1px 0 rgb(255 255 255 / 70%);
+      }
+
+      .nl-heat-summary {
+        margin: 0 0 8px;
+      }
+
+      #userRoomList .room-heat {
+        border: none;
+        border-radius: 0;
+        box-shadow: none;
       }
 
       .room-heat-head {
@@ -2187,6 +2304,16 @@
               </div>
             </div>
           </div>
+          <div id="roomHeatSummary" class="room-heat nl-heat-summary" role="status" aria-live="polite">
+            <div class="room-heat-head">
+              <span class="room-heat-title">直近5分の応援増加</span>
+              <span id="roomHeatMeta" class="room-heat-meta">+0件 / 0人</span>
+            </div>
+            <div class="room-heat-track">
+              <div id="roomHeatFill" class="room-heat-fill" style="width: 0%"></div>
+            </div>
+            <div id="roomHeatNote" class="room-heat-note">増加は少なめ（この5分で増えた件数）</div>
+          </div>
           <div class="nl-story" aria-live="polite">
             <div class="nl-story-avatars" aria-hidden="true">
               <img
@@ -2214,6 +2341,13 @@
                     アイコン列を隠す
                   </button>
                 </div>
+                <div
+                  id="sceneStoryUserLane"
+                  class="nl-story-userlane"
+                  aria-label="最近の応援ユーザーサムネイル"
+                  hidden
+                ></div>
+                <div id="storyAvatarDiag" class="nl-story-avatar-diag" hidden></div>
                 <div id="storyGrowthCollapsible" class="nl-story-growth-collapsible">
                   <div id="sceneStoryGauge" class="nl-story-meter" aria-label="応援コメントアイコン表示">
                     <div id="sceneStoryGrowth" class="nl-story-growth" aria-live="polite"></div>
@@ -2255,11 +2389,25 @@
           </div>
         </div>
         <div id="watchTags" class="nl-watch-tags"></div>
+        <div id="watchAudience" class="nl-watch-audience" hidden>
+          <div class="nl-watch-audience-row">
+            <span class="nl-watch-audience-label">同時接続（ページ表示・推定）</span>
+            <strong id="watchViewerDom" class="nl-watch-audience-val">—</strong>
+          </div>
+          <div class="nl-watch-audience-row">
+            <span class="nl-watch-audience-label">ユニーク利用者（記録コメント・推定）</span>
+            <strong id="watchUniqueUsers" class="nl-watch-audience-val">—</strong>
+            <span class="nl-watch-audience-sub"
+              >（ID未取得コメント <span id="watchCommentsNoId">—</span> 件）</span
+            >
+          </div>
+          <p id="watchAudienceNote" class="nl-watch-audience-note"></p>
+        </div>
       </section>
 
       <div class="nl-record">
         <label>
-          <input type="checkbox" id="recordToggle" />
+          <input type="checkbox" id="recordToggle" checked />
           このPCで記録する
         </label>
       </div>
@@ -2296,8 +2444,19 @@
 
       <section class="nl-comment-compose" aria-label="コメント投稿">
         <textarea id="commentInput" maxlength="250" placeholder="ここにコメントを書いて送信"></textarea>
+        <p class="nl-export-note nl-compose-enter-hint" aria-live="polite">
+          ニコ生互換（Enter 送信 / Shift+Enter 改行）。誤送信が気になる場合はOFF推奨。
+        </p>
         <div class="nl-compose-send-row">
           <button type="button" id="postCommentBtn" disabled>コメント送信</button>
+          <span id="postStatus" aria-live="polite"></span>
+        </div>
+        <div class="nl-compose-troubleshoot" role="note" aria-label="送信トラブル時の案内">
+          <p class="nl-compose-troubleshoot-text">
+            コメントの取得や送信がうまくいかないときは、<strong>watchページを再読み込み</strong>（F5）してください。拡張機能のファイルを差し替えたあとは、Chrome の
+            <strong>chrome://extensions</strong>
+            を開き、nicolivelog の<strong>「更新」</strong>を押してから、必要なら watch ページも再読み込みしてください（拡張は自動では再読み込みされません）。
+          </p>
           <button
             type="button"
             id="reloadWatchTabBtn"
@@ -2306,13 +2465,7 @@
           >
             watch再読み込み
           </button>
-          <span id="postStatus" aria-live="polite"></span>
         </div>
-        <p class="nl-compose-troubleshoot">
-          コメントの取得や送信がうまくいかないときは、<strong>watchページを再読み込み</strong>（F5）してください。拡張機能のファイルを差し替えたあとは、Chrome の
-          <strong>chrome://extensions</strong>
-          を開き、nicolivelog の<strong>「更新」</strong>を押してから、必要なら watch ページも再読み込みしてください（拡張は自動では再読み込みされません）。
-        </p>
         <aside
           class="nl-tanuki-voice-hint"
           role="note"
@@ -2427,9 +2580,6 @@
             Enter でも送信
           </label>
         </div>
-        <p class="nl-export-note nl-compose-enter-hint" aria-live="polite">
-          ニコ生互換（Enter 送信 / Shift+Enter 改行）。誤送信が気になる場合はOFF推奨。
-        </p>
       </section>
 
       <div class="nl-btn-row">

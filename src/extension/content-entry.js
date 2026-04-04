@@ -1,5 +1,10 @@
 // @ts-nocheck — content script; DOM/Chrome API が広く any 相当
-import { isNicoLiveWatchUrl } from '../lib/broadcastUrl.js';
+import {
+  extractLiveIdFromDom,
+  extractLiveIdFromUrl,
+  isNicoLiveWatchUrl,
+  isNicoVideoJpHost
+} from '../lib/broadcastUrl.js';
 import {
   KEY_INLINE_PANEL_WIDTH_MODE,
   KEY_LAST_WATCH_URL,
@@ -10,6 +15,7 @@ import {
   KEY_THUMB_AUTO,
   KEY_THUMB_INTERVAL_MS,
   commentsStorageKey,
+  isRecordingEnabled,
   normalizeInlinePanelWidthMode
 } from '../lib/storageKeys.js';
 import {
@@ -24,6 +30,10 @@ import {
 import { mergeNewComments } from '../lib/commentRecord.js';
 import { collectLoggedInViewerProfile } from '../lib/watchPageViewerProfile.js';
 import { extractCommentsFromNode } from '../lib/nicoliveDom.js';
+import {
+  parseLiveViewerCountFromDocument,
+  parseViewerCountFromSnapshotMetas
+} from '../lib/liveAudienceDom.js';
 import {
   findCommentListScrollHost,
   findNicoCommentPanel,
@@ -43,6 +53,10 @@ import {
 } from '../lib/voiceComment.js';
 import { audioConstraintsForDevice } from '../lib/voiceInputDevices.js';
 import { pollUntil } from '../lib/pollUntil.js';
+import {
+  extractEmbeddedDataProps,
+  pickViewerCountFromEmbeddedData
+} from '../lib/embeddedDataExtract.js';
 
 /**
  * @typedef {{ commentNo: string, text: string, userId: string|null, avatarUrl?: string }} ParsedCommentRow
@@ -50,6 +64,7 @@ import { pollUntil } from '../lib/pollUntil.js';
 
 const DEBOUNCE_MS = 400;
 const LIVE_POLL_MS = 4000;
+const STATS_POLL_MS = 45_000;
 /** 返信サジェスト等と同様に DOM 更新がテキスト差し替えだけのときの取りこぼし防止 */
 const LIVE_PANEL_SCAN_MS = 2000;
 const DEEP_HARVEST_DELAY_MS = 1200;
@@ -65,6 +80,14 @@ const SNAPSHOT_LINK_RELS = new Set([
 let recording = false;
 /** @type {string|null} */
 let liveId = null;
+
+/** page-intercept (MAIN world) の WebSocket statistics メッセージ由来の視聴者数 */
+/** @type {number|null} */
+let wsViewerCount = null;
+/** @type {number|null} */
+let wsCommentCount = null;
+/** @type {number} */
+let wsViewerCountUpdatedAt = 0;
 /** @type {Set<Element|Node>} */
 const pendingRoots = new Set();
 /** @type {number|null} */
@@ -404,25 +427,73 @@ window.addEventListener('pagehide', () => {
 });
 
 /** page-intercept-entry.js (MAIN world) がキャプチャした commentNo→{userId, nickname} */
-/** @type {Map<string, { uid: string, name: string }>} */
+/** @type {Map<string, { uid?: string, name?: string, av?: string }>} */
 const interceptedUsers = new Map();
 /** userId→nickname の補助マップ */
 /** @type {Map<string, string>} */
 const interceptedNicknames = new Map();
 const INTERCEPT_MAP_MAX = 8000;
+let broadcasterUidCache = '';
+let broadcasterUidCacheAt = 0;
+
+function isHttpAvatarUrl(v) {
+  return /^https?:\/\//i.test(String(v || '').trim());
+}
 
 window.addEventListener('message', (e) => {
   if (e.source !== window) return;
-  if (!e.data || e.data.type !== 'NLS_INTERCEPT_USERID') return;
+  if (!e.data || typeof e.data.type !== 'string') return;
+
+  if (e.data.type === 'NLS_INTERCEPT_STATISTICS') {
+    const v = e.data.viewers;
+    if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
+      wsViewerCount = v;
+      wsViewerCountUpdatedAt = Date.now();
+    }
+    const c = e.data.comments;
+    if (typeof c === 'number' && Number.isFinite(c) && c >= 0) {
+      wsCommentCount = c;
+    }
+    return;
+  }
+
+  if (e.data.type === 'NLS_INTERCEPT_EMBEDDED_DATA') {
+    const v = e.data.viewers;
+    if (
+      typeof v === 'number' &&
+      Number.isFinite(v) &&
+      v >= 0 &&
+      wsViewerCount == null
+    ) {
+      wsViewerCount = v;
+      wsViewerCountUpdatedAt = Date.now();
+    }
+    return;
+  }
+
+  if (e.data.type !== 'NLS_INTERCEPT_USERID') return;
   const entries = e.data.entries;
   if (!Array.isArray(entries)) return;
-  for (const { no, uid, name } of entries) {
-    if (!no || !uid) continue;
-    const sNo = String(no);
-    const sUid = String(uid);
+  for (const { no, uid, name, av } of entries) {
+    const sNo = String(no || '').trim();
+    if (!sNo) continue;
+    const sUid = String(uid || '').trim();
     const sName = String(name || '').trim();
-    interceptedUsers.set(sNo, { uid: sUid, name: sName });
-    if (sName) interceptedNicknames.set(sUid, sName);
+    const sAv = isHttpAvatarUrl(av) ? String(av).trim() : '';
+    if (!sUid && !sName && !sAv) continue;
+    const prev = interceptedUsers.get(sNo);
+    const prevUid = String(prev?.uid || '').trim();
+    const prevName = String(prev?.name || '').trim();
+    const prevAv = isHttpAvatarUrl(prev?.av) ? String(prev?.av || '').trim() : '';
+    const nextUid = sUid || prevUid;
+    const nextName = sName || prevName;
+    const nextAv = sAv || prevAv;
+    interceptedUsers.set(sNo, {
+      ...(nextUid ? { uid: nextUid } : {}),
+      ...(nextName ? { name: nextName } : {}),
+      ...(nextAv ? { av: nextAv } : {})
+    });
+    if (sName && sUid) interceptedNicknames.set(sUid, sName);
   }
   if (interceptedUsers.size > INTERCEPT_MAP_MAX) {
     const excess = interceptedUsers.size - INTERCEPT_MAP_MAX;
@@ -1320,7 +1391,8 @@ async function postCommentFromContentAsync(rawText) {
  *   viewerAvatarUrl: string,
  *   viewerNickname: string,
  *   viewerUserId: string,
- *   broadcasterUserId: string
+ *   broadcasterUserId: string,
+ *   viewerCountFromDom: number|null
  * }}
  */
 function collectWatchPageSnapshot() {
@@ -1459,6 +1531,26 @@ function collectWatchPageSnapshot() {
 
   const viewer = collectLoggedInViewerProfile(document, url);
 
+  const WS_STALE_MS = 120_000;
+  const wsRecent =
+    wsViewerCount != null &&
+    wsViewerCountUpdatedAt > 0 &&
+    Date.now() - wsViewerCountUpdatedAt < WS_STALE_MS;
+
+  let viewerCountFromDom = null;
+  if (wsRecent) {
+    viewerCountFromDom = wsViewerCount;
+  }
+  if (viewerCountFromDom == null) {
+    const props = extractEmbeddedDataProps(document);
+    if (props) viewerCountFromDom = pickViewerCountFromEmbeddedData(props);
+  }
+  if (viewerCountFromDom == null) {
+    viewerCountFromDom =
+      parseLiveViewerCountFromDocument(document) ??
+      parseViewerCountFromSnapshotMetas(metas);
+  }
+
   return {
     title: String(document.title || ''),
     url,
@@ -1475,7 +1567,8 @@ function collectWatchPageSnapshot() {
     viewerAvatarUrl: viewer.viewerAvatarUrl,
     viewerNickname: viewer.viewerNickname,
     viewerUserId: viewer.viewerUserId,
-    broadcasterUserId
+    broadcasterUserId,
+    viewerCountFromDom
   };
 }
 
@@ -1486,6 +1579,36 @@ function isWatchPageMainFrameForMessages() {
   } catch {
     return true;
   }
+}
+
+function buildInterceptCacheExportItems() {
+  /** @type {Map<string, string>} */
+  const avatarByUid = new Map();
+  for (const v of interceptedUsers.values()) {
+    const uid = String(v?.uid || '').trim();
+    const av = String(v?.av || '').trim();
+    if (!uid || !isHttpAvatarUrl(av)) continue;
+    if (!avatarByUid.has(uid)) avatarByUid.set(uid, av);
+  }
+  const items = [];
+  for (const [no, v] of interceptedUsers) {
+    const uid = String(v?.uid || '').trim();
+    const name =
+      String(v?.name || '').trim() ||
+      (uid ? String(interceptedNicknames.get(uid) || '').trim() : '');
+    const av =
+      String(v?.av || '').trim() ||
+      String(avatarByUid.get(uid) || '').trim();
+    if (!uid && !isHttpAvatarUrl(av)) continue;
+    items.push({
+      no: String(no || '').trim(),
+      ...(uid ? { uid } : {}),
+      ...(name ? { name } : {}),
+      ...(isHttpAvatarUrl(av) ? { av } : {})
+    });
+  }
+  const MAX = 12000;
+  return items.length > MAX ? items.slice(items.length - MAX) : items;
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -1559,14 +1682,15 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.type === 'NLS_EXPORT_WATCH_SNAPSHOT') {
-    if (!isWatchPageMainFrameForMessages()) return;
-    if (!isNicoLiveWatchUrl(window.location.href)) {
+    /** watch 本体が iframe 内だけにある構成でもスナップショットを取れるよう、サブフレームも応答する */
+    if (!canExportWatchSnapshotFromThisFrame()) {
       sendResponse({
         ok: false,
         error: 'watchページ以外では取得できません'
       });
       return;
     }
+    syncLiveIdFromLocation();
     try {
       sendResponse({
         ok: true,
@@ -1581,6 +1705,48 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             : 'snapshot_error'
       });
     }
+  }
+
+  if (msg.type === 'NLS_EXPORT_INTERCEPT_CACHE') {
+    if (!isWatchPageMainFrameForMessages()) return;
+    void (async () => {
+      try {
+        const deep =
+          !!(
+            msg &&
+            typeof msg === 'object' &&
+            'deep' in msg &&
+            /** @type {{ deep?: unknown }} */ (msg).deep
+          );
+        if (deep && isNicoLiveWatchUrl(window.location.href)) {
+          const rows = await harvestVirtualCommentList({
+            document,
+            extractCommentsFromNode,
+            waitMs: 42
+          });
+          for (const r of rows) {
+            const no = String(r?.commentNo || '').trim();
+            const uid = String(r?.userId || '').trim();
+            if (!no) continue;
+            const av = isHttpAvatarUrl(r?.avatarUrl) ? String(r.avatarUrl).trim() : '';
+            if (!uid && !av) continue;
+            const prev = interceptedUsers.get(no);
+            const name = String(prev?.name || '').trim();
+            const prevUid = String(prev?.uid || '').trim();
+            const prevAv = isHttpAvatarUrl(prev?.av) ? String(prev?.av || '').trim() : '';
+            interceptedUsers.set(no, {
+              ...(uid || prevUid ? { uid: uid || prevUid } : {}),
+              ...(name ? { name } : {}),
+              ...(av || prevAv ? { av: av || prevAv } : {})
+            });
+          }
+        }
+        sendResponse({ ok: true, items: buildInterceptCacheExportItems() });
+      } catch {
+        sendResponse({ ok: true, items: [] });
+      }
+    })();
+    return true;
   }
 });
 
@@ -1600,7 +1766,7 @@ function rememberWatchPageUrl() {
 async function readRecordingFlag() {
   if (!hasExtensionContext()) return false;
   const r = await chrome.storage.local.get(KEY_RECORDING);
-  return r[KEY_RECORDING] === true;
+  return isRecordingEnabled(r[KEY_RECORDING]);
 }
 
 function reconnectMutationObserver() {
@@ -1612,8 +1778,41 @@ function reconnectMutationObserver() {
   mutationObserver.observe(observedMutationRoot, {
     childList: true,
     subtree: true,
-    characterData: true
+    characterData: true,
+    attributes: true,
+    attributeFilter: [
+      'src',
+      'data-src',
+      'data-lazy-src',
+      'data-original',
+      'srcset'
+    ]
   });
+}
+
+function detectBroadcasterUserIdFromDom() {
+  const now = Date.now();
+  if (broadcasterUidCache && now - broadcasterUidCacheAt < 3000) {
+    return broadcasterUidCache;
+  }
+  const clean = (v) => String(v || '').replace(/\s+/g, ' ').trim();
+  const streamLink = Array.from(
+    document.querySelectorAll('a[href*="/user/"]')
+  ).find((a) => {
+    const href = String(a.getAttribute('href') || '');
+    const text = clean(a.textContent);
+    return (
+      /\/user\/\d+/.test(href) &&
+      /\/live_programs(?:\?|$)/.test(href) &&
+      text &&
+      !/^https?:\/\//i.test(text)
+    );
+  });
+  const href = String(streamLink?.getAttribute('href') || '');
+  const m = href.match(/\/user\/(\d+)/);
+  broadcasterUidCache = m ? m[1] : '';
+  broadcasterUidCacheAt = now;
+  return broadcasterUidCache;
 }
 
 /**
@@ -1623,12 +1822,37 @@ function reconnectMutationObserver() {
  */
 function enrichRowsWithInterceptedUserIds(rows) {
   if (!interceptedUsers.size && !interceptedNicknames.size) return rows;
+  const broadcasterUid = detectBroadcasterUserIdFromDom();
   return rows.map((r) => {
     const no = String(r.commentNo ?? '').trim();
     const entry = no ? interceptedUsers.get(no) : undefined;
-    const userId = r.userId || entry?.uid || null;
-    const nickname = entry?.name || (userId ? interceptedNicknames.get(userId) : '') || '';
-    return { ...r, userId, ...(nickname ? { nickname } : {}) };
+    const rowUid = r.userId ? String(r.userId).trim() : '';
+    const interceptedUid = entry?.uid ? String(entry.uid).trim() : '';
+    const rowLikelyContaminated =
+      Boolean(rowUid && broadcasterUid && rowUid === broadcasterUid);
+    const userId =
+      (interceptedUid && (!rowUid || rowLikelyContaminated) ? interceptedUid : rowUid) ||
+      interceptedUid ||
+      null;
+    const canUseInterceptMeta = Boolean(interceptedUid && userId === interceptedUid);
+    const rowNick = r.nickname ? String(r.nickname).trim() : '';
+    const nickname =
+      (canUseInterceptMeta ? String(entry?.name || '').trim() : '') ||
+      rowNick ||
+      (userId ? interceptedNicknames.get(String(userId)) : '') ||
+      '';
+    const rowAv = String(r.avatarUrl || '').trim();
+    const av =
+      rowAv ||
+      (canUseInterceptMeta && isHttpAvatarUrl(entry?.av)
+        ? String(entry?.av || '').trim()
+        : '');
+    return {
+      ...r,
+      userId,
+      ...(nickname ? { nickname } : {}),
+      ...(av ? { avatarUrl: av } : {})
+    };
   });
 }
 
@@ -1638,7 +1862,7 @@ async function persistCommentRows(rows) {
     !rows?.length ||
     !recording ||
     !liveId ||
-    !isNicoLiveWatchUrl(window.location.href) ||
+    !locationAllowsCommentRecording() ||
     !hasExtensionContext()
   ) {
     return;
@@ -1715,30 +1939,69 @@ async function runThumbCaptureTick() {
 
 function syncLiveIdFromLocation() {
   const href = window.location.href;
-  if (!isNicoLiveWatchUrl(href)) {
-    liveId = null;
-    clearThumbTimer();
-    reconnectMutationObserver();
-    hidePageFrameOverlay();
+  if (isNicoLiveWatchUrl(href)) {
+    rememberWatchPageUrl();
+    const ctx = resolveWatchPageContext(href, liveId);
+    if (ctx.liveIdChanged) {
+      pendingRoots.clear();
+      interceptedUsers.clear();
+      interceptedNicknames.clear();
+      broadcasterUidCache = '';
+      broadcasterUidCacheAt = 0;
+      wsViewerCount = null;
+      wsCommentCount = null;
+      wsViewerCountUpdatedAt = 0;
+      liveId = ctx.liveId;
+      reconnectMutationObserver();
+      pendingRoots.add(document.body);
+      scheduleFlush();
+      scheduleDeepHarvest('live-id-change');
+      applyThumbSchedule();
+    } else {
+      liveId = ctx.liveId;
+      reconnectMutationObserver();
+    }
+    renderPageFrameOverlay();
     return;
   }
-  rememberWatchPageUrl();
-  const ctx = resolveWatchPageContext(href, liveId);
-  if (ctx.liveIdChanged) {
-    pendingRoots.clear();
-    interceptedUsers.clear();
-    interceptedNicknames.clear();
-    liveId = ctx.liveId;
-    reconnectMutationObserver();
-    pendingRoots.add(document.body);
-    scheduleFlush();
-    scheduleDeepHarvest('live-id-change');
-    applyThumbSchedule();
-  } else {
-    liveId = ctx.liveId;
-    reconnectMutationObserver();
+
+  let isTop = true;
+  try {
+    isTop = window.self === window.top;
+  } catch {
+    isTop = true;
   }
-  renderPageFrameOverlay();
+  if (hasWatchCommentPanel() && (!isTop || isNicoVideoJpHost(href))) {
+    const fromUrl = extractLiveIdFromUrl(href);
+    const fromDom = extractLiveIdFromDom(document);
+    const next = fromUrl || fromDom || liveId;
+    if (next !== liveId) {
+      pendingRoots.clear();
+      interceptedUsers.clear();
+      interceptedNicknames.clear();
+      broadcasterUidCache = '';
+      broadcasterUidCacheAt = 0;
+      wsViewerCount = null;
+      wsCommentCount = null;
+      wsViewerCountUpdatedAt = 0;
+      liveId = next;
+      reconnectMutationObserver();
+      pendingRoots.add(document.body);
+      scheduleFlush();
+      scheduleDeepHarvest('live-id-change');
+      applyThumbSchedule();
+    } else {
+      liveId = next;
+      reconnectMutationObserver();
+    }
+    renderPageFrameOverlay();
+    return;
+  }
+
+  liveId = null;
+  clearThumbTimer();
+  reconnectMutationObserver();
+  hidePageFrameOverlay();
 }
 
 /** @param {Node|null|undefined} node */
@@ -1755,7 +2018,7 @@ async function flushToStorage() {
   if (
     !recording ||
     !liveId ||
-    !isNicoLiveWatchUrl(window.location.href) ||
+    !locationAllowsCommentRecording() ||
     !pendingRoots.size
   ) {
     pendingRoots.clear();
@@ -1790,7 +2053,7 @@ function scheduleFlush() {
 let deepHarvestTimer = null;
 /** @param {string} _reason */
 function scheduleDeepHarvest(_reason) {
-  if (!recording || !liveId || !isNicoLiveWatchUrl(window.location.href)) return;
+  if (!recording || !liveId || !locationAllowsCommentRecording()) return;
   if (deepHarvestTimer) clearTimeout(deepHarvestTimer);
   deepHarvestTimer = setTimeout(() => {
     deepHarvestTimer = null;
@@ -1803,7 +2066,7 @@ async function runDeepHarvest() {
     harvestRunning ||
     !recording ||
     !liveId ||
-    !isNicoLiveWatchUrl(window.location.href)
+    !locationAllowsCommentRecording()
   ) {
     return;
   }
@@ -1821,7 +2084,7 @@ async function runDeepHarvest() {
 }
 
 function scanVisibleCommentsNow() {
-  if (!recording || !liveId || !isNicoLiveWatchUrl(window.location.href)) return;
+  if (!recording || !liveId || !locationAllowsCommentRecording()) return;
   const panel = findNicoCommentPanel(document);
   const root = panel || document.body;
   const rows = extractCommentsFromNode(root);
@@ -1855,8 +2118,95 @@ function tryAttachScrollHookSoon() {
   }, 800);
 }
 
+/**
+ * @returns {boolean}
+ */
+function hasWatchCommentPanel() {
+  return !!(
+    document.querySelector('.ga-ns-comment-panel') ||
+    document.querySelector('.comment-panel')
+  );
+}
+
+/**
+ * all_frames 注入後も、広告 iframe 等では記録ループを回さない。
+ * about:blank 内 SPA・embed 等は URL だけでは判定できないためコメントパネルで許可する。
+ * @returns {boolean}
+ */
+function shouldRunWatchContentInThisFrame() {
+  const href = String(window.location.href || '');
+  let isTop = true;
+  try {
+    isTop = window.self === window.top;
+  } catch {
+    isTop = true;
+  }
+  if (isTop) {
+    if (isNicoLiveWatchUrl(href)) return true;
+    if (hasWatchCommentPanel() && isNicoVideoJpHost(href)) return true;
+    return false;
+  }
+  return hasWatchCommentPanel();
+}
+
+/**
+ * コメント記録・MutationObserver・flush 等
+ * @returns {boolean}
+ */
+function locationAllowsCommentRecording() {
+  return shouldRunWatchContentInThisFrame();
+}
+
+/**
+ * スナップショット（視聴者数メタ等）を返してよいフレームか
+ * @returns {boolean}
+ */
+function canExportWatchSnapshotFromThisFrame() {
+  const href = String(window.location.href || '');
+  if (isNicoLiveWatchUrl(href)) return true;
+  if (!hasWatchCommentPanel()) return false;
+  try {
+    if (window.self !== window.top) return true;
+  } catch {
+    return true;
+  }
+  return isNicoVideoJpHost(href);
+}
+
+/**
+ * ページ HTML を再取得して embedded-data から最新の視聴者数を得る。
+ * WS statistics が来ていない場合のフォールバック。
+ */
+async function pollStatsFromPage() {
+  try {
+    const href = window.location.href;
+    if (!href || !href.startsWith('http')) return;
+    const resp = await fetch(href, { credentials: 'same-origin' });
+    if (!resp.ok) return;
+    const html = await resp.text();
+    const wc = html.match(/"watchCount"\s*:\s*(\d+)/);
+    if (wc?.[1]) {
+      const n = parseInt(wc[1], 10);
+      if (Number.isFinite(n) && n >= 0) {
+        wsViewerCount = n;
+        wsViewerCountUpdatedAt = Date.now();
+      }
+    }
+    const cc = html.match(/"commentCount"\s*:\s*(\d+)/);
+    if (cc?.[1]) {
+      const n = parseInt(cc[1], 10);
+      if (Number.isFinite(n) && n >= 0) {
+        wsCommentCount = n;
+      }
+    }
+  } catch {
+    /* network error — ignore */
+  }
+}
+
 async function start() {
   if (!hasExtensionContext()) return;
+  if (!shouldRunWatchContentInThisFrame()) return;
   recording = await readRecordingFlag();
   ensurePageFrameStyle();
   startPageFrameLoop();
@@ -1866,7 +2216,7 @@ async function start() {
     if (
       !recording ||
       !liveId ||
-      !isNicoLiveWatchUrl(window.location.href)
+      !locationAllowsCommentRecording()
     ) {
       return;
     }
@@ -1879,6 +2229,12 @@ async function start() {
         );
         if (row) pendingRoots.add(row);
         else pendingRoots.add(rec.target.parentElement);
+      } else if (rec.type === 'attributes' && rec.target?.nodeType === Node.ELEMENT_NODE) {
+        const el = /** @type {Element} */ (rec.target);
+        if (el.tagName === 'IMG') {
+          const row = el.closest?.('div.table-row[data-comment-type="normal"]');
+          if (row) pendingRoots.add(row);
+        }
       }
     }
     if (pendingRoots.size) scheduleFlush();
@@ -1910,7 +2266,7 @@ async function start() {
     }
 
     if (changes[KEY_RECORDING]) {
-      recording = changes[KEY_RECORDING].newValue === true;
+      recording = isRecordingEnabled(changes[KEY_RECORDING].newValue);
       if (recording) {
         pendingRoots.add(document.body);
         reconnectMutationObserver();
@@ -1928,7 +2284,7 @@ async function start() {
     tryAttachScrollHookSoon();
     for (const ms of BOOTSTRAP_DELAYS_MS) {
       setTimeout(() => {
-        if (recording && liveId && isNicoLiveWatchUrl(window.location.href)) {
+        if (recording && liveId && locationAllowsCommentRecording()) {
           scanVisibleCommentsNow();
         }
       }, ms);
@@ -1945,12 +2301,18 @@ async function start() {
     if (
       !recording ||
       !liveId ||
-      !isNicoLiveWatchUrl(window.location.href)
+      !locationAllowsCommentRecording()
     ) {
       return;
     }
     scanVisibleCommentsNow();
   }, LIVE_PANEL_SCAN_MS);
+
+  pollStatsFromPage();
+  setInterval(() => {
+    if (!hasExtensionContext()) return;
+    pollStatsFromPage();
+  }, STATS_POLL_MS);
 }
 
 if (!document.documentElement.hasAttribute('data-nls-active')) {

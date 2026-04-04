@@ -51,6 +51,11 @@ export function normalizeInlinePanelWidthMode(raw) {
 }
 
 /** @param {unknown} raw */
+export function isRecordingEnabled(raw) {
+  return raw !== false;
+}
+
+/** @param {unknown} raw */
 export function isCommentEnterSendEnabled(raw) {
   return raw !== false;
 }

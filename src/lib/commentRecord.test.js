@@ -298,4 +298,37 @@ describe('mergeNewComments', () => {
     expect(next[0].nickname).toBe('表示名');
     expect(storageTouched).toBe(true);
   });
+
+  it('新規行で userId が無くても nico usericon URL から userId を補完', () => {
+    const { added } = mergeNewComments('lv1', [], [
+      {
+        commentNo: '3',
+        text: 'z',
+        userId: null,
+        avatarUrl:
+          'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/1/12345002.jpg'
+      }
+    ]);
+    expect(added[0].userId).toBe('12345002');
+  });
+
+  it('重複マージで既存 avatarUrl だけから userId を補完（旧データ想定・createCommentEntry 経由でない行）', () => {
+    const existing = [
+      {
+        id: 'legacy_row',
+        liveId: 'lv1',
+        commentNo: '9',
+        text: 'yo',
+        userId: null,
+        avatarUrl:
+          'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/1/12345001.jpg',
+        capturedAt: 1
+      }
+    ];
+    const { next, storageTouched } = mergeNewComments('lv1', existing, [
+      { commentNo: '9', text: 'yo', userId: null }
+    ]);
+    expect(storageTouched).toBe(true);
+    expect(next[0].userId).toBe('12345001');
+  });
 });

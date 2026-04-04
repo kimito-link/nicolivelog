@@ -2,6 +2,40 @@
  * ニコ生PC: コメント一覧が仮想スクロールのため、スクロール位置を動かしながら DOM 上の行を拾い集める
  */
 
+import { isHttpOrHttpsUrl } from './supportGrowthTileSrc.js';
+
+/**
+ * 同一コメント（commentNo + text）について、スクロール位置ごとの抽出結果をマージする。
+ * 後続パスで仮想行が「薄く」なり userId / avatarUrl が空になることがあるため、
+ * 空で上書きしない（調査メモ research-nicolive-pc-comments.md §8.1）。
+ *
+ * @param {{ commentNo?: string, text: string, userId?: string|null, nickname?: string, avatarUrl?: string }} prev
+ * @param {{ commentNo?: string, text: string, userId?: string|null, nickname?: string, avatarUrl?: string }} next
+ */
+export function mergeVirtualHarvestRows(prev, next) {
+  const uidN = String(next.userId ?? '').trim();
+  const uidP = String(prev.userId ?? '').trim();
+  const userId = uidN || uidP || null;
+
+  const nickN = String(next.nickname ?? '').trim();
+  const nickP = String(prev.nickname ?? '').trim();
+  const nickname = nickN || nickP;
+
+  const avN = String(next.avatarUrl ?? '').trim();
+  const avP = String(prev.avatarUrl ?? '').trim();
+  const avatarUrl =
+    (isHttpOrHttpsUrl(avN) ? avN : '') || (isHttpOrHttpsUrl(avP) ? avP : '');
+
+  const commentNo = String(next.commentNo ?? prev.commentNo ?? '').trim();
+  const text = String(next.text ?? prev.text ?? '').trim();
+
+  /** @type {{ commentNo: string, text: string, userId: string|null, nickname?: string, avatarUrl?: string }} */
+  const out = { commentNo, text, userId };
+  if (nickname) out.nickname = nickname;
+  if (avatarUrl) out.avatarUrl = avatarUrl;
+  return out;
+}
+
 /**
  * @param {Document|Element} root
  * @returns {Element|null}
@@ -121,7 +155,12 @@ export async function harvestVirtualCommentList(opts) {
       const text = String(row.text ?? '').trim();
       if (!text) continue;
       const k = no ? `${no}\t${text}` : text;
-      map.set(k, row);
+      const existing = map.get(k);
+      if (!existing) {
+        map.set(k, row);
+        continue;
+      }
+      map.set(k, mergeVirtualHarvestRows(existing, row));
     }
   };
 

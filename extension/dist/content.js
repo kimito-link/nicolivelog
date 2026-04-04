@@ -22,13 +22,45 @@
     try {
       const u = new URL(String(url || ""));
       const host = u.hostname.toLowerCase();
-      const pathOk = /\/watch\/lv\d+/i.test(u.pathname);
-      if (isLocalE2EWatchHost(u)) return pathOk;
+      const hasWatchOrEmbed = /\/watch\//.test(u.pathname) || /\/embed\//.test(u.pathname);
+      if (isLocalE2EWatchHost(u)) return hasWatchOrEmbed;
       if (!host.includes("nicovideo.jp")) return false;
-      return pathOk;
+      if (host === "live.nicovideo.jp" || host === "sp.live.nicovideo.jp") {
+        return hasWatchOrEmbed;
+      }
+      return /\/watch\/(lv|ch)\d+/i.test(u.pathname);
     } catch {
       return false;
     }
+  }
+  function isNicoVideoJpHost(url) {
+    try {
+      const h = new URL(String(url || "")).hostname.toLowerCase();
+      return h === "nicovideo.jp" || h.endsWith(".nicovideo.jp");
+    } catch {
+      return false;
+    }
+  }
+  function extractLiveIdFromDom(doc) {
+    if (!doc) return null;
+    const tryHref = (raw) => extractLiveIdFromUrl(String(raw || ""));
+    for (const a of doc.querySelectorAll(
+      'a[href*="/watch/lv"], a[href*="watch/lv"], a[href*="/embed/lv"], a[href*="embed/lv"]'
+    )) {
+      const id = tryHref(a.getAttribute("href"));
+      if (id) return id;
+    }
+    for (const sel of [
+      'meta[property="og:url"]',
+      'meta[name="og:url"]',
+      'link[rel="canonical"]'
+    ]) {
+      const el = doc.querySelector(sel);
+      const raw = el?.getAttribute("content") || el?.getAttribute("href") || "";
+      const id = tryHref(raw);
+      if (id) return id;
+    }
+    return null;
   }
 
   // src/lib/storageKeys.js
@@ -46,6 +78,9 @@
     const s = String(raw || "").trim();
     if (s === INLINE_PANEL_WIDTH_VIDEO) return INLINE_PANEL_WIDTH_VIDEO;
     return INLINE_PANEL_WIDTH_PLAYER_ROW;
+  }
+  function isRecordingEnabled(raw) {
+    return raw !== false;
   }
   function commentsStorageKey(liveId2) {
     const id = String(liveId2 || "").trim().toLowerCase();
@@ -249,6 +284,15 @@
   }
 
   // src/lib/commentRecord.js
+  function userIdFromNicoUserIconHttpUrl(url) {
+    const s = String(url || "");
+    if (!isHttpOrHttpsUrl(s)) return "";
+    let m = s.match(/\/usericon\/(?:s\/)?(\d+)\/(\d+)\./i);
+    if (m?.[2]) return m[2];
+    m = s.match(/nicoaccount\/usericon\/(\d+)/i);
+    if (m?.[1] && m[1].length >= 5) return m[1];
+    return "";
+  }
   function normalizeCommentText(value) {
     return String(value || "").replace(/\r\n/g, "\n").split("\n").map((l) => l.trim()).join("\n").trim();
   }
@@ -272,12 +316,17 @@
     const nickname = p.nickname ? String(p.nickname).trim() : "";
     const av = String(p.avatarUrl || "").trim();
     const avatarUrl = isHttpOrHttpsUrl(av) ? av : "";
+    let uid = p.userId ? String(p.userId).trim() : "";
+    if (!uid && avatarUrl) {
+      const fromAv = userIdFromNicoUserIconHttpUrl(avatarUrl);
+      if (fromAv) uid = fromAv;
+    }
     const entry = {
       id: randomId(),
       liveId: liveId2,
       commentNo,
       text,
-      userId: p.userId ? String(p.userId) : null,
+      userId: uid || null,
       ...nickname ? { nickname } : {},
       ...avatarUrl ? { avatarUrl } : {},
       capturedAt
@@ -319,6 +368,11 @@
       });
       const rawAv = String(row.avatarUrl || "").trim();
       const validAvatar = isHttpOrHttpsUrl(rawAv) ? rawAv : "";
+      let incUid = row.userId ? String(row.userId).trim() : "";
+      if (!incUid && validAvatar) {
+        const fromAv = userIdFromNicoUserIconHttpUrl(validAvatar);
+        if (fromAv) incUid = fromAv;
+      }
       if (keys.has(key)) {
         const idx = next.findIndex((ex) => storedCommentDedupeKey(lid, ex) === key);
         if (idx >= 0) {
@@ -337,15 +391,24 @@
               touched = true;
             }
           }
-          const incUid = row.userId ? String(row.userId).trim() : "";
-          if (incUid && String(ex.userId || "").trim() !== incUid) {
+          if (incUid && String(patched.userId || "").trim() !== incUid) {
             patched = { ...patched, userId: incUid };
             touched = true;
           }
           const incNick = String(row.nickname || "").trim();
-          if (incNick && !String(ex.nickname || "").trim()) {
+          if (incNick && !String(patched.nickname || "").trim()) {
             patched = { ...patched, nickname: incNick };
             touched = true;
+          }
+          if (!String(patched.userId || "").trim()) {
+            const avHeal = String(patched.avatarUrl || "").trim();
+            if (isHttpOrHttpsUrl(avHeal)) {
+              const h = userIdFromNicoUserIconHttpUrl(avHeal);
+              if (h) {
+                patched = { ...patched, userId: h };
+                touched = true;
+              }
+            }
           }
           if (touched) {
             next[idx] = patched;
@@ -421,20 +484,6 @@
     }
     return null;
   }
-  function extractUserIdFromIconSrc(el) {
-    if (!el || el.nodeType !== 1) return null;
-    const imgs = el.querySelectorAll(
-      'img[src*="usericon"], img[src*="nicoaccount"]'
-    );
-    for (const img of imgs) {
-      const src = String(img.getAttribute("src") || "");
-      let m = src.match(/\/usericon\/(?:s\/)?(\d+)\/(\d+)\./i);
-      if (m?.[2]) return m[2];
-      m = src.match(/nicoaccount\/usericon\/(\d+)/i);
-      if (m?.[1] && m[1].length >= 5) return m[1];
-    }
-    return null;
-  }
   function collectNicoUserIconUrlPartsFromImg(img) {
     if (!(img instanceof HTMLImageElement)) return [];
     const urls = [];
@@ -460,7 +509,76 @@
   function looksLikeNicoUserIconUrl(url) {
     const s = String(url || "");
     if (!s) return false;
-    return /nicoaccount\/usericon|\/usericon\/|usericon\.nicovideo/i.test(s);
+    return /nicoaccount\/usericon|\/usericon\/|usericon\.nicovideo|\/usericon\/defaults\//i.test(
+      s
+    );
+  }
+  function toAbsoluteHttpUrl(raw, base) {
+    const r = String(raw || "").trim();
+    if (!r) return "";
+    let abs = "";
+    try {
+      abs = new URL(r, base).href;
+    } catch {
+      abs = r;
+    }
+    return /^https?:\/\//i.test(abs) ? abs : "";
+  }
+  function avatarUrlHeuristicScore(abs) {
+    const u = String(abs || "");
+    if (!u) return -999;
+    let score = 0;
+    if (looksLikeNicoUserIconUrl(u)) score += 120;
+    if (/(avatar|icon|profile|user|face|user[_-]?image)/i.test(u)) score += 36;
+    if (/(emoji|stamp|gift|logo|banner|sprite|program|thumbnail|player)/i.test(u))
+      score -= 90;
+    if (/(nimg\.jp|nicovideo\.jp|dcdn|cdn)/i.test(u)) score += 10;
+    return score;
+  }
+  function imageSizePenaltyOrBonus(img) {
+    const rect = img.getBoundingClientRect();
+    const wAttr = Number(img.getAttribute("width") || 0);
+    const hAttr = Number(img.getAttribute("height") || 0);
+    const w = Number(rect.width || 0) || wAttr || Number(img.naturalWidth || 0) || 0;
+    const h = Number(rect.height || 0) || hAttr || Number(img.naturalHeight || 0) || 0;
+    if (w > 0 && w > 96 || h > 0 && h > 96) return -999;
+    if (w > 0 && w < 10 || h > 0 && h < 10) return -40;
+    if (w > 0 && w <= 64 || h > 0 && h <= 64) return 16;
+    if (w > 0 && w <= 96 || h > 0 && h <= 96) return 8;
+    return 0;
+  }
+  function avatarElementHintScore(el) {
+    const className = String(el.getAttribute?.("class") || "");
+    const id = String(el.getAttribute?.("id") || "");
+    const alt = String(el.getAttribute?.("alt") || "");
+    const aria = String(el.getAttribute?.("aria-label") || "");
+    const dataTest = String(el.getAttribute?.("data-testid") || "");
+    const all = `${className} ${id} ${alt} ${aria} ${dataTest}`;
+    if (/(avatar|icon|user|profile|face)/i.test(all)) return 24;
+    return 0;
+  }
+  function extractUserIdFromNicoUserIconUrlString(raw) {
+    const s = String(raw || "");
+    let m = s.match(/\/usericon\/(?:s\/)?(\d+)\/(\d+)\./i);
+    if (m?.[2]) return m[2];
+    m = s.match(/nicoaccount\/usericon\/(\d+)/i);
+    if (m?.[1] && m[1].length >= 5) return m[1];
+    return null;
+  }
+  function extractUserIdFromIconSrc(el) {
+    if (!el || el.nodeType !== 1) return null;
+    const imgs = el.querySelectorAll("img");
+    for (const img of imgs) {
+      if (!(img instanceof HTMLImageElement)) continue;
+      for (const raw of collectNicoUserIconUrlPartsFromImg(img)) {
+        if (!looksLikeNicoUserIconUrl(raw)) continue;
+        const id = extractUserIdFromNicoUserIconUrlString(raw);
+        if (id) return id;
+      }
+    }
+    const av = extractUserIconUrlFromElement(el);
+    if (av) return extractUserIdFromNicoUserIconUrlString(av);
+    return null;
   }
   function absoluteNicoUserIconFromImg(img, baseHref) {
     const base = String(baseHref || "").trim() || "https://live.nicovideo.jp/";
@@ -482,6 +600,92 @@
     }
     return "";
   }
+  function urlsFromCssLikeValue(raw) {
+    const s = String(raw || "");
+    if (!s) return [];
+    const out = [];
+    const re = /url\((['"]?)(.*?)\1\)/gi;
+    let m;
+    while ((m = re.exec(s)) != null) {
+      const u = String(m[2] || "").trim();
+      if (u) out.push(u);
+    }
+    return out;
+  }
+  function absoluteLikelyAvatarFromImg(img, baseHref) {
+    const base = String(baseHref || "").trim() || "https://live.nicovideo.jp/";
+    if (!(img instanceof HTMLImageElement)) return "";
+    let best = "";
+    let bestScore = -999;
+    const sizeScore = imageSizePenaltyOrBonus(img);
+    if (sizeScore <= -900) return "";
+    const hintScore = avatarElementHintScore(img);
+    for (const raw of collectNicoUserIconUrlPartsFromImg(img)) {
+      const abs = toAbsoluteHttpUrl(raw, base);
+      if (!abs) continue;
+      const score = avatarUrlHeuristicScore(abs) + sizeScore + hintScore;
+      if (score > bestScore) {
+        bestScore = score;
+        best = abs;
+      }
+    }
+    return bestScore >= 25 ? best : "";
+  }
+  function absoluteNicoUserIconFromElementAttrs(el, baseHref) {
+    if (!el || el.nodeType !== 1) return "";
+    const base = String(baseHref || "").trim() || "https://live.nicovideo.jp/";
+    const attrs = [
+      "src",
+      "data-src",
+      "data-original",
+      "data-lazy-src",
+      "data-url",
+      "data-avatar-url",
+      "style"
+    ];
+    const rawCandidates = [];
+    for (const a of attrs) {
+      const v = el.getAttribute?.(a);
+      if (!v) continue;
+      rawCandidates.push(String(v).trim());
+      if (a === "style") {
+        rawCandidates.push(...urlsFromCssLikeValue(v));
+      }
+    }
+    const inlineBg = (
+      /** @type {HTMLElement} */
+      el.style?.backgroundImage || ""
+    );
+    if (inlineBg) rawCandidates.push(...urlsFromCssLikeValue(inlineBg));
+    try {
+      const win = el.ownerDocument?.defaultView;
+      if (win && el instanceof win.HTMLElement) {
+        const computedBg = win.getComputedStyle(el).backgroundImage;
+        if (computedBg) rawCandidates.push(...urlsFromCssLikeValue(computedBg));
+      }
+    } catch {
+    }
+    let best = "";
+    let bestScore = -999;
+    const hintScore = avatarElementHintScore(el);
+    for (const raw of rawCandidates) {
+      const abs = toAbsoluteHttpUrl(raw, base);
+      if (!abs) continue;
+      let score = avatarUrlHeuristicScore(abs) + hintScore;
+      const rect = (
+        /** @type {HTMLElement} */
+        el.getBoundingClientRect?.()
+      );
+      const w = Number(rect?.width || 0);
+      const h = Number(rect?.height || 0);
+      if (w > 0 && w > 120 || h > 0 && h > 120) score -= 50;
+      if (score > bestScore) {
+        bestScore = score;
+        best = abs;
+      }
+    }
+    return bestScore >= 25 ? best : "";
+  }
   function extractUserIconUrlFromElement(el, baseHref) {
     if (!el || el.nodeType !== 1) return "";
     const base = String(baseHref || "").trim() || "https://live.nicovideo.jp/";
@@ -492,6 +696,20 @@
         img,
         base
       );
+      if (abs) return abs;
+    }
+    for (const img of imgs) {
+      const abs = absoluteLikelyAvatarFromImg(
+        /** @type {HTMLImageElement} */
+        img,
+        base
+      );
+      if (abs) return abs;
+    }
+    const nodes = [el, ...el.querySelectorAll("*")];
+    for (let i = 0; i < nodes.length && i < 120; i += 1) {
+      if (nodes[i] instanceof HTMLImageElement) continue;
+      const abs = absoluteNicoUserIconFromElementAttrs(nodes[i], base);
       if (abs) return abs;
     }
     return "";
@@ -865,7 +1083,184 @@
     return { viewerAvatarUrl, viewerNickname, viewerUserId };
   }
 
+  // src/lib/liveAudienceDom.js
+  var MAX_REASONABLE_VIEWERS = 12e6;
+  function normalizeDigitsForViewerScan(text) {
+    let s = String(text || "");
+    const fw = "\uFF10\uFF11\uFF12\uFF13\uFF14\uFF15\uFF16\uFF17\uFF18\uFF19\uFF0C";
+    const hw = "0123456789,";
+    for (let i = 0; i < fw.length; i++) {
+      s = s.split(fw[i]).join(hw[i]);
+    }
+    return s;
+  }
+  function gatherWatchPageTextForViewerScan(doc) {
+    if (!doc) return "";
+    const chunks = [];
+    const pushRootText = (root) => {
+      if (!root) return;
+      try {
+        const body = root instanceof Document ? root.body : root;
+        if (body) {
+          chunks.push(String(body.textContent || ""));
+          chunks.push(String(body.innerText || ""));
+        }
+      } catch {
+      }
+    };
+    pushRootText(doc);
+    try {
+      doc.querySelectorAll("iframe").forEach((frame) => {
+        try {
+          const idoc = frame.contentDocument;
+          if (idoc) pushRootText(idoc);
+        } catch {
+        }
+      });
+    } catch {
+    }
+    const pushShadowTexts = (root, depth) => {
+      if (!root || depth < 0) return;
+      try {
+        root.querySelectorAll("*").forEach((el) => {
+          const sr = (
+            /** @type {HTMLElement} */
+            el.shadowRoot
+          );
+          if (sr) {
+            chunks.push(String(sr.textContent || ""));
+            pushShadowTexts(sr, depth - 1);
+          }
+        });
+      } catch {
+      }
+    };
+    try {
+      if (doc.body) pushShadowTexts(doc.body, 8);
+    } catch {
+    }
+    try {
+      doc.querySelectorAll("[aria-label], [title]").forEach((el) => {
+        chunks.push(String(el.getAttribute("aria-label") || ""));
+        chunks.push(String(el.getAttribute("title") || ""));
+      });
+    } catch {
+    }
+    return chunks.join("\n");
+  }
+  function parseViewerCountFromLooseText(chunk) {
+    const raw = normalizeDigitsForViewerScan(chunk);
+    const s = String(raw || "").replace(/\s+/g, " ");
+    const patterns = [
+      /(\d[\d,]*)\s*人が視聴/,
+      /(\d[\d,]*)\s*人\s*が\s*視聴/,
+      /(\d[\d,]*)\s*人\s*視聴中/,
+      /(\d[\d,]*)\s*名が視聴/,
+      /視聴者数\s*[：:　\s]*(\d[\d,]*)(?!\d)/,
+      /視聴者\s*(\d[\d,]*)(?!\d)/,
+      /(\d[\d,]*)\s*人\s*が\s*オンライン/,
+      /同時視聴\s*[:：]?\s*(\d[\d,]*)(?!\d)/,
+      /(\d[\d,]*)\s*人\s*が\s*見てます/,
+      /([\d,]+)\s+viewers?\b/i,
+      /(\d[\d,]*)\s*人(?=[^\d]{0,16}視聴)/,
+      /視聴[^0-9]{0,40}(\d[\d,]*)\s*人/,
+      /来場\s*(\d[\d,]*)\s*人/,
+      /(\d[\d,]*)\s*人\s*来場/
+    ];
+    for (const re of patterns) {
+      const m = s.match(re);
+      if (!m?.[1]) continue;
+      const n = parseInt(String(m[1]).replace(/,/g, ""), 10);
+      if (!Number.isFinite(n) || n < 0 || n > MAX_REASONABLE_VIEWERS) continue;
+      return n;
+    }
+    return null;
+  }
+  function parseLiveViewerCountFromDocument(doc) {
+    if (!doc || !doc.body) return null;
+    const merged = gatherWatchPageTextForViewerScan(doc);
+    const flat = merged.replace(/\s+/g, " ");
+    const fromMerged = parseViewerCountFromLooseText(flat);
+    if (fromMerged != null) return fromMerged;
+    const tags = "span,div,p,strong,li,button,a,em,time,h2,h3,td,th,label";
+    try {
+      const nodes = doc.querySelectorAll(tags);
+      for (const el of nodes) {
+        const t = String(el.textContent || "").replace(/\s+/g, " ").trim();
+        if (t.length > 200) continue;
+        if (!/視聴|viewers?/i.test(t)) continue;
+        const hit = parseViewerCountFromLooseText(t);
+        if (hit != null) return hit;
+      }
+    } catch {
+    }
+    const fromScripts = parseViewerCountFromInlineScripts(doc);
+    if (fromScripts != null) return fromScripts;
+    return null;
+  }
+  function parseViewerCountFromInlineScripts(doc) {
+    if (!doc) return null;
+    const maxLen = 8e5;
+    try {
+      const scripts = doc.querySelectorAll("script:not([src])");
+      for (const s of scripts) {
+        const t = String(s.textContent || "");
+        if (t.length < 30 || t.length > maxLen) continue;
+        if (!/viewer|watching|watchCount|viewCount|視聴|listen|audience/i.test(t)) {
+          continue;
+        }
+        const res = [
+          /"watching(?:User)?Count"\s*:\s*(\d+)/i,
+          /"viewerCount"\s*:\s*(\d+)/i,
+          /"viewCount"\s*:\s*(\d+)/i,
+          /"watchCount"\s*:\s*(\d+)/i,
+          /"watching_count"\s*:\s*(\d+)/i,
+          /watchingCount["']?\s*:\s*(\d+)/i,
+          /viewerCount["']?\s*:\s*(\d+)/i
+        ];
+        for (const re of res) {
+          const m = t.match(re);
+          if (!m?.[1]) continue;
+          const n = parseInt(m[1], 10);
+          if (Number.isFinite(n) && n >= 0 && n <= MAX_REASONABLE_VIEWERS) {
+            return n;
+          }
+        }
+      }
+    } catch {
+    }
+    return null;
+  }
+  function parseViewerCountFromSnapshotMetas(metas) {
+    if (!Array.isArray(metas) || !metas.length) return null;
+    const chunks = [];
+    for (const m of metas) {
+      const v = String(m?.value || "");
+      if (!v) continue;
+      if (/視聴|viewer/i.test(v)) chunks.push(v);
+    }
+    if (!chunks.length) return null;
+    return parseViewerCountFromLooseText(chunks.join(" "));
+  }
+
   // src/lib/commentHarvest.js
+  function mergeVirtualHarvestRows(prev, next) {
+    const uidN = String(next.userId ?? "").trim();
+    const uidP = String(prev.userId ?? "").trim();
+    const userId = uidN || uidP || null;
+    const nickN = String(next.nickname ?? "").trim();
+    const nickP = String(prev.nickname ?? "").trim();
+    const nickname = nickN || nickP;
+    const avN = String(next.avatarUrl ?? "").trim();
+    const avP = String(prev.avatarUrl ?? "").trim();
+    const avatarUrl = (isHttpOrHttpsUrl(avN) ? avN : "") || (isHttpOrHttpsUrl(avP) ? avP : "");
+    const commentNo = String(next.commentNo ?? prev.commentNo ?? "").trim();
+    const text = String(next.text ?? prev.text ?? "").trim();
+    const out = { commentNo, text, userId };
+    if (nickname) out.nickname = nickname;
+    if (avatarUrl) out.avatarUrl = avatarUrl;
+    return out;
+  }
   function findNicoCommentPanel(root = document) {
     if (!root || root.nodeType !== 9 && root.nodeType !== 1) return null;
     const doc = root.nodeType === 9 ? (
@@ -939,7 +1334,12 @@
         const text = String(row.text ?? "").trim();
         if (!text) continue;
         const k = no ? `${no}	${text}` : text;
-        map.set(k, row);
+        const existing = map.get(k);
+        if (!existing) {
+          map.set(k, row);
+          continue;
+        }
+        map.set(k, mergeVirtualHarvestRows(existing, row));
       }
     };
     const host = panel ? findCommentListScrollHost(doc) : null;
@@ -1151,9 +1551,36 @@
     return null;
   }
 
+  // src/lib/embeddedDataExtract.js
+  function extractEmbeddedDataProps(doc) {
+    if (!doc) return null;
+    try {
+      const el = doc.getElementById("embedded-data") || doc.querySelector("#embedded-data");
+      if (!el) return null;
+      let raw = el.getAttribute("data-props") || "";
+      if (!raw) return null;
+      if (raw.includes("&quot;")) raw = raw.replace(/&quot;/g, '"');
+      if (raw.includes("&amp;")) raw = raw.replace(/&amp;/g, "&");
+      const obj = JSON.parse(raw);
+      if (!obj || typeof obj !== "object" || Array.isArray(obj)) return null;
+      return obj;
+    } catch {
+      return null;
+    }
+  }
+  function pickViewerCountFromEmbeddedData(props) {
+    if (!props || typeof props !== "object") return null;
+    const wc = props?.program?.statistics?.watchCount;
+    if (wc == null) return null;
+    const n = typeof wc === "number" ? wc : parseInt(String(wc), 10);
+    if (!Number.isFinite(n) || n < 0) return null;
+    return n;
+  }
+
   // src/extension/content-entry.js
   var DEBOUNCE_MS = 400;
   var LIVE_POLL_MS = 4e3;
+  var STATS_POLL_MS = 45e3;
   var LIVE_PANEL_SCAN_MS = 2e3;
   var DEEP_HARVEST_DELAY_MS = 1200;
   var BOOTSTRAP_DELAYS_MS = [400, 2e3, 4500];
@@ -1166,6 +1593,9 @@
   ]);
   var recording = false;
   var liveId = null;
+  var wsViewerCount = null;
+  var wsCommentCount = null;
+  var wsViewerCountUpdatedAt = 0;
   var pendingRoots = /* @__PURE__ */ new Set();
   var flushTimer = null;
   var mutationObserver = null;
@@ -1442,18 +1872,57 @@
   var interceptedUsers = /* @__PURE__ */ new Map();
   var interceptedNicknames = /* @__PURE__ */ new Map();
   var INTERCEPT_MAP_MAX = 8e3;
+  var broadcasterUidCache = "";
+  var broadcasterUidCacheAt = 0;
+  function isHttpAvatarUrl(v) {
+    return /^https?:\/\//i.test(String(v || "").trim());
+  }
   window.addEventListener("message", (e) => {
     if (e.source !== window) return;
-    if (!e.data || e.data.type !== "NLS_INTERCEPT_USERID") return;
+    if (!e.data || typeof e.data.type !== "string") return;
+    if (e.data.type === "NLS_INTERCEPT_STATISTICS") {
+      const v = e.data.viewers;
+      if (typeof v === "number" && Number.isFinite(v) && v >= 0) {
+        wsViewerCount = v;
+        wsViewerCountUpdatedAt = Date.now();
+      }
+      const c = e.data.comments;
+      if (typeof c === "number" && Number.isFinite(c) && c >= 0) {
+        wsCommentCount = c;
+      }
+      return;
+    }
+    if (e.data.type === "NLS_INTERCEPT_EMBEDDED_DATA") {
+      const v = e.data.viewers;
+      if (typeof v === "number" && Number.isFinite(v) && v >= 0 && wsViewerCount == null) {
+        wsViewerCount = v;
+        wsViewerCountUpdatedAt = Date.now();
+      }
+      return;
+    }
+    if (e.data.type !== "NLS_INTERCEPT_USERID") return;
     const entries = e.data.entries;
     if (!Array.isArray(entries)) return;
-    for (const { no, uid, name } of entries) {
-      if (!no || !uid) continue;
-      const sNo = String(no);
-      const sUid = String(uid);
+    for (const { no, uid, name, av } of entries) {
+      const sNo = String(no || "").trim();
+      if (!sNo) continue;
+      const sUid = String(uid || "").trim();
       const sName = String(name || "").trim();
-      interceptedUsers.set(sNo, { uid: sUid, name: sName });
-      if (sName) interceptedNicknames.set(sUid, sName);
+      const sAv = isHttpAvatarUrl(av) ? String(av).trim() : "";
+      if (!sUid && !sName && !sAv) continue;
+      const prev = interceptedUsers.get(sNo);
+      const prevUid = String(prev?.uid || "").trim();
+      const prevName = String(prev?.name || "").trim();
+      const prevAv = isHttpAvatarUrl(prev?.av) ? String(prev?.av || "").trim() : "";
+      const nextUid = sUid || prevUid;
+      const nextName = sName || prevName;
+      const nextAv = sAv || prevAv;
+      interceptedUsers.set(sNo, {
+        ...nextUid ? { uid: nextUid } : {},
+        ...nextName ? { name: nextName } : {},
+        ...nextAv ? { av: nextAv } : {}
+      });
+      if (sName && sUid) interceptedNicknames.set(sUid, sName);
     }
     if (interceptedUsers.size > INTERCEPT_MAP_MAX) {
       const excess = interceptedUsers.size - INTERCEPT_MAP_MAX;
@@ -2271,6 +2740,19 @@
       return clean(m?.[1] || fromMeta);
     })();
     const viewer = collectLoggedInViewerProfile(document, url);
+    const WS_STALE_MS = 12e4;
+    const wsRecent = wsViewerCount != null && wsViewerCountUpdatedAt > 0 && Date.now() - wsViewerCountUpdatedAt < WS_STALE_MS;
+    let viewerCountFromDom = null;
+    if (wsRecent) {
+      viewerCountFromDom = wsViewerCount;
+    }
+    if (viewerCountFromDom == null) {
+      const props = extractEmbeddedDataProps(document);
+      if (props) viewerCountFromDom = pickViewerCountFromEmbeddedData(props);
+    }
+    if (viewerCountFromDom == null) {
+      viewerCountFromDom = parseLiveViewerCountFromDocument(document) ?? parseViewerCountFromSnapshotMetas(metas);
+    }
     return {
       title: String(document.title || ""),
       url,
@@ -2287,7 +2769,8 @@
       viewerAvatarUrl: viewer.viewerAvatarUrl,
       viewerNickname: viewer.viewerNickname,
       viewerUserId: viewer.viewerUserId,
-      broadcasterUserId
+      broadcasterUserId,
+      viewerCountFromDom
     };
   }
   function isWatchPageMainFrameForMessages() {
@@ -2296,6 +2779,30 @@
     } catch {
       return true;
     }
+  }
+  function buildInterceptCacheExportItems() {
+    const avatarByUid = /* @__PURE__ */ new Map();
+    for (const v of interceptedUsers.values()) {
+      const uid = String(v?.uid || "").trim();
+      const av = String(v?.av || "").trim();
+      if (!uid || !isHttpAvatarUrl(av)) continue;
+      if (!avatarByUid.has(uid)) avatarByUid.set(uid, av);
+    }
+    const items = [];
+    for (const [no, v] of interceptedUsers) {
+      const uid = String(v?.uid || "").trim();
+      const name = String(v?.name || "").trim() || (uid ? String(interceptedNicknames.get(uid) || "").trim() : "");
+      const av = String(v?.av || "").trim() || String(avatarByUid.get(uid) || "").trim();
+      if (!uid && !isHttpAvatarUrl(av)) continue;
+      items.push({
+        no: String(no || "").trim(),
+        ...uid ? { uid } : {},
+        ...name ? { name } : {},
+        ...isHttpAvatarUrl(av) ? { av } : {}
+      });
+    }
+    const MAX = 12e3;
+    return items.length > MAX ? items.slice(items.length - MAX) : items;
   }
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (!hasExtensionContext()) return;
@@ -2364,14 +2871,14 @@
       return true;
     }
     if (msg.type === "NLS_EXPORT_WATCH_SNAPSHOT") {
-      if (!isWatchPageMainFrameForMessages()) return;
-      if (!isNicoLiveWatchUrl(window.location.href)) {
+      if (!canExportWatchSnapshotFromThisFrame()) {
         sendResponse({
           ok: false,
           error: "watch\u30DA\u30FC\u30B8\u4EE5\u5916\u3067\u306F\u53D6\u5F97\u3067\u304D\u307E\u305B\u3093"
         });
         return;
       }
+      syncLiveIdFromLocation();
       try {
         sendResponse({
           ok: true,
@@ -2386,6 +2893,42 @@
           ) : "snapshot_error"
         });
       }
+    }
+    if (msg.type === "NLS_EXPORT_INTERCEPT_CACHE") {
+      if (!isWatchPageMainFrameForMessages()) return;
+      void (async () => {
+        try {
+          const deep = !!(msg && typeof msg === "object" && "deep" in msg && /** @type {{ deep?: unknown }} */
+          msg.deep);
+          if (deep && isNicoLiveWatchUrl(window.location.href)) {
+            const rows = await harvestVirtualCommentList({
+              document,
+              extractCommentsFromNode,
+              waitMs: 42
+            });
+            for (const r of rows) {
+              const no = String(r?.commentNo || "").trim();
+              const uid = String(r?.userId || "").trim();
+              if (!no) continue;
+              const av = isHttpAvatarUrl(r?.avatarUrl) ? String(r.avatarUrl).trim() : "";
+              if (!uid && !av) continue;
+              const prev = interceptedUsers.get(no);
+              const name = String(prev?.name || "").trim();
+              const prevUid = String(prev?.uid || "").trim();
+              const prevAv = isHttpAvatarUrl(prev?.av) ? String(prev?.av || "").trim() : "";
+              interceptedUsers.set(no, {
+                ...uid || prevUid ? { uid: uid || prevUid } : {},
+                ...name ? { name } : {},
+                ...av || prevAv ? { av: av || prevAv } : {}
+              });
+            }
+          }
+          sendResponse({ ok: true, items: buildInterceptCacheExportItems() });
+        } catch {
+          sendResponse({ ok: true, items: [] });
+        }
+      })();
+      return true;
     }
   });
   function rememberWatchPageUrl() {
@@ -2402,7 +2945,7 @@
   async function readRecordingFlag() {
     if (!hasExtensionContext()) return false;
     const r = await chrome.storage.local.get(KEY_RECORDING);
-    return r[KEY_RECORDING] === true;
+    return isRecordingEnabled(r[KEY_RECORDING]);
   }
   function reconnectMutationObserver() {
     if (!mutationObserver) return;
@@ -2413,21 +2956,61 @@
     mutationObserver.observe(observedMutationRoot, {
       childList: true,
       subtree: true,
-      characterData: true
+      characterData: true,
+      attributes: true,
+      attributeFilter: [
+        "src",
+        "data-src",
+        "data-lazy-src",
+        "data-original",
+        "srcset"
+      ]
     });
+  }
+  function detectBroadcasterUserIdFromDom() {
+    const now = Date.now();
+    if (broadcasterUidCache && now - broadcasterUidCacheAt < 3e3) {
+      return broadcasterUidCache;
+    }
+    const clean = (v) => String(v || "").replace(/\s+/g, " ").trim();
+    const streamLink = Array.from(
+      document.querySelectorAll('a[href*="/user/"]')
+    ).find((a) => {
+      const href2 = String(a.getAttribute("href") || "");
+      const text = clean(a.textContent);
+      return /\/user\/\d+/.test(href2) && /\/live_programs(?:\?|$)/.test(href2) && text && !/^https?:\/\//i.test(text);
+    });
+    const href = String(streamLink?.getAttribute("href") || "");
+    const m = href.match(/\/user\/(\d+)/);
+    broadcasterUidCache = m ? m[1] : "";
+    broadcasterUidCacheAt = now;
+    return broadcasterUidCache;
   }
   function enrichRowsWithInterceptedUserIds(rows) {
     if (!interceptedUsers.size && !interceptedNicknames.size) return rows;
+    const broadcasterUid = detectBroadcasterUserIdFromDom();
     return rows.map((r) => {
       const no = String(r.commentNo ?? "").trim();
       const entry = no ? interceptedUsers.get(no) : void 0;
-      const userId = r.userId || entry?.uid || null;
-      const nickname = entry?.name || (userId ? interceptedNicknames.get(userId) : "") || "";
-      return { ...r, userId, ...nickname ? { nickname } : {} };
+      const rowUid = r.userId ? String(r.userId).trim() : "";
+      const interceptedUid = entry?.uid ? String(entry.uid).trim() : "";
+      const rowLikelyContaminated = Boolean(rowUid && broadcasterUid && rowUid === broadcasterUid);
+      const userId = (interceptedUid && (!rowUid || rowLikelyContaminated) ? interceptedUid : rowUid) || interceptedUid || null;
+      const canUseInterceptMeta = Boolean(interceptedUid && userId === interceptedUid);
+      const rowNick = r.nickname ? String(r.nickname).trim() : "";
+      const nickname = (canUseInterceptMeta ? String(entry?.name || "").trim() : "") || rowNick || (userId ? interceptedNicknames.get(String(userId)) : "") || "";
+      const rowAv = String(r.avatarUrl || "").trim();
+      const av = rowAv || (canUseInterceptMeta && isHttpAvatarUrl(entry?.av) ? String(entry?.av || "").trim() : "");
+      return {
+        ...r,
+        userId,
+        ...nickname ? { nickname } : {},
+        ...av ? { avatarUrl: av } : {}
+      };
     });
   }
   async function persistCommentRows(rows) {
-    if (!rows?.length || !recording || !liveId || !isNicoLiveWatchUrl(window.location.href) || !hasExtensionContext()) {
+    if (!rows?.length || !recording || !liveId || !locationAllowsCommentRecording() || !hasExtensionContext()) {
       return;
     }
     const enriched = enrichRowsWithInterceptedUserIds(rows);
@@ -2494,30 +3077,67 @@
   }
   function syncLiveIdFromLocation() {
     const href = window.location.href;
-    if (!isNicoLiveWatchUrl(href)) {
-      liveId = null;
-      clearThumbTimer();
-      reconnectMutationObserver();
-      hidePageFrameOverlay();
+    if (isNicoLiveWatchUrl(href)) {
+      rememberWatchPageUrl();
+      const ctx = resolveWatchPageContext(href, liveId);
+      if (ctx.liveIdChanged) {
+        pendingRoots.clear();
+        interceptedUsers.clear();
+        interceptedNicknames.clear();
+        broadcasterUidCache = "";
+        broadcasterUidCacheAt = 0;
+        wsViewerCount = null;
+        wsCommentCount = null;
+        wsViewerCountUpdatedAt = 0;
+        liveId = ctx.liveId;
+        reconnectMutationObserver();
+        pendingRoots.add(document.body);
+        scheduleFlush();
+        scheduleDeepHarvest("live-id-change");
+        applyThumbSchedule();
+      } else {
+        liveId = ctx.liveId;
+        reconnectMutationObserver();
+      }
+      renderPageFrameOverlay();
       return;
     }
-    rememberWatchPageUrl();
-    const ctx = resolveWatchPageContext(href, liveId);
-    if (ctx.liveIdChanged) {
-      pendingRoots.clear();
-      interceptedUsers.clear();
-      interceptedNicknames.clear();
-      liveId = ctx.liveId;
-      reconnectMutationObserver();
-      pendingRoots.add(document.body);
-      scheduleFlush();
-      scheduleDeepHarvest("live-id-change");
-      applyThumbSchedule();
-    } else {
-      liveId = ctx.liveId;
-      reconnectMutationObserver();
+    let isTop = true;
+    try {
+      isTop = window.self === window.top;
+    } catch {
+      isTop = true;
     }
-    renderPageFrameOverlay();
+    if (hasWatchCommentPanel() && (!isTop || isNicoVideoJpHost(href))) {
+      const fromUrl = extractLiveIdFromUrl(href);
+      const fromDom = extractLiveIdFromDom(document);
+      const next = fromUrl || fromDom || liveId;
+      if (next !== liveId) {
+        pendingRoots.clear();
+        interceptedUsers.clear();
+        interceptedNicknames.clear();
+        broadcasterUidCache = "";
+        broadcasterUidCacheAt = 0;
+        wsViewerCount = null;
+        wsCommentCount = null;
+        wsViewerCountUpdatedAt = 0;
+        liveId = next;
+        reconnectMutationObserver();
+        pendingRoots.add(document.body);
+        scheduleFlush();
+        scheduleDeepHarvest("live-id-change");
+        applyThumbSchedule();
+      } else {
+        liveId = next;
+        reconnectMutationObserver();
+      }
+      renderPageFrameOverlay();
+      return;
+    }
+    liveId = null;
+    clearThumbTimer();
+    reconnectMutationObserver();
+    hidePageFrameOverlay();
   }
   function enqueueNode(node) {
     if (!node) return;
@@ -2528,7 +3148,7 @@
     }
   }
   async function flushToStorage() {
-    if (!recording || !liveId || !isNicoLiveWatchUrl(window.location.href) || !pendingRoots.size) {
+    if (!recording || !liveId || !locationAllowsCommentRecording() || !pendingRoots.size) {
       pendingRoots.clear();
       return;
     }
@@ -2558,7 +3178,7 @@
   }
   var deepHarvestTimer = null;
   function scheduleDeepHarvest(_reason) {
-    if (!recording || !liveId || !isNicoLiveWatchUrl(window.location.href)) return;
+    if (!recording || !liveId || !locationAllowsCommentRecording()) return;
     if (deepHarvestTimer) clearTimeout(deepHarvestTimer);
     deepHarvestTimer = setTimeout(() => {
       deepHarvestTimer = null;
@@ -2567,7 +3187,7 @@
     }, DEEP_HARVEST_DELAY_MS);
   }
   async function runDeepHarvest() {
-    if (harvestRunning || !recording || !liveId || !isNicoLiveWatchUrl(window.location.href)) {
+    if (harvestRunning || !recording || !liveId || !locationAllowsCommentRecording()) {
       return;
     }
     harvestRunning = true;
@@ -2583,7 +3203,7 @@
     }
   }
   function scanVisibleCommentsNow() {
-    if (!recording || !liveId || !isNicoLiveWatchUrl(window.location.href)) return;
+    if (!recording || !liveId || !locationAllowsCommentRecording()) return;
     const panel = findNicoCommentPanel(document);
     const root = panel || document.body;
     const rows = extractCommentsFromNode(root);
@@ -2613,15 +3233,73 @@
       if (attachCommentScrollHook() || n > 40) clearInterval(id);
     }, 800);
   }
+  function hasWatchCommentPanel() {
+    return !!(document.querySelector(".ga-ns-comment-panel") || document.querySelector(".comment-panel"));
+  }
+  function shouldRunWatchContentInThisFrame() {
+    const href = String(window.location.href || "");
+    let isTop = true;
+    try {
+      isTop = window.self === window.top;
+    } catch {
+      isTop = true;
+    }
+    if (isTop) {
+      if (isNicoLiveWatchUrl(href)) return true;
+      if (hasWatchCommentPanel() && isNicoVideoJpHost(href)) return true;
+      return false;
+    }
+    return hasWatchCommentPanel();
+  }
+  function locationAllowsCommentRecording() {
+    return shouldRunWatchContentInThisFrame();
+  }
+  function canExportWatchSnapshotFromThisFrame() {
+    const href = String(window.location.href || "");
+    if (isNicoLiveWatchUrl(href)) return true;
+    if (!hasWatchCommentPanel()) return false;
+    try {
+      if (window.self !== window.top) return true;
+    } catch {
+      return true;
+    }
+    return isNicoVideoJpHost(href);
+  }
+  async function pollStatsFromPage() {
+    try {
+      const href = window.location.href;
+      if (!href || !href.startsWith("http")) return;
+      const resp = await fetch(href, { credentials: "same-origin" });
+      if (!resp.ok) return;
+      const html = await resp.text();
+      const wc = html.match(/"watchCount"\s*:\s*(\d+)/);
+      if (wc?.[1]) {
+        const n = parseInt(wc[1], 10);
+        if (Number.isFinite(n) && n >= 0) {
+          wsViewerCount = n;
+          wsViewerCountUpdatedAt = Date.now();
+        }
+      }
+      const cc = html.match(/"commentCount"\s*:\s*(\d+)/);
+      if (cc?.[1]) {
+        const n = parseInt(cc[1], 10);
+        if (Number.isFinite(n) && n >= 0) {
+          wsCommentCount = n;
+        }
+      }
+    } catch {
+    }
+  }
   async function start() {
     if (!hasExtensionContext()) return;
+    if (!shouldRunWatchContentInThisFrame()) return;
     recording = await readRecordingFlag();
     ensurePageFrameStyle();
     startPageFrameLoop();
     await loadPageFrameSettings().catch(() => {
     });
     mutationObserver = new MutationObserver((records) => {
-      if (!recording || !liveId || !isNicoLiveWatchUrl(window.location.href)) {
+      if (!recording || !liveId || !locationAllowsCommentRecording()) {
         return;
       }
       for (const rec of records) {
@@ -2633,6 +3311,15 @@
           );
           if (row) pendingRoots.add(row);
           else pendingRoots.add(rec.target.parentElement);
+        } else if (rec.type === "attributes" && rec.target?.nodeType === Node.ELEMENT_NODE) {
+          const el = (
+            /** @type {Element} */
+            rec.target
+          );
+          if (el.tagName === "IMG") {
+            const row = el.closest?.('div.table-row[data-comment-type="normal"]');
+            if (row) pendingRoots.add(row);
+          }
         }
       }
       if (pendingRoots.size) scheduleFlush();
@@ -2659,7 +3346,7 @@
         });
       }
       if (changes[KEY_RECORDING]) {
-        recording = changes[KEY_RECORDING].newValue === true;
+        recording = isRecordingEnabled(changes[KEY_RECORDING].newValue);
         if (recording) {
           pendingRoots.add(document.body);
           reconnectMutationObserver();
@@ -2676,7 +3363,7 @@
       tryAttachScrollHookSoon();
       for (const ms of BOOTSTRAP_DELAYS_MS) {
         setTimeout(() => {
-          if (recording && liveId && isNicoLiveWatchUrl(window.location.href)) {
+          if (recording && liveId && locationAllowsCommentRecording()) {
             scanVisibleCommentsNow();
           }
         }, ms);
@@ -2688,11 +3375,16 @@
     }, LIVE_POLL_MS);
     setInterval(() => {
       if (!hasExtensionContext()) return;
-      if (!recording || !liveId || !isNicoLiveWatchUrl(window.location.href)) {
+      if (!recording || !liveId || !locationAllowsCommentRecording()) {
         return;
       }
       scanVisibleCommentsNow();
     }, LIVE_PANEL_SCAN_MS);
+    pollStatsFromPage();
+    setInterval(() => {
+      if (!hasExtensionContext()) return;
+      pollStatsFromPage();
+    }, STATS_POLL_MS);
   }
   if (!document.documentElement.hasAttribute("data-nls-active")) {
     document.documentElement.setAttribute("data-nls-active", "1");

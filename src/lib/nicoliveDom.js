@@ -86,26 +86,6 @@ export function extractUserIdFromDataAttributes(el) {
 }
 
 /**
- * アイコン URL 等からユーザー数字IDを推定（例: usericon/8625/86255751）
- * @param {Element} el
- * @returns {string|null}
- */
-export function extractUserIdFromIconSrc(el) {
-  if (!el || el.nodeType !== 1) return null;
-  const imgs = el.querySelectorAll(
-    'img[src*="usericon"], img[src*="nicoaccount"]'
-  );
-  for (const img of imgs) {
-    const src = String(img.getAttribute('src') || '');
-    let m = src.match(/\/usericon\/(?:s\/)?(\d+)\/(\d+)\./i);
-    if (m?.[2]) return m[2];
-    m = src.match(/nicoaccount\/usericon\/(\d+)/i);
-    if (m?.[1] && m[1].length >= 5) return m[1];
-  }
-  return null;
-}
-
-/**
  * img の src / srcset / data-* から URL 断片を集める（遅延読み込み対応）
  * @param {HTMLImageElement} img
  * @returns {string[]}
@@ -139,7 +119,96 @@ export function collectNicoUserIconUrlPartsFromImg(img) {
 export function looksLikeNicoUserIconUrl(url) {
   const s = String(url || '');
   if (!s) return false;
-  return /nicoaccount\/usericon|\/usericon\/|usericon\.nicovideo/i.test(s);
+  return /nicoaccount\/usericon|\/usericon\/|usericon\.nicovideo|\/usericon\/defaults\//i.test(
+    s
+  );
+}
+
+/** @param {string} raw @param {string} base */
+function toAbsoluteHttpUrl(raw, base) {
+  const r = String(raw || '').trim();
+  if (!r) return '';
+  let abs = '';
+  try {
+    abs = new URL(r, base).href;
+  } catch {
+    abs = r;
+  }
+  return /^https?:\/\//i.test(abs) ? abs : '';
+}
+
+/** @param {string} abs */
+function avatarUrlHeuristicScore(abs) {
+  const u = String(abs || '');
+  if (!u) return -999;
+  let score = 0;
+  if (looksLikeNicoUserIconUrl(u)) score += 120;
+  if (/(avatar|icon|profile|user|face|user[_-]?image)/i.test(u)) score += 36;
+  if (/(emoji|stamp|gift|logo|banner|sprite|program|thumbnail|player)/i.test(u))
+    score -= 90;
+  if (/(nimg\.jp|nicovideo\.jp|dcdn|cdn)/i.test(u)) score += 10;
+  return score;
+}
+
+/** @param {HTMLImageElement} img */
+function imageSizePenaltyOrBonus(img) {
+  const rect = img.getBoundingClientRect();
+  const wAttr = Number(img.getAttribute('width') || 0);
+  const hAttr = Number(img.getAttribute('height') || 0);
+  const w = Number(rect.width || 0) || wAttr || Number(img.naturalWidth || 0) || 0;
+  const h = Number(rect.height || 0) || hAttr || Number(img.naturalHeight || 0) || 0;
+  if ((w > 0 && w > 96) || (h > 0 && h > 96)) return -999;
+  if ((w > 0 && w < 10) || (h > 0 && h < 10)) return -40;
+  if ((w > 0 && w <= 64) || (h > 0 && h <= 64)) return 16;
+  if ((w > 0 && w <= 96) || (h > 0 && h <= 96)) return 8;
+  return 0;
+}
+
+/** @param {Element} el */
+function avatarElementHintScore(el) {
+  const className = String(el.getAttribute?.('class') || '');
+  const id = String(el.getAttribute?.('id') || '');
+  const alt = String(el.getAttribute?.('alt') || '');
+  const aria = String(el.getAttribute?.('aria-label') || '');
+  const dataTest = String(el.getAttribute?.('data-testid') || '');
+  const all = `${className} ${id} ${alt} ${aria} ${dataTest}`;
+  if (/(avatar|icon|user|profile|face)/i.test(all)) return 24;
+  return 0;
+}
+
+/**
+ * @param {string} raw
+ * @returns {string|null}
+ */
+function extractUserIdFromNicoUserIconUrlString(raw) {
+  const s = String(raw || '');
+  let m = s.match(/\/usericon\/(?:s\/)?(\d+)\/(\d+)\./i);
+  if (m?.[2]) return m[2];
+  m = s.match(/nicoaccount\/usericon\/(\d+)/i);
+  if (m?.[1] && m[1].length >= 5) return m[1];
+  return null;
+}
+
+/**
+ * アイコン URL 等からユーザー数字IDを推定（例: usericon/8625/86255751）。
+ * `extractUserIconUrlFromElement` と同様に data-src / srcset を見る（遅延読み込み）。
+ * @param {Element} el
+ * @returns {string|null}
+ */
+export function extractUserIdFromIconSrc(el) {
+  if (!el || el.nodeType !== 1) return null;
+  const imgs = el.querySelectorAll('img');
+  for (const img of imgs) {
+    if (!(img instanceof HTMLImageElement)) continue;
+    for (const raw of collectNicoUserIconUrlPartsFromImg(img)) {
+      if (!looksLikeNicoUserIconUrl(raw)) continue;
+      const id = extractUserIdFromNicoUserIconUrlString(raw);
+      if (id) return id;
+    }
+  }
+  const av = extractUserIconUrlFromElement(el);
+  if (av) return extractUserIdFromNicoUserIconUrlString(av);
+  return null;
 }
 
 /**
@@ -174,6 +243,109 @@ export function absoluteNicoUserIconFromImg(img, baseHref) {
 }
 
 /**
+ * 背景画像など CSS 値から url(...) を抜く
+ * @param {string} raw
+ * @returns {string[]}
+ */
+function urlsFromCssLikeValue(raw) {
+  const s = String(raw || '');
+  if (!s) return [];
+  const out = [];
+  const re = /url\((['"]?)(.*?)\1\)/gi;
+  let m;
+  while ((m = re.exec(s)) != null) {
+    const u = String(m[2] || '').trim();
+    if (u) out.push(u);
+  }
+  return out;
+}
+
+/**
+ * img から「ユーザーサムネらしい」URLを推定
+ * @param {HTMLImageElement} img
+ * @param {string} baseHref
+ * @returns {string}
+ */
+function absoluteLikelyAvatarFromImg(img, baseHref) {
+  const base = String(baseHref || '').trim() || 'https://live.nicovideo.jp/';
+  if (!(img instanceof HTMLImageElement)) return '';
+  let best = '';
+  let bestScore = -999;
+  const sizeScore = imageSizePenaltyOrBonus(img);
+  if (sizeScore <= -900) return '';
+  const hintScore = avatarElementHintScore(img);
+  for (const raw of collectNicoUserIconUrlPartsFromImg(img)) {
+    const abs = toAbsoluteHttpUrl(raw, base);
+    if (!abs) continue;
+    const score = avatarUrlHeuristicScore(abs) + sizeScore + hintScore;
+    if (score > bestScore) {
+      bestScore = score;
+      best = abs;
+    }
+  }
+  return bestScore >= 25 ? best : '';
+}
+
+/**
+ * img 以外の要素（background-image / data-*）から avatar URL を探す
+ * @param {Element} el
+ * @param {string} baseHref
+ * @returns {string}
+ */
+function absoluteNicoUserIconFromElementAttrs(el, baseHref) {
+  if (!el || el.nodeType !== 1) return '';
+  const base = String(baseHref || '').trim() || 'https://live.nicovideo.jp/';
+  const attrs = [
+    'src',
+    'data-src',
+    'data-original',
+    'data-lazy-src',
+    'data-url',
+    'data-avatar-url',
+    'style'
+  ];
+  const rawCandidates = [];
+  for (const a of attrs) {
+    const v = el.getAttribute?.(a);
+    if (!v) continue;
+    rawCandidates.push(String(v).trim());
+    if (a === 'style') {
+      rawCandidates.push(...urlsFromCssLikeValue(v));
+    }
+  }
+
+  const inlineBg = /** @type {HTMLElement} */ (el).style?.backgroundImage || '';
+  if (inlineBg) rawCandidates.push(...urlsFromCssLikeValue(inlineBg));
+  try {
+    const win = el.ownerDocument?.defaultView;
+    if (win && el instanceof win.HTMLElement) {
+      const computedBg = win.getComputedStyle(el).backgroundImage;
+      if (computedBg) rawCandidates.push(...urlsFromCssLikeValue(computedBg));
+    }
+  } catch {
+    // no-op
+  }
+
+  let best = '';
+  let bestScore = -999;
+  const hintScore = avatarElementHintScore(el);
+  for (const raw of rawCandidates) {
+    const abs = toAbsoluteHttpUrl(raw, base);
+    if (!abs) continue;
+    let score = avatarUrlHeuristicScore(abs) + hintScore;
+    const rect = /** @type {HTMLElement} */ (el).getBoundingClientRect?.();
+    const w = Number(rect?.width || 0);
+    const h = Number(rect?.height || 0);
+    if ((w > 0 && w > 120) || (h > 0 && h > 120)) score -= 50;
+    if (score > bestScore) {
+      bestScore = score;
+      best = abs;
+    }
+  }
+  return bestScore >= 25 ? best : '';
+}
+
+/**
  * コメント行などからユーザーアイコン画像の絶対 URL を1つ返す
  * @param {Element} el
  * @param {string} [baseHref] new URL の基底（document.location 相当）
@@ -185,6 +357,16 @@ export function extractUserIconUrlFromElement(el, baseHref) {
   const imgs = el.querySelectorAll('img');
   for (const img of imgs) {
     const abs = absoluteNicoUserIconFromImg(/** @type {HTMLImageElement} */ (img), base);
+    if (abs) return abs;
+  }
+  for (const img of imgs) {
+    const abs = absoluteLikelyAvatarFromImg(/** @type {HTMLImageElement} */ (img), base);
+    if (abs) return abs;
+  }
+  const nodes = [el, ...el.querySelectorAll('*')];
+  for (let i = 0; i < nodes.length && i < 120; i += 1) {
+    if (nodes[i] instanceof HTMLImageElement) continue;
+    const abs = absoluteNicoUserIconFromElementAttrs(nodes[i], base);
     if (abs) return abs;
   }
   return '';

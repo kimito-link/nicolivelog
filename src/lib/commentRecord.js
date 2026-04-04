@@ -5,6 +5,21 @@
 import { isHttpOrHttpsUrl } from './supportGrowthTileSrc.js';
 
 /**
+ * 保存済み・取り込み済みの usericon URL から数字 userId を復元（DOM 側で ID 欠けのみの救済）
+ * @param {string} url
+ * @returns {string}
+ */
+function userIdFromNicoUserIconHttpUrl(url) {
+  const s = String(url || '');
+  if (!isHttpOrHttpsUrl(s)) return '';
+  let m = s.match(/\/usericon\/(?:s\/)?(\d+)\/(\d+)\./i);
+  if (m?.[2]) return m[2];
+  m = s.match(/nicoaccount\/usericon\/(\d+)/i);
+  if (m?.[1] && m[1].length >= 5) return m[1];
+  return '';
+}
+
+/**
  * @typedef {{
  *   id?: string,
  *   liveId?: string,
@@ -58,12 +73,17 @@ export function createCommentEntry(p) {
   const nickname = p.nickname ? String(p.nickname).trim() : '';
   const av = String(p.avatarUrl || '').trim();
   const avatarUrl = isHttpOrHttpsUrl(av) ? av : '';
+  let uid = p.userId ? String(p.userId).trim() : '';
+  if (!uid && avatarUrl) {
+    const fromAv = userIdFromNicoUserIconHttpUrl(avatarUrl);
+    if (fromAv) uid = fromAv;
+  }
   const entry = {
     id: randomId(),
     liveId,
     commentNo,
     text,
-    userId: p.userId ? String(p.userId) : null,
+    userId: uid || null,
     ...(nickname ? { nickname } : {}),
     ...(avatarUrl ? { avatarUrl } : {}),
     capturedAt
@@ -111,6 +131,11 @@ export function mergeNewComments(liveId, existing, incoming) {
     });
     const rawAv = String(row.avatarUrl || '').trim();
     const validAvatar = isHttpOrHttpsUrl(rawAv) ? rawAv : '';
+    let incUid = row.userId ? String(row.userId).trim() : '';
+    if (!incUid && validAvatar) {
+      const fromAv = userIdFromNicoUserIconHttpUrl(validAvatar);
+      if (fromAv) incUid = fromAv;
+    }
 
     if (keys.has(key)) {
       const idx = next.findIndex((ex) => storedCommentDedupeKey(lid, ex) === key);
@@ -129,17 +154,27 @@ export function mergeNewComments(liveId, existing, incoming) {
           }
         }
 
-        const incUid = row.userId ? String(row.userId).trim() : '';
         /** 再収集で正しい ID が付いたとき上書き（fiber 誤検知の修正をストレージに反映） */
-        if (incUid && String(ex.userId || '').trim() !== incUid) {
+        if (incUid && String(patched.userId || '').trim() !== incUid) {
           patched = { ...patched, userId: incUid };
           touched = true;
         }
 
         const incNick = String(row.nickname || '').trim();
-        if (incNick && !String(ex.nickname || '').trim()) {
+        if (incNick && !String(patched.nickname || '').trim()) {
           patched = { ...patched, nickname: incNick };
           touched = true;
+        }
+
+        if (!String(patched.userId || '').trim()) {
+          const avHeal = String(patched.avatarUrl || '').trim();
+          if (isHttpOrHttpsUrl(avHeal)) {
+            const h = userIdFromNicoUserIconHttpUrl(avHeal);
+            if (h) {
+              patched = { ...patched, userId: h };
+              touched = true;
+            }
+          }
         }
 
         if (touched) {

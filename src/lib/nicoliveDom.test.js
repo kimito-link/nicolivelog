@@ -194,6 +194,20 @@ describe('extractUserIdFromIconSrc', () => {
       '<img src="https://x/nicoaccount/usericon/s/12/12345678.jpg">';
     expect(extractUserIdFromIconSrc(d)).toBe('12345678');
   });
+
+  it('src が空でも data-src からユーザーID（遅延読み込み）', () => {
+    const d = document.createElement('div');
+    d.innerHTML =
+      '<img alt="" src="" data-src="https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/1/99999111.jpg">';
+    expect(extractUserIdFromIconSrc(d)).toBe('99999111');
+  });
+
+  it('img が無くても background-image の usericon URL からユーザーID', () => {
+    const d = document.createElement('div');
+    d.innerHTML =
+      '<div class="avatar" style="background-image:url(https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/55/55667788.jpg)"></div>';
+    expect(extractUserIdFromIconSrc(d)).toBe('55667788');
+  });
 });
 
 describe('extractUserIconUrlFromElement', () => {
@@ -244,6 +258,30 @@ describe('extractUserIconUrlFromElement', () => {
     expect(
       extractUserIconUrlFromElement(/** @type {Element} */ (d), 'https://x/')
     ).toBe('');
+  });
+
+  it('img が無くても style の background-image から取得', () => {
+    const d = document.createElement('div');
+    d.innerHTML =
+      '<div style="background-image:url(https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/7/7654321.jpg)"></div>';
+    expect(
+      extractUserIconUrlFromElement(
+        d,
+        'https://live.nicovideo.jp/watch/lv1'
+      )
+    ).toBe('https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/7/7654321.jpg');
+  });
+
+  it('usericon パターン外でも avatar らしい小画像を拾う', () => {
+    const d = document.createElement('div');
+    d.innerHTML =
+      '<img class="user-avatar" src="https://img.cdn.example.com/profile/avatar_abc123.png" width="24" height="24" alt="">';
+    expect(
+      extractUserIconUrlFromElement(
+        d,
+        'https://live.nicovideo.jp/watch/lv1'
+      )
+    ).toBe('https://img.cdn.example.com/profile/avatar_abc123.png');
   });
 });
 

@@ -45,13 +45,61 @@ export function isNicoLiveWatchUrl(url) {
   try {
     const u = new URL(String(url || ''));
     const host = u.hostname.toLowerCase();
-    const pathOk = /\/watch\/lv\d+/i.test(u.pathname);
-    if (isLocalE2EWatchHost(u)) return pathOk;
+    const hasWatchOrEmbed =
+      /\/watch\//.test(u.pathname) || /\/embed\//.test(u.pathname);
+    if (isLocalE2EWatchHost(u)) return hasWatchOrEmbed;
     if (!host.includes('nicovideo.jp')) return false;
-    return pathOk;
+    if (host === 'live.nicovideo.jp' || host === 'sp.live.nicovideo.jp') {
+      return hasWatchOrEmbed;
+    }
+    return /\/watch\/(lv|ch)\d+/i.test(u.pathname);
   } catch {
     return false;
   }
+}
+
+/**
+ * 拡張がニコニコ系ページとみなすホスト（サブドメイン含む）。about:blank 等は false。
+ * @param {string | null | undefined} url
+ * @returns {boolean}
+ */
+export function isNicoVideoJpHost(url) {
+  try {
+    const h = new URL(String(url || '')).hostname.toLowerCase();
+    return h === 'nicovideo.jp' || h.endsWith('.nicovideo.jp');
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * URL に lv が無い場合（SPA iframe / about:blank 等）に DOM から推定
+ * @param {Document} doc
+ * @returns {string|null}
+ */
+export function extractLiveIdFromDom(doc) {
+  if (!doc) return null;
+  const tryHref = (/** @type {string|null|undefined} */ raw) =>
+    extractLiveIdFromUrl(String(raw || ''));
+
+  for (const a of doc.querySelectorAll(
+    'a[href*="/watch/lv"], a[href*="watch/lv"], a[href*="/embed/lv"], a[href*="embed/lv"]'
+  )) {
+    const id = tryHref(a.getAttribute('href'));
+    if (id) return id;
+  }
+  for (const sel of [
+    'meta[property="og:url"]',
+    'meta[name="og:url"]',
+    'link[rel="canonical"]'
+  ]) {
+    const el = doc.querySelector(sel);
+    const raw =
+      el?.getAttribute('content') || el?.getAttribute('href') || '';
+    const id = tryHref(raw);
+    if (id) return id;
+  }
+  return null;
 }
 
 /**

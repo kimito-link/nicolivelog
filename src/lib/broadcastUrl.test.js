@@ -76,6 +76,18 @@ describe('isNicoLiveWatchUrl', () => {
     expect(isNicoLiveWatchUrl('https://www.nicovideo.jp/watch/sm9')).toBe(false);
   });
 
+  it('チャンネル放送 watch/ch を true', () => {
+    expect(isNicoLiveWatchUrl('https://live.nicovideo.jp/watch/ch2646440')).toBe(true);
+  });
+
+  it('sp.live サブドメインも true', () => {
+    expect(isNicoLiveWatchUrl('https://sp.live.nicovideo.jp/watch/lv123456')).toBe(true);
+  });
+
+  it('embed パスも true', () => {
+    expect(isNicoLiveWatchUrl('https://live.nicovideo.jp/embed/lv123456')).toBe(true);
+  });
+
   it('E2E 用ローカルモック（:3456 のみ）', () => {
     expect(
       isNicoLiveWatchUrl('http://127.0.0.1:3456/watch/lv888888888/')

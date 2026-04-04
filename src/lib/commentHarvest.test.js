@@ -4,7 +4,8 @@ import {
   findNicoCommentPanel,
   findLargestVerticalScrollHost,
   findCommentListScrollHost,
-  harvestVirtualCommentList
+  harvestVirtualCommentList,
+  mergeVirtualHarvestRows
 } from './commentHarvest.js';
 import { extractCommentsFromNode } from './nicoliveDom.js';
 
@@ -50,6 +51,45 @@ describe('findLargestVerticalScrollHost', () => {
     Object.defineProperty(b, 'clientHeight', { value: 30, configurable: true });
     Object.defineProperty(b, 'scrollHeight', { value: 300, configurable: true });
     expect(findLargestVerticalScrollHost(wrap)).toBe(b);
+  });
+});
+
+describe('mergeVirtualHarvestRows', () => {
+  it('後続で userId が空でも既存の userId を維持', () => {
+    const m = mergeVirtualHarvestRows(
+      { commentNo: '1', text: 'hi', userId: '12345678' },
+      { commentNo: '1', text: 'hi', userId: null }
+    );
+    expect(m.userId).toBe('12345678');
+  });
+
+  it('後続に userId が付いたら採用', () => {
+    const m = mergeVirtualHarvestRows(
+      { commentNo: '1', text: 'hi', userId: null },
+      { commentNo: '1', text: 'hi', userId: '87654321' }
+    );
+    expect(m.userId).toBe('87654321');
+  });
+
+  it('https avatarUrl を空で上書きしない', () => {
+    const m = mergeVirtualHarvestRows(
+      {
+        commentNo: '1',
+        text: 'a',
+        userId: '1',
+        avatarUrl: 'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/1/12345.jpg'
+      },
+      { commentNo: '1', text: 'a', userId: null, avatarUrl: '' }
+    );
+    expect(m.avatarUrl).toMatch(/^https:\/\//);
+  });
+
+  it('nickname も空で上書きしない', () => {
+    const m = mergeVirtualHarvestRows(
+      { commentNo: '1', text: 'a', userId: '1', nickname: 'foo' },
+      { commentNo: '1', text: 'a', userId: null, nickname: '' }
+    );
+    expect(m.nickname).toBe('foo');
   });
 });
 
@@ -109,5 +149,50 @@ describe('harvestVirtualCommentList', () => {
     });
     const nos = new Set(rows.map((r) => r.commentNo));
     expect(nos.size).toBeGreaterThan(1);
+  });
+
+  it('同一キーは薄い後続パスで userId を失わない', async () => {
+    document.body.innerHTML = `
+      <div class="ga-ns-comment-panel">
+        <div class="body" role="rowgroup" style="height:50px;overflow:auto;width:200px">
+          <div id="slot"></div>
+        </div>
+      </div>`;
+    const body = document.querySelector('.body');
+    Object.defineProperty(body, 'clientHeight', { value: 50, configurable: true });
+    Object.defineProperty(body, 'scrollHeight', { value: 500, configurable: true });
+    let scrollTop = 0;
+    Object.defineProperty(body, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (v) => {
+        scrollTop = v;
+      }
+    });
+    const slot = document.getElementById('slot');
+    let extractCalls = 0;
+    const extract = () => {
+      extractCalls += 1;
+      slot.innerHTML = `
+        <div class="table-row" data-comment-type="normal">
+          <span class="comment-number">5</span><span class="comment-text">same</span>
+        </div>
+        <div style="height:800px"></div>`;
+      const base = extractCommentsFromNode(document.querySelector('.ga-ns-comment-panel'));
+      const rich = extractCalls === 1;
+      return base.map((r) =>
+        r.commentNo === '5' && r.text === 'same'
+          ? { ...r, userId: rich ? '99999111' : null }
+          : r
+      );
+    };
+
+    const rows = await harvestVirtualCommentList({
+      document,
+      extractCommentsFromNode: extract,
+      waitMs: 0
+    });
+    const hit = rows.find((r) => r.commentNo === '5' && r.text === 'same');
+    expect(hit?.userId).toBe('99999111');
   });
 });

@@ -68,3 +68,12 @@
 
 - §3 の「タイムシフトでも同じ DOM か」を外部 LLM に聞く前に、**本メモを添付**すると会話の前提が揃いやすい。
 - 実機で DOM が変わったら、**DevTools でコメント行の HTML を取り**、[`nicoliveDom.js`](../src/lib/nicoliveDom.js) のセレクタを更新する。
+
+---
+
+## 9. 同時接続（視聴者数）の DOM 読み取り
+
+- PC watch では、コメント列ヘッダ付近などに **「2,731人が視聴中」** のような文言が出ることが多い（実機スクリーンショットベースの観察）。
+- CSS Modules でクラスにハッシュが付くため、**固定クラス1発の query より、本文パターン**の方が壊れにくい場合がある。
+- 実装は [`src/lib/liveAudienceDom.js`](../src/lib/liveAudienceDom.js) の `parseLiveViewerCountFromDocument` が **本文・同一オリジン iframe・shadow root・aria-label/title・インライン script 内 JSON** を寄せ集め、全角数字を正規化したうえで `人が視聴` / `視聴者` / `viewers` / `viewerCount` 等にマッチする数値を返す。DOM だけで無いときは **`parseViewerCountFromSnapshotMetas`** で `og:description` 等（「視聴」を含む meta 値）をフォールバックする。
+- **ポップアップのスナップショット**は、watch 本体が **iframe 内**だけにある場合があるため、[`manifest.json`](../extension/manifest.json) の content script に **`all_frames": true`** を付け、[`popup-entry.js`](../src/extension/popup-entry.js) の `pickWatchSnapshotFrameId` でコメントパネル／動画のあるフレームに `sendMessage` する。UI 文言が変わったら **[`liveAudienceDom.test.js`](../src/lib/liveAudienceDom.test.js) の fixture** と本節を更新する。
