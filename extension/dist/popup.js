@@ -250,6 +250,25 @@
     };
   }
 
+  // src/lib/concurrentEstimate.js
+  var DEFAULT_WINDOW_MS = 5 * 60 * 1e3;
+  var DEFAULT_MULTIPLIER = 10;
+  function estimateConcurrentViewers({
+    recentActiveUsers,
+    totalVisitors,
+    multiplier
+  }) {
+    const m = typeof multiplier === "number" && multiplier > 0 ? multiplier : DEFAULT_MULTIPLIER;
+    const active = typeof recentActiveUsers === "number" && recentActiveUsers >= 0 ? Math.floor(recentActiveUsers) : 0;
+    let estimated = active * m;
+    let capped = false;
+    if (typeof totalVisitors === "number" && Number.isFinite(totalVisitors) && totalVisitors > 0 && estimated > totalVisitors) {
+      estimated = totalVisitors;
+      capped = true;
+    }
+    return { estimated, activeCommenters: active, multiplier: m, capped };
+  }
+
   // src/lib/liveAudienceDom.js
   var MAX_REASONABLE_VIEWERS = 12e6;
   function normalizeDigitsForViewerScan(text) {
@@ -473,6 +492,19 @@
     if (!countEl) return;
     countEl.textContent = value;
     countEl.classList.toggle("is-placeholder", value === "-" || value === "");
+    const liveStatEl = $("liveStatComments");
+    if (liveStatEl) liveStatEl.textContent = value;
+  }
+  function commentTickerDisplayLabel(entry, liveId, entries) {
+    if (!entry) return "";
+    const nickname = String(entry.nickname || "").trim();
+    if (nickname) return nickname;
+    const ownPosted = isOwnPostedSupportComment(entry, liveId, entries);
+    const viewerNick = String(watchMetaCache.snapshot?.viewerNickname || "").trim();
+    if (ownPosted && viewerNick) return viewerNick;
+    const userId = String(entry.userId || "").trim();
+    if (userId) return displayUserLabel(userId);
+    return "";
   }
   function renderCommentTicker(comments) {
     const segA = $("commentTickerSegA");
@@ -500,20 +532,28 @@
       return;
     }
     if (viewport) viewport.classList.remove("is-empty");
-    const uid = latest.userId ? String(latest.userId).trim() : "";
-    const nick = latest.nickname ? String(latest.nickname).trim() : "";
-    const label = displayUserLabel(uid || UNKNOWN_USER_KEY, nick);
+    const liveId = String(latest.liveId || STORY_SOURCE_STATE.liveId || "");
+    const label = commentTickerDisplayLabel(latest, liveId, list);
+    const avatarSrc = storyGrowthTileSrcForEntry(latest, liveId, list);
     const rawText = String(latest.text || "").trim();
     const textShown = truncateText(rawText, 72);
     const noStr = String(latest.commentNo || "").trim();
     const noPrefix = /^\d+$/.test(noStr) ? `No.${noStr} ` : "";
-    const tip = `${noPrefix}${label}\uFF1A${rawText || "\uFF08\u30B3\u30E1\u30F3\u30C8\u672C\u6587\u306A\u3057\uFF09"}`;
-    segA.innerHTML = `<span class="nl-ticker-item nl-ticker-latest" aria-live="polite">${escapeHtml(noPrefix)}${escapeHtml(label)}\uFF1A${escapeHtml(textShown)}</span>`;
+    const tip = label ? `${noPrefix}${label}\uFF1A${rawText || "\uFF08\u30B3\u30E1\u30F3\u30C8\u672C\u6587\u306A\u3057\uFF09"}` : `${noPrefix}${rawText || "\uFF08\u30B3\u30E1\u30F3\u30C8\u672C\u6587\u306A\u3057\uFF09"}`;
+    const labelHtml = label ? `<span class="nl-ticker-latest__name">${escapeHtml(label)}</span><span class="nl-ticker-latest__colon">\uFF1A</span>` : "";
+    segA.innerHTML = `<span class="nl-ticker-item nl-ticker-latest" aria-live="polite"><span class="nl-ticker-latest__row"><img class="nl-ticker-latest__avatar" alt="" src="${escapeHtml(avatarSrc)}">` + labelHtml + `<span class="nl-ticker-latest__text">${escapeHtml(textShown)}</span></span></span>`;
     const line = (
       /** @type {HTMLSpanElement|null} */
       segA.querySelector(".nl-ticker-latest")
     );
     if (line) line.title = tip;
+    const avatar = (
+      /** @type {HTMLImageElement|null} */
+      segA.querySelector(".nl-ticker-latest__avatar")
+    );
+    if (avatar && isHttpOrHttpsUrl(avatarSrc)) {
+      avatar.referrerPolicy = "no-referrer";
+    }
   }
   function setPostStatus(message, kind = "idle") {
     const status = $("postStatus");
@@ -523,6 +563,9 @@
     if (kind === "error") status.classList.add("error");
     if (kind === "success") status.classList.add("success");
   }
+  var COMMENT_POST_UI_STATE = {
+    submitting: false
+  };
   function withCommentSendTroubleshootHint(message) {
     const s = String(message || "").trim();
     if (!s) return "";
@@ -901,10 +944,58 @@
   var STORY_RINK_FACE_IMG = "images/toumeilink.png";
   var STORY_RINK_TILE_IMG = "images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-closed.png";
   var MAX_SELF_POSTED_ITEMS = 48;
-  var SELF_POST_HARVEST_WINDOW_MS = 8 * 60 * 1e3;
-  var SELF_POST_CAPTURE_EARLY_SLACK_MS = 2 * 60 * 1e3;
+  var SELF_POST_DUPLICATE_WINDOW_MS = 5e3;
+  var SELF_POST_MATCH_LATE_MS = 10 * 60 * 1e3;
+  var SELF_POST_MATCH_EARLY_MS = 30 * 1e3;
   var SELF_POST_RECENT_TTL_MS = 24 * 60 * 60 * 1e3;
   var selfPostedRecentsCache = [];
+  var SELF_POST_MATCH_CACHE = {
+    entriesRef: (
+      /** @type {PopupCommentEntry[]|null} */
+      null
+    ),
+    liveId: "",
+    recentFingerprint: "",
+    entriesFingerprint: "",
+    matchedIds: /* @__PURE__ */ new Set()
+  };
+  function popupEntryStableId(entry, fallbackLiveId = "") {
+    if (!entry) return "";
+    const id = String(entry.id || "").trim();
+    if (id) return id;
+    const lid = String(entry.liveId || fallbackLiveId || STORY_SOURCE_STATE.liveId || "").trim().toLowerCase();
+    return `legacy:${buildDedupeKey(lid, {
+      commentNo: entry.commentNo,
+      text: String(entry.text || ""),
+      capturedAt: entry.capturedAt
+    })}`;
+  }
+  function selfPostedEntryFingerprint(entries) {
+    const list = Array.isArray(entries) ? entries : [];
+    if (!list.length) return "0";
+    const first = list[0];
+    const last = list[list.length - 1];
+    return `${list.length}|${popupEntryStableId(first)}|${popupEntryStableId(last)}|${Number(last?.capturedAt || 0)}`;
+  }
+  function buildOwnPostedMatchedIdSet(entries, liveId) {
+    return matchSelfPostedRecentsToEntries(entries, liveId).matchedIds;
+  }
+  function getOwnPostedMatchedIdSet(entries, liveId) {
+    const list = Array.isArray(entries) ? entries : [];
+    const lid = String(liveId || "").trim().toLowerCase();
+    const recentFingerprint = selfPostedRecentsFingerprintForLive(lid);
+    const entriesFingerprint = selfPostedEntryFingerprint(list);
+    if (SELF_POST_MATCH_CACHE.entriesRef === list && SELF_POST_MATCH_CACHE.liveId === lid && SELF_POST_MATCH_CACHE.recentFingerprint === recentFingerprint && SELF_POST_MATCH_CACHE.entriesFingerprint === entriesFingerprint) {
+      return SELF_POST_MATCH_CACHE.matchedIds;
+    }
+    const matchedIds = buildOwnPostedMatchedIdSet(list, lid);
+    SELF_POST_MATCH_CACHE.entriesRef = list;
+    SELF_POST_MATCH_CACHE.liveId = lid;
+    SELF_POST_MATCH_CACHE.recentFingerprint = recentFingerprint;
+    SELF_POST_MATCH_CACHE.entriesFingerprint = entriesFingerprint;
+    SELF_POST_MATCH_CACHE.matchedIds = matchedIds;
+    return matchedIds;
+  }
   async function loadSelfPostedRecentsIntoCache() {
     try {
       const bag = await chrome.storage.local.get(KEY_SELF_POSTED_RECENTS);
@@ -923,10 +1014,12 @@
     const textNorm = normalizeCommentText(rawText);
     if (!lid || !textNorm) return;
     const at = Date.now();
-    const next = [
-      ...selfPostedRecentsCache.filter((it) => at - it.at < SELF_POST_RECENT_TTL_MS),
-      { liveId: lid, at, textNorm }
-    ];
+    const next = selfPostedRecentsCache.filter((it) => at - it.at < SELF_POST_RECENT_TTL_MS);
+    const duplicated = next.some(
+      (it) => String(it.liveId || "").trim().toLowerCase() === lid && String(it.textNorm || "") === textNorm && Math.abs(at - (Number(it.at) || 0)) < SELF_POST_DUPLICATE_WINDOW_MS
+    );
+    if (duplicated) return;
+    next.push({ liveId: lid, at, textNorm });
     while (next.length > MAX_SELF_POSTED_ITEMS) next.shift();
     selfPostedRecentsCache = next;
     try {
@@ -962,17 +1055,23 @@
     } catch {
     }
   }
-  function isOwnPostedSupportComment(entry, liveId) {
+  function isOwnPostedSupportComment(entry, liveId, entries = STORY_SOURCE_STATE.entries) {
     if (!entry) return false;
+    if (entry.selfPosted) return true;
     const lid = String(liveId || STORY_SOURCE_STATE.liveId || "").trim().toLowerCase();
     if (!lid) return false;
+    const list = Array.isArray(entries) ? entries : [];
+    if (list.length > 0) {
+      const matchedIds = getOwnPostedMatchedIdSet(list, lid);
+      return matchedIds.has(popupEntryStableId(entry, lid));
+    }
     const norm = normalizeCommentText(entry.text);
     if (!norm) return false;
     const cap = Number(entry.capturedAt) || 0;
     for (const it of selfPostedRecentsCache) {
       if (String(it.liveId).toLowerCase() !== lid) continue;
       if (it.textNorm !== norm) continue;
-      if (cap >= it.at - SELF_POST_CAPTURE_EARLY_SLACK_MS && cap <= it.at + SELF_POST_HARVEST_WINDOW_MS) {
+      if (cap >= it.at - SELF_POST_MATCH_EARLY_MS && cap <= it.at + SELF_POST_MATCH_LATE_MS) {
         return true;
       }
     }
@@ -1030,9 +1129,175 @@
     }
     return set.size;
   }
-  function storyGrowthAvatarSrcCandidate(entry, liveId) {
+  function countResolvedAvatarEntries(entries, liveId) {
+    const list = Array.isArray(entries) ? entries : [];
+    const lid = String(liveId || "").trim();
+    if (!lid || !list.length) return { total: 0, unique: 0 };
+    let total = 0;
+    const unique = /* @__PURE__ */ new Set();
+    for (const entry of list) {
+      const src = storyGrowthAvatarSrcCandidate(entry, lid, list);
+      const key = avatarCompareKey(src);
+      if (!key) continue;
+      total += 1;
+      unique.add(key);
+    }
+    return { total, unique: unique.size };
+  }
+  function countPendingSelfPostedRecentsForLive(liveId) {
+    const lid = String(liveId || "").trim().toLowerCase();
+    if (!lid) return 0;
+    let n = 0;
+    for (const it of selfPostedRecentsCache) {
+      if (String(it.liveId).toLowerCase() === lid) n += 1;
+    }
+    return n;
+  }
+  function countOwnPostedEntries(entries, liveId) {
+    const list = Array.isArray(entries) ? entries : [];
+    const lid = String(liveId || "").trim().toLowerCase();
+    if (!lid || !list.length) return 0;
+    const matchedIds = getOwnPostedMatchedIdSet(list, lid);
+    let n = 0;
+    for (const entry of list) {
+      if (Boolean(entry?.selfPosted) || matchedIds.has(popupEntryStableId(entry, lid))) {
+        n += 1;
+      }
+    }
+    return n;
+  }
+  function countSavedOwnPostedEntries(entries) {
+    const list = Array.isArray(entries) ? entries : [];
+    let n = 0;
+    for (const entry of list) {
+      if (entry?.selfPosted) n += 1;
+    }
+    return n;
+  }
+  function matchSelfPostedRecentsToEntries(entries, liveId) {
+    const list = Array.isArray(entries) ? entries : [];
+    const lid = String(liveId || "").trim().toLowerCase();
+    const matchedIds = /* @__PURE__ */ new Set();
+    const consumedIndexes = /* @__PURE__ */ new Set();
+    if (!lid || !list.length || !selfPostedRecentsCache.length) {
+      return { matchedIds, consumedIndexes };
+    }
+    const recents = selfPostedRecentsCache.map((it, itemIndex) => ({
+      itemIndex,
+      liveId: String(it?.liveId || "").trim().toLowerCase(),
+      at: Number(it?.at) || 0,
+      textNorm: String(it?.textNorm || "")
+    })).filter((it) => it.liveId === lid && it.at > 0 && it.textNorm).sort((a, b) => a.at - b.at || a.itemIndex - b.itemIndex);
+    if (!recents.length) {
+      return { matchedIds, consumedIndexes };
+    }
+    const byText = /* @__PURE__ */ new Map();
+    for (let i = 0; i < list.length; i += 1) {
+      const entry = list[i];
+      const textNorm = normalizeCommentText(entry?.text);
+      const id = popupEntryStableId(entry, lid);
+      if (!textNorm || !id) continue;
+      const bucket = byText.get(textNorm) || [];
+      bucket.push({
+        id,
+        capturedAt: Number(entry?.capturedAt || 0),
+        index: i
+      });
+      byText.set(textNorm, bucket);
+    }
+    for (const bucket of byText.values()) {
+      bucket.sort((a, b) => {
+        if (a.capturedAt !== b.capturedAt) return a.capturedAt - b.capturedAt;
+        return a.index - b.index;
+      });
+    }
+    for (const recent of recents) {
+      const bucket = byText.get(recent.textNorm);
+      if (!bucket?.length) continue;
+      let best = null;
+      let bestScore = Number.POSITIVE_INFINITY;
+      let bestIndex = Number.POSITIVE_INFINITY;
+      for (const candidate of bucket) {
+        if (matchedIds.has(candidate.id)) continue;
+        const cap = candidate.capturedAt;
+        if (cap < recent.at - SELF_POST_MATCH_EARLY_MS || cap > recent.at + SELF_POST_MATCH_LATE_MS) {
+          continue;
+        }
+        const delta = cap - recent.at;
+        const score = Math.abs(delta) + (delta >= 0 ? 0 : SELF_POST_MATCH_EARLY_MS + 1);
+        if (score < bestScore || score === bestScore && candidate.index < bestIndex) {
+          best = candidate;
+          bestScore = score;
+          bestIndex = candidate.index;
+        }
+      }
+      if (!best) continue;
+      matchedIds.add(best.id);
+      consumedIndexes.add(recent.itemIndex);
+    }
+    return { matchedIds, consumedIndexes };
+  }
+  function reconcileStoredOwnPostedEntries(entries, liveId) {
+    const list = Array.isArray(entries) ? entries : [];
+    const lid = String(liveId || "").trim().toLowerCase();
+    if (!lid || !list.length || !selfPostedRecentsCache.length) {
+      return {
+        next: list,
+        remaining: selfPostedRecentsCache,
+        changed: false,
+        pendingChanged: false
+      };
+    }
+    const { matchedIds, consumedIndexes } = matchSelfPostedRecentsToEntries(list, lid);
+    if (!matchedIds.size && !consumedIndexes.size) {
+      return {
+        next: list,
+        remaining: selfPostedRecentsCache,
+        changed: false,
+        pendingChanged: false
+      };
+    }
+    let changed = false;
+    const next = list.map((entry) => {
+      const id = popupEntryStableId(entry, lid);
+      if (!id || !matchedIds.has(id) || entry?.selfPosted) return entry;
+      changed = true;
+      return { ...entry, selfPosted: true };
+    });
+    return {
+      next,
+      remaining: selfPostedRecentsCache.filter((_, i) => !consumedIndexes.has(i)),
+      changed,
+      pendingChanged: consumedIndexes.size > 0
+    };
+  }
+  function buildDisplayCommentEntries(entries, liveId) {
+    const list = Array.isArray(entries) ? entries : [];
+    const lid = String(liveId || "").trim().toLowerCase();
+    if (!lid || !selfPostedRecentsCache.length) return list;
+    const { consumedIndexes } = matchSelfPostedRecentsToEntries(list, lid);
+    const viewerUid = String(watchMetaCache.snapshot?.viewerUserId || "").trim();
+    const viewerNick = String(watchMetaCache.snapshot?.viewerNickname || "").trim();
+    const viewerAvatarUrl = String(watchMetaCache.snapshot?.viewerAvatarUrl || "").trim();
+    const pending = selfPostedRecentsCache.map((it, itemIndex) => ({ it, itemIndex })).filter(({ it, itemIndex }) => {
+      if (consumedIndexes.has(itemIndex)) return false;
+      return String(it?.liveId || "").trim().toLowerCase() === lid && Number(it?.at) > 0 && Boolean(String(it?.textNorm || "").trim());
+    }).sort((a, b) => (Number(a.it?.at) || 0) - (Number(b.it?.at) || 0)).map(({ it, itemIndex }) => ({
+      id: `pending-self:${lid}:${itemIndex}:${Number(it?.at) || 0}`,
+      liveId: lid,
+      text: String(it?.textRaw || it?.textNorm || "").trim(),
+      userId: viewerUid || null,
+      nickname: viewerNick,
+      avatarUrl: isHttpOrHttpsUrl(viewerAvatarUrl) ? viewerAvatarUrl : "",
+      selfPosted: true,
+      capturedAt: Number(it?.at) || Date.now()
+    }));
+    if (!pending.length) return list;
+    return [...list, ...pending];
+  }
+  function storyGrowthAvatarSrcCandidate(entry, liveId, entries = STORY_SOURCE_STATE.entries) {
     const snap = watchMetaCache.snapshot;
-    const own = isOwnPostedSupportComment(entry, String(liveId || ""));
+    const own = isOwnPostedSupportComment(entry, String(liveId || ""), entries);
     const bc = String(snap?.broadcasterUserId || "").trim();
     const entUid = String(entry?.userId || "").trim();
     const avatarUrl = String(entry?.avatarUrl || "").trim();
@@ -1049,8 +1314,8 @@
     });
     return isHttpOrHttpsUrl(src) ? src : "";
   }
-  function storyGrowthTileSrcForEntry(entry, liveId) {
-    return storyGrowthAvatarSrcCandidate(entry, liveId) || STORY_RINK_TILE_IMG;
+  function storyGrowthTileSrcForEntry(entry, liveId, entries = STORY_SOURCE_STATE.entries) {
+    return storyGrowthAvatarSrcCandidate(entry, liveId, entries) || STORY_RINK_TILE_IMG;
   }
   var STORY_HOP_STATE = {
     clearTimer: (
@@ -1211,6 +1476,12 @@
     withUid: 0,
     withAvatar: 0,
     uniqueAvatar: 0,
+    resolvedAvatar: 0,
+    resolvedUniqueAvatar: 0,
+    selfShown: 0,
+    selfSaved: 0,
+    selfPending: 0,
+    selfPendingMatched: 0,
     interceptItems: 0,
     interceptWithUid: 0,
     interceptWithAvatar: 0,
@@ -1219,17 +1490,7 @@
     stripped: 0
   };
   function commentStableId(entry) {
-    if (!entry) return "";
-    const id = String(entry.id || "").trim();
-    if (id) return id;
-    const lid = String(
-      entry.liveId || STORY_SOURCE_STATE.liveId || ""
-    ).trim().toLowerCase();
-    return `legacy:${buildDedupeKey(lid, {
-      commentNo: entry.commentNo,
-      text: String(entry.text || ""),
-      capturedAt: entry.capturedAt
-    })}`;
+    return popupEntryStableId(entry);
   }
   function getStoryEntryByStableId(stableId) {
     const want = String(stableId || "").trim();
@@ -1378,11 +1639,17 @@
       /** @type {HTMLElement|null} */
       $("sceneStoryUserLane")
     );
+    const guide = (
+      /** @type {HTMLElement|null} */
+      $("sceneStoryUserLaneGuide")
+    );
+    const guideBubble = $("sceneStoryUserLaneGuideBubble");
     if (!lane) return;
     const entries = Array.isArray(STORY_SOURCE_STATE.entries) ? STORY_SOURCE_STATE.entries : [];
     if (!entries.length) {
       lane.innerHTML = "";
       lane.hidden = true;
+      if (guide) guide.hidden = true;
       return;
     }
     const limit = INLINE_MODE ? 48 : 24;
@@ -1403,6 +1670,7 @@
     lane.innerHTML = "";
     if (!picked.length) {
       lane.hidden = true;
+      if (guide) guide.hidden = true;
       return;
     }
     const frag = document.createDocumentFragment();
@@ -1423,6 +1691,10 @@
       "aria-label",
       `\u6700\u8FD1\u306E\u5FDC\u63F4\u30E6\u30FC\u30B6\u30FC\u30B5\u30E0\u30CD\u30A4\u30EB ${picked.length}\u4EF6`
     );
+    if (guideBubble) {
+      guideBubble.innerHTML = `\u3053\u3093\u592A: \u3053\u3053\u306F\u8B58\u5225\u3067\u304D\u305F\u5FDC\u63F4\u30E6\u30FC\u30B6\u30FC\u306E\u5217\u3060\u3088 <span class="nl-story-userlane-guide__count">${picked.length}\u4EBA</span>`;
+    }
+    if (guide) guide.hidden = false;
     lane.hidden = false;
   }
   function renderStoryAvatarDiag() {
@@ -1438,7 +1710,7 @@
       el.textContent = "";
       return;
     }
-    el.textContent = `\u8A3A\u65AD: avatar ${s.withAvatar}/${s.total}\uFF08\u7A2E\u985E ${s.uniqueAvatar}\uFF09 / uid ${s.withUid}/${s.total} / intercept ${s.interceptItems}\u4EF6\uFF08uid ${s.interceptWithUid}, avatar ${s.interceptWithAvatar}\uFF09 / \u88DC\u5B8C ${s.mergedPatched}\u4EF6` + (s.mergedUidReplaced > 0 ? `\uFF08UID\u7F6E\u63DB ${s.mergedUidReplaced}\uFF09` : "") + (s.stripped > 0 ? ` / \u6C5A\u67D3\u9664\u53BB ${s.stripped}\u4EF6` : "");
+    el.textContent = `\u8A3A\u65AD: avatar\u4FDD\u5B58 ${s.withAvatar}/${s.total}\uFF08\u7A2E\u985E ${s.uniqueAvatar}\uFF09 / avatar\u8868\u793A ${s.resolvedAvatar}/${s.total}\uFF08\u7A2E\u985E ${s.resolvedUniqueAvatar}\uFF09 / uid ${s.withUid}/${s.total} / self ${s.selfShown}\u4EF6\uFF08\u4FDD\u5B58 ${s.selfSaved}, \u4FDD\u7559 ${s.selfPending}, \u4E00\u81F4 ${s.selfPendingMatched}\uFF09 / intercept ${s.interceptItems}\u4EF6\uFF08uid ${s.interceptWithUid}, avatar ${s.interceptWithAvatar}\uFF09 / \u88DC\u5B8C ${s.mergedPatched}\u4EF6` + (s.mergedUidReplaced > 0 ? `\uFF08UID\u7F6E\u63DB ${s.mergedUidReplaced}\uFF09` : "") + (s.stripped > 0 ? ` / \u6C5A\u67D3\u9664\u53BB ${s.stripped}\u4EF6` : "");
     el.hidden = false;
   }
   function resetStoryAvatarDiagState() {
@@ -1446,6 +1718,12 @@
     STORY_AVATAR_DIAG_STATE.withUid = 0;
     STORY_AVATAR_DIAG_STATE.withAvatar = 0;
     STORY_AVATAR_DIAG_STATE.uniqueAvatar = 0;
+    STORY_AVATAR_DIAG_STATE.resolvedAvatar = 0;
+    STORY_AVATAR_DIAG_STATE.resolvedUniqueAvatar = 0;
+    STORY_AVATAR_DIAG_STATE.selfShown = 0;
+    STORY_AVATAR_DIAG_STATE.selfSaved = 0;
+    STORY_AVATAR_DIAG_STATE.selfPending = 0;
+    STORY_AVATAR_DIAG_STATE.selfPendingMatched = 0;
     STORY_AVATAR_DIAG_STATE.interceptItems = 0;
     STORY_AVATAR_DIAG_STATE.interceptWithUid = 0;
     STORY_AVATAR_DIAG_STATE.interceptWithAvatar = 0;
@@ -1528,7 +1806,11 @@
     }
     const userId = String(entry.userId || "").trim();
     const lidForOwn = String(entry.liveId || STORY_SOURCE_STATE.liveId || "");
-    const ownPosted = isOwnPostedSupportComment(entry, lidForOwn);
+    const ownPosted = isOwnPostedSupportComment(
+      entry,
+      lidForOwn,
+      STORY_SOURCE_STATE.entries
+    );
     const viewerNick = String(
       watchMetaCache.snapshot?.viewerNickname || ""
     ).trim();
@@ -1681,8 +1963,8 @@
     if (uid) {
       return entriesRelatedForStoryDetail(list, entry, { limit });
     }
-    if (!isOwnPostedSupportComment(entry, liveId)) return [];
-    return list.filter((row) => isOwnPostedSupportComment(row, liveId)).slice(-limit).reverse();
+    if (!isOwnPostedSupportComment(entry, liveId, list)) return [];
+    return list.filter((row) => isOwnPostedSupportComment(row, liveId, list)).slice(-limit).reverse();
   }
   function storyCommentTextPenalty(text) {
     const s = normalizeCommentText(text).replace(/\n+/g, " ").trim();
@@ -1703,12 +1985,14 @@
       const userId = String(next.userId || "").trim() || String(prev.userId || "").trim() || null;
       const nickname = String(next.nickname || "").trim() || String(prev.nickname || "").trim() || "";
       const avatarUrl = String(next.avatarUrl || "").trim() || String(prev.avatarUrl || "").trim() || "";
+      const selfPosted = Boolean(prev.selfPosted) || Boolean(next.selfPosted);
       return {
         ...prev,
         ...preferNextText ? { text: nextText || prevText } : {},
         ...userId ? { userId } : { userId: null },
         ...nickname ? { nickname } : {},
-        ...avatarUrl ? { avatarUrl } : {}
+        ...avatarUrl ? { avatarUrl } : {},
+        ...selfPosted ? { selfPosted: true } : {}
       };
     };
     for (const raw of list) {
@@ -2065,6 +2349,8 @@
     const tags = $("watchTags");
     const audience = $("watchAudience");
     const viewerDomEl = $("watchViewerDom");
+    const concurrentEstEl = $("watchConcurrentEst");
+    const concurrentSubEl = $("watchConcurrentSub");
     const uniqueEl = $("watchUniqueUsers");
     const noIdEl = $("watchCommentsNoId");
     const noteEl = $("watchAudienceNote");
@@ -2077,6 +2363,11 @@
     tags.innerHTML = "";
     if (audience) audience.hidden = true;
     if (viewerDomEl) viewerDomEl.textContent = "\u2014";
+    if (concurrentEstEl) {
+      concurrentEstEl.textContent = "\u2014";
+      concurrentEstEl.removeAttribute("title");
+    }
+    if (concurrentSubEl) concurrentSubEl.textContent = "\u4EBA";
     if (uniqueEl) {
       uniqueEl.textContent = "\u2014";
       uniqueEl.removeAttribute("title");
@@ -2095,6 +2386,8 @@
     const tags = $("watchTags");
     const audience = $("watchAudience");
     const viewerDomEl = $("watchViewerDom");
+    const concurrentEstEl = $("watchConcurrentEst");
+    const concurrentSubEl = $("watchConcurrentSub");
     const uniqueEl = $("watchUniqueUsers");
     const noIdEl = $("watchCommentsNoId");
     const noteEl = $("watchAudienceNote");
@@ -2127,9 +2420,34 @@
     if (viewerDomEl) {
       viewerDomEl.textContent = typeof vc === "number" && Number.isFinite(vc) && vc >= 0 ? String(vc) : "\u2014";
     }
+    const recentActive = typeof snapshot.recentActiveUsers === "number" ? snapshot.recentActiveUsers : 0;
+    if (concurrentEstEl) {
+      if (recentActive > 0) {
+        const est = estimateConcurrentViewers({
+          recentActiveUsers: recentActive,
+          totalVisitors: typeof vc === "number" && vc > 0 ? vc : void 0
+        });
+        concurrentEstEl.textContent = `~${est.estimated}`;
+        concurrentEstEl.title = `\u76F4\u8FD15\u5206\u306E\u30B3\u30E1\u30F3\u30BF\u30FC ${est.activeCommenters}\u4EBA \xD7 ${est.multiplier}`;
+        if (concurrentSubEl) {
+          concurrentSubEl.textContent = `5\u5206\u5185 ${est.activeCommenters}\u4EBA\xD7${est.multiplier}`;
+        }
+      } else {
+        concurrentEstEl.textContent = "\u2014";
+        concurrentEstEl.title = "\u30B3\u30E1\u30F3\u30BF\u30FC\u306E\u30C7\u30FC\u30BF\u304C\u307E\u3060\u3042\u308A\u307E\u305B\u3093";
+        if (concurrentSubEl) concurrentSubEl.textContent = "\u4EBA";
+      }
+    }
     const st = summarizeRecordedCommenters(
       Array.isArray(commentEntries) ? commentEntries : []
     );
+    const lid = String(snapshot?.liveId || STORY_SOURCE_STATE.liveId || "").trim().toLowerCase();
+    const ownMatched = getOwnPostedMatchedIdSet(
+      Array.isArray(commentEntries) ? commentEntries : [],
+      lid
+    ).size;
+    const ownPending = countPendingSelfPostedRecentsForLive(lid);
+    const ownShown = countOwnPostedEntries(commentEntries, lid);
     if (uniqueEl) {
       if (st.uniqueKnownUserIds > 0) {
         uniqueEl.textContent = String(st.uniqueKnownUserIds);
@@ -2145,8 +2463,9 @@
     if (noIdEl) noIdEl.textContent = String(st.commentsWithoutUserId);
     if (noteEl) {
       const parts = [
-        "\u516C\u5F0F\u306E\u6570\u5024\u3067\u306F\u3042\u308A\u307E\u305B\u3093\u3002\u540C\u6642\u63A5\u7D9A\u306F embedded-data / WebSocket / \u30DA\u30FC\u30B8\u518D\u53D6\u5F97\u304B\u3089\u306E\u8AAD\u307F\u53D6\u308A\u3067\u3001\u7D0445\u79D2\u3054\u3068\u306B\u66F4\u65B0\u3055\u308C\u307E\u3059\u3002",
-        "\u30E6\u30CB\u30FC\u30AF\u306F userId \u306E\u7A2E\u985E\u6570\uFF08\u672A\u53D6\u5F97\u6642\u306F https \u306E\u30A2\u30A4\u30B3\u30F3 URL \u306E\u7A2E\u985E\u6570\u3092 \u2248 \u3067\u8868\u793A\uFF09\u3067\u3059\u3002"
+        "\u516C\u5F0F\u306E\u6570\u5024\u3067\u306F\u3042\u308A\u307E\u305B\u3093\u3002\u6765\u5834\u8005\u6570\u306F NDGR / embedded-data \u304B\u3089\u7D0430\u79D2\u66F4\u65B0\u3002",
+        "\u63A8\u5B9A\u540C\u6642\u63A5\u7D9A = \u76F4\u8FD15\u5206\u306E\u30E6\u30CB\u30FC\u30AF\u30B3\u30E1\u30F3\u30BF\u30FC\u6570 \xD7 10\uFF08\u6765\u5834\u8005\u6570\u304C\u4E0A\u9650\uFF09\u3002",
+        "\u30E6\u30CB\u30FC\u30AF\u306F userId \u306E\u7A2E\u985E\u6570\uFF08\u672A\u53D6\u5F97\u6642\u306F https \u30A2\u30A4\u30B3\u30F3 URL \u7A2E\u985E\u6570\u3092 \u2248 \u8868\u793A\uFF09\u3002"
       ];
       const dbg = snapshot?._debug;
       if (dbg) {
@@ -2154,6 +2473,8 @@
           `
 [DEBUG] wsVC=${dbg.wsViewerCount} wsCmt=${dbg.wsCommentCount} wsAge=${dbg.wsAge}ms intcpt=${dbg.intercept} embVC=${dbg.embeddedVC}`
         );
+        parts.push(`
+[SELF] pending=${ownPending} shown=${ownShown} pendingMatch=${ownMatched}`);
         if (dbg.poll) {
           const pl = dbg.poll;
           parts.push(
@@ -2163,7 +2484,7 @@
         }
         parts.push(
           `
-[PI] pi=${dbg.pi || "0"} enq=${dbg.piEnq || "0"} post=${dbg.piPost || "0"} ws=${dbg.piWs || "0"} fetch=${dbg.piFetch || "0"}`
+[PI] pi=${dbg.pi || "0"} enq=${dbg.piEnq || "0"} post=${dbg.piPost || "0"} ws=${dbg.piWs || "0"} fetch=${dbg.piFetch || "0"} xhr=${dbg.piXhr || "0"} phase=${dbg.piPhase || "-"}`
         );
         if (dbg.dom) {
           parts.push(
@@ -2181,9 +2502,21 @@
         }
         parts.push(
           `
-[FIBER] scans=${dbg.fbScans || "0"} found=${dbg.fbFound || "0"} rows=${dbg.fbRows || "0"}
+[FIBER] scans=${dbg.fbScans || "0"} found=${dbg.fbFound || "0"} rows=${dbg.fbRows || "0"} step=${dbg.fbStep || "-"} att=${dbg.fbAttempts || "0"}` + (dbg.fbErr ? ` ERR=${dbg.fbErr}` : "") + `
   probe=${dbg.fbProbe || "-"}`
         );
+        if (dbg.fetchLog) {
+          parts.push(`
+[FETCH] ${dbg.fetchLog}`);
+        }
+        if (dbg.fetchOther) {
+          parts.push(`
+[FETCH-OTHER] ${dbg.fetchOther}`);
+        }
+        if (dbg.ndgr) {
+          parts.push(`
+[NDGR] ${dbg.ndgr}`);
+        }
       }
       noteEl.textContent = parts.join("");
     }
@@ -2503,24 +2836,26 @@
     if (!isHttpOrHttpsUrl(viewerAvatar) && !viewerUid && !broadcasterUid) {
       return { next: entries, patched: 0 };
     }
+    const ownPostedIds = getOwnPostedMatchedIdSet(entries, liveId);
     let patched = 0;
     const next = entries.map((e) => {
       let changed = false;
       const out = { ...e };
+      const isOwn = e?.selfPosted || ownPostedIds.has(popupEntryStableId(e, liveId));
       if (viewerUid && String(e?.userId || "").trim() === viewerUid) {
-        if (!isOwnPostedSupportComment(e, liveId)) {
+        if (!isOwn) {
           delete out.userId;
           changed = true;
         }
       }
       if (broadcasterUid && String(e?.userId || "").trim() === broadcasterUid) {
-        if (!isOwnPostedSupportComment(e, liveId)) {
+        if (!isOwn) {
           delete out.userId;
           changed = true;
         }
       }
       const av = String(e?.avatarUrl || "").trim();
-      if (isHttpOrHttpsUrl(viewerAvatar) && av && isSameAvatarUrl(av, viewerAvatar) && !isOwnPostedSupportComment(e, liveId)) {
+      if (isHttpOrHttpsUrl(viewerAvatar) && av && isSameAvatarUrl(av, viewerAvatar) && !isOwn) {
         delete out.avatarUrl;
         changed = true;
       }
@@ -2717,13 +3052,7 @@
       radioPlayerRow.checked = panelMode === INLINE_PANEL_WIDTH_PLAYER_ROW;
       radioVideoOnly.checked = panelMode === INLINE_PANEL_WIDTH_VIDEO;
     }
-    if (postBtn) postBtn.disabled = true;
-    if (reloadWatchBtn) reloadWatchBtn.disabled = true;
     syncVoiceCommentButton();
-    if (commentInput) {
-      commentInput.placeholder = "watch\u30DA\u30FC\u30B8\u3092\u958B\u304F\u3068\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1\u3067\u304D\u307E\u3059";
-    }
-    setPostStatus("", "idle");
     if (!isNicoLiveWatchUrl(url)) {
       if (liveEl) liveEl.textContent = "\uFF08\u30CB\u30B3\u751Fwatch\u3092\u958B\u3044\u3066\u304F\u3060\u3055\u3044\uFF09";
       setCountDisplay("-");
@@ -2791,7 +3120,7 @@
       renderUserRooms([]);
       return;
     }
-    const snapshotKey = `${lv}|${url}|s12`;
+    const snapshotKey = `${lv}|${url}|s17`;
     if (watchMetaCache.key !== snapshotKey || !watchMetaCache.snapshot) {
       watchMetaCache.key = snapshotKey;
       const { snapshot } = await requestWatchPageSnapshotFromOpenTab(url);
@@ -2813,6 +3142,15 @@
     STORY_AVATAR_DIAG_STATE.withUid = countEntriesWithUserId(arr);
     STORY_AVATAR_DIAG_STATE.withAvatar = countEntriesWithAvatar(arr);
     STORY_AVATAR_DIAG_STATE.uniqueAvatar = countUniqueAvatarEntries(arr);
+    {
+      const resolvedAvatar = countResolvedAvatarEntries(arr, lv);
+      STORY_AVATAR_DIAG_STATE.resolvedAvatar = resolvedAvatar.total;
+      STORY_AVATAR_DIAG_STATE.resolvedUniqueAvatar = resolvedAvatar.unique;
+    }
+    STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(arr, lv);
+    STORY_AVATAR_DIAG_STATE.selfSaved = countSavedOwnPostedEntries(arr);
+    STORY_AVATAR_DIAG_STATE.selfPending = countPendingSelfPostedRecentsForLive(lv);
+    STORY_AVATAR_DIAG_STATE.selfPendingMatched = getOwnPostedMatchedIdSet(arr, lv).size;
     STORY_AVATAR_DIAG_STATE.interceptItems = 0;
     STORY_AVATAR_DIAG_STATE.interceptWithUid = 0;
     STORY_AVATAR_DIAG_STATE.interceptWithAvatar = 0;
@@ -2870,14 +3208,34 @@
         await storageSetSafe({ [key]: arr });
       }
     }
+    const reconciledOwnPosted = reconcileStoredOwnPostedEntries(arr, lv);
+    if (reconciledOwnPosted.changed || reconciledOwnPosted.pendingChanged) {
+      arr = reconciledOwnPosted.next;
+      selfPostedRecentsCache = reconciledOwnPosted.remaining;
+      await storageSetSafe({
+        [key]: arr,
+        [KEY_SELF_POSTED_RECENTS]: { items: selfPostedRecentsCache }
+      });
+    }
     STORY_AVATAR_DIAG_STATE.total = arr.length;
     STORY_AVATAR_DIAG_STATE.withUid = countEntriesWithUserId(arr);
     STORY_AVATAR_DIAG_STATE.withAvatar = countEntriesWithAvatar(arr);
     STORY_AVATAR_DIAG_STATE.uniqueAvatar = countUniqueAvatarEntries(arr);
-    setCountDisplay(String(arr.length));
+    {
+      const resolvedAvatar = countResolvedAvatarEntries(arr, lv);
+      STORY_AVATAR_DIAG_STATE.resolvedAvatar = resolvedAvatar.total;
+      STORY_AVATAR_DIAG_STATE.resolvedUniqueAvatar = resolvedAvatar.unique;
+    }
+    STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(arr, lv);
+    STORY_AVATAR_DIAG_STATE.selfSaved = countSavedOwnPostedEntries(arr);
+    STORY_AVATAR_DIAG_STATE.selfPending = countPendingSelfPostedRecentsForLive(lv);
+    STORY_AVATAR_DIAG_STATE.selfPendingMatched = getOwnPostedMatchedIdSet(arr, lv).size;
+    const displayEntries = buildDisplayCommentEntries(arr, lv);
+    STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(displayEntries, lv);
+    setCountDisplay(String(displayEntries.length));
     renderCommentTicker(
       /** @type {PopupCommentEntry[]} */
-      arr
+      displayEntries
     );
     exportBtn.disabled = false;
     exportBtn.dataset.liveId = lv;
@@ -2894,18 +3252,18 @@
     if (thumbCountEl) {
       thumbCountEl.textContent = stats && stats.ok === true && typeof stats.count === "number" ? String(stats.count) : "0";
     }
-    if (postBtn) postBtn.disabled = false;
+    if (postBtn) postBtn.disabled = COMMENT_POST_UI_STATE.submitting;
     if (reloadWatchBtn) reloadWatchBtn.disabled = false;
     syncVoiceCommentButton();
     if (commentInput) {
       commentInput.placeholder = "\u30B3\u30E1\u30F3\u30C8\u3092\u5165\u529B\u3057\u3066\u9001\u4FE1";
     }
-    syncStorySourceEntries(lv, arr);
+    syncStorySourceEntries(lv, displayEntries);
     renderUserRooms(arr);
     renderCharacterScene({
       hasWatch: true,
       recording: toggle.checked,
-      commentCount: arr.length,
+      commentCount: displayEntries.length,
       liveId: lv,
       snapshot: watchSnapshot
     });
@@ -2914,7 +3272,7 @@
     renderCharacterScene({
       hasWatch: true,
       recording: toggle.checked,
-      commentCount: arr.length,
+      commentCount: displayEntries.length,
       liveId: lv,
       snapshot: watchSnapshot
     });
@@ -3129,19 +3487,34 @@
     let lastDetail = "";
     for (const candidate of candidates) {
       try {
-        const res = await tabsSendMessageWithRetry(
-          candidate.id,
-          {
-            type: "NLS_POST_COMMENT",
-            text: trimmed
-          },
-          { maxAttempts: 40, delayMs: 120 }
-        );
-        if (res?.ok) {
-          return { ok: true, error: "" };
-        }
-        if (res && typeof res === "object" && "error" in res && res.error) {
-          lastDetail = String(res.error);
+        const ranked = await listWatchFramesWithInnerText(candidate.id);
+        const tried = /* @__PURE__ */ new Set();
+        const tryOrder = [...ranked.map((r) => r.frameId), 0];
+        for (const fid of tryOrder) {
+          if (tried.has(fid)) continue;
+          tried.add(fid);
+          try {
+            const res = await tabsSendMessageWithRetry(
+              candidate.id,
+              {
+                type: "NLS_POST_COMMENT",
+                text: trimmed
+              },
+              { frameId: fid, maxAttempts: 5, delayMs: 120 }
+            );
+            if (res?.ok) {
+              return { ok: true, error: "" };
+            }
+            if (res && typeof res === "object" && "error" in res && res.error) {
+              lastDetail = String(res.error);
+            }
+          } catch (e) {
+            const msg = e && typeof e === "object" && "message" in e ? String(
+              /** @type {{ message?: unknown }} */
+              e.message || ""
+            ) : String(e || "");
+            if (msg) lastDetail = msg;
+          }
         }
       } catch (e) {
         const msg = e && typeof e === "object" && "message" in e ? String(
@@ -4040,11 +4413,12 @@
       }
       const lvPost = String(exportBtn.dataset.liveId || "").trim().toLowerCase();
       let optimisticLogged = false;
+      COMMENT_POST_UI_STATE.submitting = true;
       if (postBtn) postBtn.disabled = true;
       syncVoiceCommentButton();
       setPostStatus("\u9001\u4FE1\u4E2D\u2026", "idle");
       try {
-        if (lvPost) {
+        if (lvPost && toggle.checked) {
           await appendSelfPostedComment(lvPost, text);
           optimisticLogged = true;
         }
@@ -4079,6 +4453,7 @@
         if (isExtensionContextInvalidatedError(e) || !hasExtensionContext()) return;
         throw e;
       } finally {
+        COMMENT_POST_UI_STATE.submitting = false;
         if (hasExtensionContext()) {
           if (postBtn) postBtn.disabled = false;
           syncVoiceCommentButton();
@@ -4427,6 +4802,12 @@
       }
       safeRefresh();
     });
+    setInterval(() => {
+      if (!hasExtensionContext()) return;
+      watchMetaCache.key = "";
+      watchMetaCache.snapshot = null;
+      safeRefresh();
+    }, 3e4);
   }
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", initPopup);

@@ -11,6 +11,7 @@ import {
   KEY_POPUP_FRAME,
   KEY_POPUP_FRAME_CUSTOM,
   KEY_RECORDING,
+  KEY_SELF_POSTED_RECENTS,
   KEY_STORAGE_WRITE_ERROR,
   KEY_THUMB_AUTO,
   KEY_THUMB_INTERVAL_MS,
@@ -27,7 +28,7 @@ import {
   isThumbAutoEnabled,
   normalizeThumbIntervalMsForHost
 } from '../lib/thumbSettings.js';
-import { mergeNewComments } from '../lib/commentRecord.js';
+import { mergeNewComments, normalizeCommentText } from '../lib/commentRecord.js';
 import { collectLoggedInViewerProfile } from '../lib/watchPageViewerProfile.js';
 import { extractCommentsFromNode } from '../lib/nicoliveDom.js';
 import {
@@ -57,6 +58,7 @@ import {
   extractEmbeddedDataProps,
   pickViewerCountFromEmbeddedData
 } from '../lib/embeddedDataExtract.js';
+import { countRecentActiveUsers } from '../lib/concurrentEstimate.js';
 
 /**
  * @typedef {{ commentNo: string, text: string, userId: string|null, avatarUrl?: string }} ParsedCommentRow
@@ -69,6 +71,11 @@ const STATS_POLL_MS = 45_000;
 const LIVE_PANEL_SCAN_MS = 2000;
 const DEEP_HARVEST_DELAY_MS = 1200;
 const BOOTSTRAP_DELAYS_MS = [400, 2000, 4500];
+const MAX_SELF_POSTED_ITEMS = 48;
+const SELF_POST_RECENT_TTL_MS = 24 * 60 * 60 * 1000;
+const SELF_POST_NATIVE_DEDUPE_MS = 5000;
+const SELF_POST_MATCH_LATE_MS = 10 * 60 * 1000;
+const SELF_POST_MATCH_EARLY_MS = 30 * 1000;
 const SNAPSHOT_LINK_RELS = new Set([
   'alternate',
   'icon',
@@ -96,6 +103,8 @@ let flushTimer = null;
 let mutationObserver = null;
 /** @type {Element|null} */
 let observedMutationRoot = null;
+let nativeSelfPostRecorderBound = false;
+let lastNativeSelfPost = { liveId: '', textNorm: '', at: 0 };
 let harvestRunning = false;
 /** @type {WeakMap<Element, true>} */
 const scrollHooked = new WeakMap();
@@ -429,9 +438,16 @@ window.addEventListener('pagehide', () => {
 /** page-intercept-entry.js (MAIN world) がキャプチャした commentNo→{userId, nickname} */
 /** @type {Map<string, { uid?: string, name?: string, av?: string }>} */
 const interceptedUsers = new Map();
+/** userId → lastSeenAt（同時接続推定用） */
+/** @type {Map<string, number>} */
+const activeUserTimestamps = new Map();
+const ACTIVE_USER_MAP_MAX = 12000;
 /** userId→nickname の補助マップ */
 /** @type {Map<string, string>} */
 const interceptedNicknames = new Map();
+/** userId→avatarUrl の補助マップ */
+/** @type {Map<string, string>} */
+const interceptedAvatars = new Map();
 const INTERCEPT_MAP_MAX = 8000;
 let broadcasterUidCache = '';
 let broadcasterUidCacheAt = 0;
@@ -469,6 +485,19 @@ window.addEventListener('message', (e) => {
 
   if (e.data.type !== 'NLS_INTERCEPT_USERID') return;
   const entries = e.data.entries;
+  const users = e.data.users;
+  const seenNow = Date.now();
+  if (Array.isArray(users)) {
+    for (const { uid, name, av } of users) {
+      const sUid = String(uid || '').trim();
+      const sName = String(name || '').trim();
+      const sAv = isHttpAvatarUrl(av) ? String(av).trim() : '';
+      if (!sUid) continue;
+      if (sName) interceptedNicknames.set(sUid, sName);
+      if (sAv) interceptedAvatars.set(sUid, sAv);
+      activeUserTimestamps.set(sUid, seenNow);
+    }
+  }
   if (!Array.isArray(entries)) return;
   for (const { no, uid, name, av } of entries) {
     const sNo = String(no || '').trim();
@@ -490,6 +519,16 @@ window.addEventListener('message', (e) => {
       ...(nextAv ? { av: nextAv } : {})
     });
     if (sName && sUid) interceptedNicknames.set(sUid, sName);
+    if (sAv && sUid) interceptedAvatars.set(sUid, sAv);
+    if (sUid) activeUserTimestamps.set(sUid, seenNow);
+  }
+  if (activeUserTimestamps.size > ACTIVE_USER_MAP_MAX) {
+    const excess = activeUserTimestamps.size - ACTIVE_USER_MAP_MAX;
+    const iter = activeUserTimestamps.keys();
+    for (let i = 0; i < excess; i++) {
+      const key = iter.next().value;
+      if (key != null) activeUserTimestamps.delete(key);
+    }
   }
   if (interceptedUsers.size > INTERCEPT_MAP_MAX) {
     const excess = interceptedUsers.size - INTERCEPT_MAP_MAX;
@@ -1307,14 +1346,50 @@ function trySubmitComment(editor) {
   return true;
 }
 
+function canPostCommentInThisFrame() {
+  if (locationAllowsCommentRecording()) return true;
+  return Boolean(findCommentEditorElement());
+}
+
+/**
+ * 送信操作後に入力欄が空になる/別内容へ変わるまで少し待つ。
+ * 「クリックできたが実際には送れていない」を減らすための確認。
+ *
+ * @param {HTMLTextAreaElement|HTMLInputElement|HTMLElement} editor
+ * @param {string} rawText
+ * @returns {Promise<boolean>}
+ */
+async function confirmSubmittedCommentAsync(editor, rawText) {
+  const expected = normalizeCommentText(rawText);
+  if (!expected) return false;
+  const probes = [280, 700, 1400];
+  let waited = 0;
+  for (const probe of probes) {
+    const delta = Math.max(0, probe - waited);
+    waited = probe;
+    if (delta > 0) {
+      await new Promise((r) => setTimeout(r, delta));
+    }
+    const currentEditor =
+      editor.isConnected && isVisibleElement(editor)
+        ? editor
+        : findCommentEditorElement();
+    const currentText = normalizeCommentText(readCommentEditorText(currentEditor));
+    if (!currentText || currentText !== expected) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * React 等が入力値を反映してから送信するまで短い待ちを入れる
  * @param {string} rawText
  * @returns {Promise<{ ok: boolean, error?: string }>}
  */
 async function postCommentFromContentAsync(rawText) {
-  if (!isNicoLiveWatchUrl(window.location.href)) {
-    return { ok: false, error: 'watchページ以外では投稿できません。' };
+  if (!canPostCommentInThisFrame()) {
+    return { ok: false, error: 'コメント欄のあるwatchフレームが見つかりません。' };
   }
   const text = String(rawText || '').trim();
   if (!text) {
@@ -1343,24 +1418,41 @@ async function postCommentFromContentAsync(rawText) {
     });
     await new Promise((r) => setTimeout(r, 220));
 
-    const btn = await pollUntil(() => findVisibleEnabledSubmitForEditor(editor), {
-      timeoutMs: 6500,
-      intervalMs: 80
-    });
-    if (btn) {
-      btn.click();
+    const submitOnce = async () => {
+      const btn = await pollUntil(() => findVisibleEnabledSubmitForEditor(editor), {
+        timeoutMs: 1200,
+        intervalMs: 80
+      });
+      if (btn) {
+        btn.click();
+        return true;
+      }
+      return trySubmitComment(editor);
+    };
+
+    if (!(await submitOnce())) {
+      return {
+        ok: false,
+        error: '送信ボタンが見つかりません。watchページを再読み込みして再試行してください。'
+      };
+    }
+    if (await confirmSubmittedCommentAsync(editor, text)) {
       return { ok: true };
     }
 
-    trySubmitComment(editor);
-    await new Promise((r) => setTimeout(r, 280));
-    const btnLate = findVisibleEnabledSubmitForEditor(editor);
-    if (btnLate) {
-      btnLate.click();
+    if (!(await submitOnce())) {
+      return {
+        ok: false,
+        error: 'コメント送信を確認できませんでした。watchページを開いたまま再試行してください。'
+      };
+    }
+    if (await confirmSubmittedCommentAsync(editor, text)) {
       return { ok: true };
     }
-    trySubmitComment(editor);
-    return { ok: true };
+    return {
+      ok: false,
+      error: 'コメント送信を確認できませんでした。watchページを開いたまま再試行してください。'
+    };
   } catch (err) {
     const message =
       err && typeof err === 'object' && 'message' in err
@@ -1368,6 +1460,152 @@ async function postCommentFromContentAsync(rawText) {
         : 'post_failed';
     return { ok: false, error: message };
   }
+}
+
+/** @param {Element|null|undefined} node */
+function resolveCommentEditorFromTarget(node) {
+  if (!(node instanceof Element)) return null;
+  const direct = node.closest(
+    'textarea, input[type="text"], [contenteditable="true"], [contenteditable="plaintext-only"]'
+  );
+  if (direct instanceof HTMLElement) return direct;
+  return null;
+}
+
+/** @param {HTMLElement|null|undefined} el */
+function readCommentEditorText(el) {
+  if (!el) return '';
+  if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+    return String(el.value || '').trim();
+  }
+  if (el.isContentEditable) {
+    return String(el.textContent || '').trim();
+  }
+  return '';
+}
+
+/** @param {string} rawText */
+async function rememberNativeSelfPostedComment(rawText) {
+  const lid = String(liveId || '').trim().toLowerCase();
+  const textNorm = normalizeCommentText(rawText);
+  if (!lid || !textNorm || !hasExtensionContext()) return;
+  const now = Date.now();
+  if (
+    lastNativeSelfPost.liveId === lid &&
+    lastNativeSelfPost.textNorm === textNorm &&
+    now - lastNativeSelfPost.at < SELF_POST_NATIVE_DEDUPE_MS
+  ) {
+    return;
+  }
+  lastNativeSelfPost = { liveId: lid, textNorm, at: now };
+  try {
+    const bag = await chrome.storage.local.get(KEY_SELF_POSTED_RECENTS);
+    const raw = bag[KEY_SELF_POSTED_RECENTS];
+    const items =
+      raw && typeof raw === 'object' && Array.isArray(raw.items) ? raw.items : [];
+    const next = items.filter(
+      (x) =>
+        x &&
+        typeof x.liveId === 'string' &&
+        typeof x.textNorm === 'string' &&
+        typeof x.at === 'number' &&
+        now - x.at < SELF_POST_RECENT_TTL_MS
+    );
+    const duplicated = next.some(
+      (it) =>
+        String(it.liveId || '').trim().toLowerCase() === lid &&
+        String(it.textNorm || '') === textNorm &&
+        Math.abs(now - (Number(it.at) || 0)) < SELF_POST_NATIVE_DEDUPE_MS
+    );
+    if (duplicated) return;
+    next.push({ liveId: lid, at: now, textNorm });
+    while (next.length > MAX_SELF_POSTED_ITEMS) next.shift();
+    await chrome.storage.local.set({
+      [KEY_SELF_POSTED_RECENTS]: { items: next }
+    });
+  } catch {
+    // no-op
+  }
+}
+
+/**
+ * 送信操作後に入力欄が空になる/変化したことを確認してから self-posted 履歴へ積む。
+ * 「Enter しただけ」「送信失敗」を減らすための遅延確認。
+ *
+ * @param {HTMLElement} editor
+ * @param {string} rawText
+ */
+function scheduleNativeSelfPostedConfirm(editor, rawText) {
+  const expected = normalizeCommentText(rawText);
+  const lid = String(liveId || '').trim().toLowerCase();
+  if (!expected || !lid || !recording) return;
+  const probes = [280, 700, 1400];
+  let done = false;
+  for (const delayMs of probes) {
+    setTimeout(() => {
+      if (done) return;
+      if (!hasExtensionContext()) return;
+      if (!recording) return;
+      if (String(liveId || '').trim().toLowerCase() !== lid) return;
+      const currentEditor =
+        editor.isConnected && isVisibleElement(editor)
+          ? editor
+          : findCommentEditorElement();
+      const currentText = normalizeCommentText(readCommentEditorText(currentEditor));
+      if (currentText && currentText === expected) return;
+      done = true;
+      void rememberNativeSelfPostedComment(rawText);
+    }, delayMs);
+  }
+}
+
+function bindNativeSelfPostedRecorder() {
+  if (nativeSelfPostRecorderBound) return;
+  nativeSelfPostRecorderBound = true;
+
+  document.addEventListener(
+    'click',
+    (ev) => {
+      if (!ev.isTrusted) return;
+      if (!liveId || !recording || !locationAllowsCommentRecording()) return;
+      const target = ev.target;
+      if (!(target instanceof Element)) return;
+      const clickedButton = target.closest('button, [role="button"]');
+      if (!(clickedButton instanceof HTMLElement) || !isVisibleElement(clickedButton)) {
+        return;
+      }
+      const editor = findCommentEditorElement();
+      if (!editor) return;
+      const submit = findVisibleEnabledSubmitForEditor(editor);
+      if (!(submit instanceof HTMLElement) || submit !== clickedButton) return;
+      const text = readCommentEditorText(editor);
+      if (!text) return;
+      scheduleNativeSelfPostedConfirm(editor, text);
+    },
+    true
+  );
+
+  document.addEventListener(
+    'keydown',
+    (ev) => {
+      if (!ev.isTrusted) return;
+      if (ev.key !== 'Enter' || ev.shiftKey || ev.altKey || ev.ctrlKey || ev.metaKey) {
+        return;
+      }
+      if (Boolean(ev.isComposing) || ev.keyCode === 229) return;
+      if (!liveId || !recording || !locationAllowsCommentRecording()) return;
+      const editor = resolveCommentEditorFromTarget(
+        ev.target instanceof Element ? ev.target : null
+      );
+      if (!(editor instanceof HTMLElement) || !isVisibleElement(editor)) return;
+      const current = findCommentEditorElement();
+      if (current && current !== editor) return;
+      const text = readCommentEditorText(editor);
+      if (!text) return;
+      scheduleNativeSelfPostedConfirm(editor, text);
+    },
+    true
+  );
 }
 
 /**
@@ -1635,10 +1873,18 @@ function collectWatchPageSnapshot() {
       _debug.piPost = docEl.getAttribute('data-nls-page-intercept-posted') || '';
       _debug.piWs = docEl.getAttribute('data-nls-page-intercept-ws') || '';
       _debug.piFetch = docEl.getAttribute('data-nls-page-intercept-fetch') || '';
+      _debug.piXhr = docEl.getAttribute('data-nls-page-intercept-xhr') || '';
       _debug.fbScans = docEl.getAttribute('data-nls-fiber-scans') || '';
       _debug.fbFound = docEl.getAttribute('data-nls-fiber-found') || '';
       _debug.fbRows = docEl.getAttribute('data-nls-fiber-rows') || '';
       _debug.fbProbe = docEl.getAttribute('data-nls-fiber-probe') || '';
+      _debug.fbStep = docEl.getAttribute('data-nls-fiber-step') || '';
+      _debug.fbAttempts = docEl.getAttribute('data-nls-fiber-attempts') || '';
+      _debug.fbErr = docEl.getAttribute('data-nls-fiber-err') || '';
+      _debug.fetchLog = docEl.getAttribute('data-nls-fetch-log') || '';
+      _debug.fetchOther = docEl.getAttribute('data-nls-fetch-other') || '';
+      _debug.piPhase = docEl.getAttribute('data-nls-pi-phase') || '';
+      _debug.ndgr = docEl.getAttribute('data-nls-ndgr') || '';
     }
   } catch { /* no-op */ }
 
@@ -1660,6 +1906,7 @@ function collectWatchPageSnapshot() {
     viewerUserId: viewer.viewerUserId,
     broadcasterUserId,
     viewerCountFromDom,
+    recentActiveUsers: countRecentActiveUsers(activeUserTimestamps, Date.now()),
     _debug
   };
 }
@@ -1676,6 +1923,11 @@ function isWatchPageMainFrameForMessages() {
 function buildInterceptCacheExportItems() {
   /** @type {Map<string, string>} */
   const avatarByUid = new Map();
+  for (const [uid, av] of interceptedAvatars) {
+    if (uid && isHttpAvatarUrl(av) && !avatarByUid.has(uid)) {
+      avatarByUid.set(uid, String(av).trim());
+    }
+  }
   for (const v of interceptedUsers.values()) {
     const uid = String(v?.uid || '').trim();
     const av = String(v?.av || '').trim();
@@ -1691,7 +1943,7 @@ function buildInterceptCacheExportItems() {
     const av =
       String(v?.av || '').trim() ||
       String(avatarByUid.get(uid) || '').trim();
-    if (!uid && !isHttpAvatarUrl(av)) continue;
+    if (!uid && !name && !isHttpAvatarUrl(av)) continue;
     items.push({
       no: String(no || '').trim(),
       ...(uid ? { uid } : {}),
@@ -1756,7 +2008,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.type === 'NLS_POST_COMMENT') {
-    if (!isWatchPageMainFrameForMessages()) return;
+    if (!canPostCommentInThisFrame()) return;
     const text =
       'text' in msg ? String(/** @type {{ text?: unknown }} */ (msg).text || '') : '';
     void postCommentFromContentAsync(text)
@@ -1837,6 +2089,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
               ...(name ? { name } : {}),
               ...(av || prevAv ? { av: av || prevAv } : {})
             });
+            if (uid && av) interceptedAvatars.set(uid, av);
           }
         }
         sendResponse({ ok: true, items: buildInterceptCacheExportItems() });
@@ -1919,7 +2172,9 @@ function detectBroadcasterUserIdFromDom() {
  * @returns {{ commentNo: string, text: string, userId: string|null, nickname?: string, avatarUrl?: string }[]}
  */
 function enrichRowsWithInterceptedUserIds(rows) {
-  if (!interceptedUsers.size && !interceptedNicknames.size) return rows;
+  if (!interceptedUsers.size && !interceptedNicknames.size && !interceptedAvatars.size) {
+    return rows;
+  }
   const broadcasterUid = detectBroadcasterUserIdFromDom();
   return rows.map((r) => {
     const no = String(r.commentNo ?? '').trim();
@@ -1932,7 +2187,14 @@ function enrichRowsWithInterceptedUserIds(rows) {
       (interceptedUid && (!rowUid || rowLikelyContaminated) ? interceptedUid : rowUid) ||
       interceptedUid ||
       null;
-    const canUseInterceptMeta = Boolean(interceptedUid && userId === interceptedUid);
+    const canUseInterceptMeta = Boolean(
+      entry &&
+        (
+          (interceptedUid && userId === interceptedUid) ||
+          String(entry?.name || '').trim() ||
+          isHttpAvatarUrl(entry?.av)
+        )
+    );
     const rowNick = r.nickname ? String(r.nickname).trim() : '';
     const nickname =
       (canUseInterceptMeta ? String(entry?.name || '').trim() : '') ||
@@ -1944,6 +2206,8 @@ function enrichRowsWithInterceptedUserIds(rows) {
       rowAv ||
       (canUseInterceptMeta && isHttpAvatarUrl(entry?.av)
         ? String(entry?.av || '').trim()
+        : userId && isHttpAvatarUrl(interceptedAvatars.get(String(userId)))
+          ? String(interceptedAvatars.get(String(userId)) || '').trim()
         : '');
     return {
       ...r,
@@ -1952,6 +2216,102 @@ function enrichRowsWithInterceptedUserIds(rows) {
       ...(av ? { avatarUrl: av } : {})
     };
   });
+}
+
+/**
+ * self-posted 保留キューと、今回新規保存されたコメントを 1対1 で突き合わせて確定させる。
+ * 確定した分は entry.selfPosted=true を焼き込み、保留キューから消費する。
+ *
+ * @param {{ id?: string, text?: string, capturedAt?: number, selfPosted?: boolean }[]} added
+ * @param {{ liveId?: string, at?: number, textNorm?: string }[]} pendingItems
+ * @param {string} lid
+ * @returns {{ markedIds: Set<string>, remainingItems: { liveId?: string, at?: number, textNorm?: string }[], changed: boolean }}
+ */
+function consumeMatchedSelfPostedRecents(added, pendingItems, lid) {
+  const live = String(lid || '').trim().toLowerCase();
+  const rows = Array.isArray(added) ? added : [];
+  const items = Array.isArray(pendingItems) ? pendingItems : [];
+  if (!live || !rows.length || !items.length) {
+    return { markedIds: new Set(), remainingItems: items, changed: false };
+  }
+
+  const recents = items
+    .map((it, itemIndex) => ({
+      itemIndex,
+      liveId: String(it?.liveId || '').trim().toLowerCase(),
+      at: Number(it?.at) || 0,
+      textNorm: String(it?.textNorm || '')
+    }))
+    .filter((it) => it.liveId === live && it.at > 0 && it.textNorm)
+    .sort((a, b) => a.at - b.at || a.itemIndex - b.itemIndex);
+  if (!recents.length) {
+    return { markedIds: new Set(), remainingItems: items, changed: false };
+  }
+
+  /** @type {Map<string, { id: string, capturedAt: number, index: number }[]>} */
+  const byText = new Map();
+  for (let i = 0; i < rows.length; i += 1) {
+    const entry = rows[i];
+    if (entry?.selfPosted) continue;
+    const textNorm = normalizeCommentText(entry?.text);
+    const id = String(entry?.id || '').trim();
+    if (!textNorm || !id) continue;
+    const bucket = byText.get(textNorm) || [];
+    bucket.push({
+      id,
+      capturedAt: Number(entry?.capturedAt || 0),
+      index: i
+    });
+    byText.set(textNorm, bucket);
+  }
+  for (const bucket of byText.values()) {
+    bucket.sort((a, b) => {
+      if (a.capturedAt !== b.capturedAt) return a.capturedAt - b.capturedAt;
+      return a.index - b.index;
+    });
+  }
+
+  const markedIds = new Set();
+  const consumedIndexes = new Set();
+  for (const recent of recents) {
+    const bucket = byText.get(recent.textNorm);
+    if (!bucket?.length) continue;
+    let best = null;
+    let bestScore = Number.POSITIVE_INFINITY;
+    let bestIndex = Number.POSITIVE_INFINITY;
+    for (const candidate of bucket) {
+      if (markedIds.has(candidate.id)) continue;
+      const cap = candidate.capturedAt;
+      if (
+        cap < recent.at - SELF_POST_MATCH_EARLY_MS ||
+        cap > recent.at + SELF_POST_MATCH_LATE_MS
+      ) {
+        continue;
+      }
+      const delta = cap - recent.at;
+      const score =
+        Math.abs(delta) +
+        (delta >= 0 ? 0 : SELF_POST_MATCH_EARLY_MS + 1);
+      if (score < bestScore || (score === bestScore && candidate.index < bestIndex)) {
+        best = candidate;
+        bestScore = score;
+        bestIndex = candidate.index;
+      }
+    }
+    if (!best) continue;
+    markedIds.add(best.id);
+    consumedIndexes.add(recent.itemIndex);
+  }
+
+  if (!markedIds.size && !consumedIndexes.size) {
+    return { markedIds, remainingItems: items, changed: false };
+  }
+
+  return {
+    markedIds,
+    remainingItems: items.filter((_, i) => !consumedIndexes.has(i)),
+    changed: true
+  };
 }
 
 /** @param {ParsedCommentRow[]|null|undefined} rows */
@@ -1968,15 +2328,43 @@ async function persistCommentRows(rows) {
   const enriched = enrichRowsWithInterceptedUserIds(rows);
   const key = commentsStorageKey(liveId);
   try {
-    const bag = await chrome.storage.local.get(key);
+    const bag = await chrome.storage.local.get([key, KEY_SELF_POSTED_RECENTS]);
     const existing = Array.isArray(bag[key]) ? bag[key] : [];
-    const { next, storageTouched } = mergeNewComments(
+    const pendingRaw = bag[KEY_SELF_POSTED_RECENTS];
+    const pendingItems =
+      pendingRaw && typeof pendingRaw === 'object' && Array.isArray(pendingRaw.items)
+        ? pendingRaw.items.filter(
+            (x) =>
+              x &&
+              typeof x.liveId === 'string' &&
+              typeof x.textNorm === 'string' &&
+              typeof x.at === 'number'
+          )
+        : [];
+    const mergedRows = mergeNewComments(
       liveId,
       existing,
       enriched
     );
-    if (!storageTouched) return;
-    await chrome.storage.local.set({ [key]: next });
+    let { next, storageTouched } = mergedRows;
+    const { added } = mergedRows;
+    const consumed = consumeMatchedSelfPostedRecents(added, pendingItems, liveId);
+    if (consumed.markedIds.size) {
+      next = next.map((entry) => {
+        const id = String(entry?.id || '').trim();
+        if (!id || !consumed.markedIds.has(id) || entry?.selfPosted) return entry;
+        return { ...entry, selfPosted: true };
+      });
+      storageTouched = true;
+    }
+    const pendingTouched = consumed.changed;
+    if (!storageTouched && !pendingTouched) return;
+    await chrome.storage.local.set({
+      [key]: next,
+      ...(pendingTouched
+        ? { [KEY_SELF_POSTED_RECENTS]: { items: consumed.remainingItems } }
+        : {})
+    });
     await chrome.storage.local.remove(KEY_STORAGE_WRITE_ERROR);
   } catch (err) {
     if (isContextInvalidatedError(err) || !hasExtensionContext()) return;
@@ -2044,6 +2432,8 @@ function syncLiveIdFromLocation() {
       pendingRoots.clear();
       interceptedUsers.clear();
       interceptedNicknames.clear();
+      interceptedAvatars.clear();
+      activeUserTimestamps.clear();
       broadcasterUidCache = '';
       broadcasterUidCacheAt = 0;
       wsViewerCount = null;
@@ -2076,6 +2466,8 @@ function syncLiveIdFromLocation() {
       pendingRoots.clear();
       interceptedUsers.clear();
       interceptedNicknames.clear();
+      interceptedAvatars.clear();
+      activeUserTimestamps.clear();
       broadcasterUidCache = '';
       broadcasterUidCacheAt = 0;
       wsViewerCount = null;
@@ -2270,19 +2662,22 @@ function canExportWatchSnapshotFromThisFrame() {
 }
 
 const _pollDiag = { ran: 0, ok: 0, err: '', status: 0, htmlLen: 0, wcMatch: '', ccMatch: '' };
+const POLL_TIMEOUT_MS = 12000;
 
 async function pollStatsFromPage() {
   _pollDiag.ran += 1;
+  const ac = typeof AbortController !== 'undefined' ? new AbortController() : null;
+  const tid = ac ? setTimeout(() => ac.abort(), POLL_TIMEOUT_MS) : null;
   try {
     const href = window.location.href;
     if (!href || !href.startsWith('http')) { _pollDiag.err = 'bad-href'; return; }
     const url = new URL(href);
-    url.searchParams.set('_nls_t', String(Date.now()));
+    url.searchParams.delete('_nls_t');
     const resp = await fetch(url.href, {
       credentials: 'same-origin',
-      cache: 'no-store',
-      headers: { 'Accept': 'text/html' }
+      ...(ac ? { signal: ac.signal } : {}),
     });
+    if (tid) clearTimeout(tid);
     _pollDiag.status = resp.status;
     if (!resp.ok) { _pollDiag.err = `http-${resp.status}`; return; }
     let html = await resp.text();
@@ -2313,6 +2708,7 @@ async function pollStatsFromPage() {
     }
     if (!wc && !cc) { _pollDiag.err = 'no-match'; }
   } catch (e) {
+    if (tid) clearTimeout(tid);
     _pollDiag.err = String(e?.message || e || 'unknown').substring(0, 80);
   }
 }
@@ -2324,6 +2720,7 @@ async function start() {
   ensurePageFrameStyle();
   startPageFrameLoop();
   await loadPageFrameSettings().catch(() => {});
+  bindNativeSelfPostedRecorder();
 
   mutationObserver = new MutationObserver((/** @type {MutationRecord[]} */ records) => {
     if (

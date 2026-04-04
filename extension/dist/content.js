@@ -71,6 +71,7 @@
   var KEY_POPUP_FRAME_CUSTOM = "nls_popup_frame_custom";
   var KEY_THUMB_AUTO = "nls_thumb_auto_enabled";
   var KEY_THUMB_INTERVAL_MS = "nls_thumb_interval_ms";
+  var KEY_SELF_POSTED_RECENTS = "nls_self_posted_recents";
   var KEY_INLINE_PANEL_WIDTH_MODE = "nls_inline_panel_width_mode";
   var INLINE_PANEL_WIDTH_PLAYER_ROW = "player_row";
   var INLINE_PANEL_WIDTH_VIDEO = "video";
@@ -1593,6 +1594,18 @@
     return n;
   }
 
+  // src/lib/concurrentEstimate.js
+  var DEFAULT_WINDOW_MS = 5 * 60 * 1e3;
+  function countRecentActiveUsers(userTimestamps, now, windowMs) {
+    const w = typeof windowMs === "number" && windowMs > 0 ? windowMs : DEFAULT_WINDOW_MS;
+    const cutoff = now - w;
+    let count = 0;
+    for (const ts of userTimestamps.values()) {
+      if (ts >= cutoff) count++;
+    }
+    return count;
+  }
+
   // src/extension/content-entry.js
   var DEBOUNCE_MS = 400;
   var LIVE_POLL_MS = 4e3;
@@ -1600,6 +1613,11 @@
   var LIVE_PANEL_SCAN_MS = 2e3;
   var DEEP_HARVEST_DELAY_MS = 1200;
   var BOOTSTRAP_DELAYS_MS = [400, 2e3, 4500];
+  var MAX_SELF_POSTED_ITEMS = 48;
+  var SELF_POST_RECENT_TTL_MS = 24 * 60 * 60 * 1e3;
+  var SELF_POST_NATIVE_DEDUPE_MS = 5e3;
+  var SELF_POST_MATCH_LATE_MS = 10 * 60 * 1e3;
+  var SELF_POST_MATCH_EARLY_MS = 30 * 1e3;
   var SNAPSHOT_LINK_RELS = /* @__PURE__ */ new Set([
     "alternate",
     "icon",
@@ -1616,6 +1634,8 @@
   var flushTimer = null;
   var mutationObserver = null;
   var observedMutationRoot = null;
+  var nativeSelfPostRecorderBound = false;
+  var lastNativeSelfPost = { liveId: "", textNorm: "", at: 0 };
   var harvestRunning = false;
   var scrollHooked = /* @__PURE__ */ new WeakMap();
   var thumbAuto = false;
@@ -1886,7 +1906,10 @@
     nlsVoiceForceStop();
   });
   var interceptedUsers = /* @__PURE__ */ new Map();
+  var activeUserTimestamps = /* @__PURE__ */ new Map();
+  var ACTIVE_USER_MAP_MAX = 12e3;
   var interceptedNicknames = /* @__PURE__ */ new Map();
+  var interceptedAvatars = /* @__PURE__ */ new Map();
   var INTERCEPT_MAP_MAX = 8e3;
   var broadcasterUidCache = "";
   var broadcasterUidCacheAt = 0;
@@ -1914,6 +1937,19 @@
     }
     if (e.data.type !== "NLS_INTERCEPT_USERID") return;
     const entries = e.data.entries;
+    const users = e.data.users;
+    const seenNow = Date.now();
+    if (Array.isArray(users)) {
+      for (const { uid, name, av } of users) {
+        const sUid = String(uid || "").trim();
+        const sName = String(name || "").trim();
+        const sAv = isHttpAvatarUrl(av) ? String(av).trim() : "";
+        if (!sUid) continue;
+        if (sName) interceptedNicknames.set(sUid, sName);
+        if (sAv) interceptedAvatars.set(sUid, sAv);
+        activeUserTimestamps.set(sUid, seenNow);
+      }
+    }
     if (!Array.isArray(entries)) return;
     for (const { no, uid, name, av } of entries) {
       const sNo = String(no || "").trim();
@@ -1935,6 +1971,16 @@
         ...nextAv ? { av: nextAv } : {}
       });
       if (sName && sUid) interceptedNicknames.set(sUid, sName);
+      if (sAv && sUid) interceptedAvatars.set(sUid, sAv);
+      if (sUid) activeUserTimestamps.set(sUid, seenNow);
+    }
+    if (activeUserTimestamps.size > ACTIVE_USER_MAP_MAX) {
+      const excess = activeUserTimestamps.size - ACTIVE_USER_MAP_MAX;
+      const iter = activeUserTimestamps.keys();
+      for (let i = 0; i < excess; i++) {
+        const key = iter.next().value;
+        if (key != null) activeUserTimestamps.delete(key);
+      }
     }
     if (interceptedUsers.size > INTERCEPT_MAP_MAX) {
       const excess = interceptedUsers.size - INTERCEPT_MAP_MAX;
@@ -2601,9 +2647,32 @@
     );
     return true;
   }
+  function canPostCommentInThisFrame() {
+    if (locationAllowsCommentRecording()) return true;
+    return Boolean(findCommentEditorElement());
+  }
+  async function confirmSubmittedCommentAsync(editor, rawText) {
+    const expected = normalizeCommentText(rawText);
+    if (!expected) return false;
+    const probes = [280, 700, 1400];
+    let waited = 0;
+    for (const probe of probes) {
+      const delta = Math.max(0, probe - waited);
+      waited = probe;
+      if (delta > 0) {
+        await new Promise((r) => setTimeout(r, delta));
+      }
+      const currentEditor = editor.isConnected && isVisibleElement(editor) ? editor : findCommentEditorElement();
+      const currentText = normalizeCommentText(readCommentEditorText(currentEditor));
+      if (!currentText || currentText !== expected) {
+        return true;
+      }
+    }
+    return false;
+  }
   async function postCommentFromContentAsync(rawText) {
-    if (!isNicoLiveWatchUrl(window.location.href)) {
-      return { ok: false, error: "watch\u30DA\u30FC\u30B8\u4EE5\u5916\u3067\u306F\u6295\u7A3F\u3067\u304D\u307E\u305B\u3093\u3002" };
+    if (!canPostCommentInThisFrame()) {
+      return { ok: false, error: "\u30B3\u30E1\u30F3\u30C8\u6B04\u306E\u3042\u308Bwatch\u30D5\u30EC\u30FC\u30E0\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093\u3002" };
     }
     const text = String(rawText || "").trim();
     if (!text) {
@@ -2628,23 +2697,39 @@
         requestAnimationFrame(() => requestAnimationFrame(r));
       });
       await new Promise((r) => setTimeout(r, 220));
-      const btn = await pollUntil(() => findVisibleEnabledSubmitForEditor(editor), {
-        timeoutMs: 6500,
-        intervalMs: 80
-      });
-      if (btn) {
-        btn.click();
+      const submitOnce = async () => {
+        const btn = await pollUntil(() => findVisibleEnabledSubmitForEditor(editor), {
+          timeoutMs: 1200,
+          intervalMs: 80
+        });
+        if (btn) {
+          btn.click();
+          return true;
+        }
+        return trySubmitComment(editor);
+      };
+      if (!await submitOnce()) {
+        return {
+          ok: false,
+          error: "\u9001\u4FE1\u30DC\u30BF\u30F3\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093\u3002watch\u30DA\u30FC\u30B8\u3092\u518D\u8AAD\u307F\u8FBC\u307F\u3057\u3066\u518D\u8A66\u884C\u3057\u3066\u304F\u3060\u3055\u3044\u3002"
+        };
+      }
+      if (await confirmSubmittedCommentAsync(editor, text)) {
         return { ok: true };
       }
-      trySubmitComment(editor);
-      await new Promise((r) => setTimeout(r, 280));
-      const btnLate = findVisibleEnabledSubmitForEditor(editor);
-      if (btnLate) {
-        btnLate.click();
+      if (!await submitOnce()) {
+        return {
+          ok: false,
+          error: "\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1\u3092\u78BA\u8A8D\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002watch\u30DA\u30FC\u30B8\u3092\u958B\u3044\u305F\u307E\u307E\u518D\u8A66\u884C\u3057\u3066\u304F\u3060\u3055\u3044\u3002"
+        };
+      }
+      if (await confirmSubmittedCommentAsync(editor, text)) {
         return { ok: true };
       }
-      trySubmitComment(editor);
-      return { ok: true };
+      return {
+        ok: false,
+        error: "\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1\u3092\u78BA\u8A8D\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002watch\u30DA\u30FC\u30B8\u3092\u958B\u3044\u305F\u307E\u307E\u518D\u8A66\u884C\u3057\u3066\u304F\u3060\u3055\u3044\u3002"
+      };
     } catch (err) {
       const message = err && typeof err === "object" && "message" in err ? String(
         /** @type {{ message?: unknown }} */
@@ -2652,6 +2737,118 @@
       ) : "post_failed";
       return { ok: false, error: message };
     }
+  }
+  function resolveCommentEditorFromTarget(node) {
+    if (!(node instanceof Element)) return null;
+    const direct = node.closest(
+      'textarea, input[type="text"], [contenteditable="true"], [contenteditable="plaintext-only"]'
+    );
+    if (direct instanceof HTMLElement) return direct;
+    return null;
+  }
+  function readCommentEditorText(el) {
+    if (!el) return "";
+    if (el instanceof HTMLTextAreaElement || el instanceof HTMLInputElement) {
+      return String(el.value || "").trim();
+    }
+    if (el.isContentEditable) {
+      return String(el.textContent || "").trim();
+    }
+    return "";
+  }
+  async function rememberNativeSelfPostedComment(rawText) {
+    const lid = String(liveId || "").trim().toLowerCase();
+    const textNorm = normalizeCommentText(rawText);
+    if (!lid || !textNorm || !hasExtensionContext()) return;
+    const now = Date.now();
+    if (lastNativeSelfPost.liveId === lid && lastNativeSelfPost.textNorm === textNorm && now - lastNativeSelfPost.at < SELF_POST_NATIVE_DEDUPE_MS) {
+      return;
+    }
+    lastNativeSelfPost = { liveId: lid, textNorm, at: now };
+    try {
+      const bag = await chrome.storage.local.get(KEY_SELF_POSTED_RECENTS);
+      const raw = bag[KEY_SELF_POSTED_RECENTS];
+      const items = raw && typeof raw === "object" && Array.isArray(raw.items) ? raw.items : [];
+      const next = items.filter(
+        (x) => x && typeof x.liveId === "string" && typeof x.textNorm === "string" && typeof x.at === "number" && now - x.at < SELF_POST_RECENT_TTL_MS
+      );
+      const duplicated = next.some(
+        (it) => String(it.liveId || "").trim().toLowerCase() === lid && String(it.textNorm || "") === textNorm && Math.abs(now - (Number(it.at) || 0)) < SELF_POST_NATIVE_DEDUPE_MS
+      );
+      if (duplicated) return;
+      next.push({ liveId: lid, at: now, textNorm });
+      while (next.length > MAX_SELF_POSTED_ITEMS) next.shift();
+      await chrome.storage.local.set({
+        [KEY_SELF_POSTED_RECENTS]: { items: next }
+      });
+    } catch {
+    }
+  }
+  function scheduleNativeSelfPostedConfirm(editor, rawText) {
+    const expected = normalizeCommentText(rawText);
+    const lid = String(liveId || "").trim().toLowerCase();
+    if (!expected || !lid || !recording) return;
+    const probes = [280, 700, 1400];
+    let done = false;
+    for (const delayMs of probes) {
+      setTimeout(() => {
+        if (done) return;
+        if (!hasExtensionContext()) return;
+        if (!recording) return;
+        if (String(liveId || "").trim().toLowerCase() !== lid) return;
+        const currentEditor = editor.isConnected && isVisibleElement(editor) ? editor : findCommentEditorElement();
+        const currentText = normalizeCommentText(readCommentEditorText(currentEditor));
+        if (currentText && currentText === expected) return;
+        done = true;
+        void rememberNativeSelfPostedComment(rawText);
+      }, delayMs);
+    }
+  }
+  function bindNativeSelfPostedRecorder() {
+    if (nativeSelfPostRecorderBound) return;
+    nativeSelfPostRecorderBound = true;
+    document.addEventListener(
+      "click",
+      (ev) => {
+        if (!ev.isTrusted) return;
+        if (!liveId || !recording || !locationAllowsCommentRecording()) return;
+        const target = ev.target;
+        if (!(target instanceof Element)) return;
+        const clickedButton = target.closest('button, [role="button"]');
+        if (!(clickedButton instanceof HTMLElement) || !isVisibleElement(clickedButton)) {
+          return;
+        }
+        const editor = findCommentEditorElement();
+        if (!editor) return;
+        const submit = findVisibleEnabledSubmitForEditor(editor);
+        if (!(submit instanceof HTMLElement) || submit !== clickedButton) return;
+        const text = readCommentEditorText(editor);
+        if (!text) return;
+        scheduleNativeSelfPostedConfirm(editor, text);
+      },
+      true
+    );
+    document.addEventListener(
+      "keydown",
+      (ev) => {
+        if (!ev.isTrusted) return;
+        if (ev.key !== "Enter" || ev.shiftKey || ev.altKey || ev.ctrlKey || ev.metaKey) {
+          return;
+        }
+        if (Boolean(ev.isComposing) || ev.keyCode === 229) return;
+        if (!liveId || !recording || !locationAllowsCommentRecording()) return;
+        const editor = resolveCommentEditorFromTarget(
+          ev.target instanceof Element ? ev.target : null
+        );
+        if (!(editor instanceof HTMLElement) || !isVisibleElement(editor)) return;
+        const current = findCommentEditorElement();
+        if (current && current !== editor) return;
+        const text = readCommentEditorText(editor);
+        if (!text) return;
+        scheduleNativeSelfPostedConfirm(editor, text);
+      },
+      true
+    );
   }
   function collectWatchPageSnapshot() {
     const clean = (v) => String(v || "").replace(/\s+/g, " ").trim();
@@ -2857,10 +3054,18 @@
         _debug.piPost = docEl.getAttribute("data-nls-page-intercept-posted") || "";
         _debug.piWs = docEl.getAttribute("data-nls-page-intercept-ws") || "";
         _debug.piFetch = docEl.getAttribute("data-nls-page-intercept-fetch") || "";
+        _debug.piXhr = docEl.getAttribute("data-nls-page-intercept-xhr") || "";
         _debug.fbScans = docEl.getAttribute("data-nls-fiber-scans") || "";
         _debug.fbFound = docEl.getAttribute("data-nls-fiber-found") || "";
         _debug.fbRows = docEl.getAttribute("data-nls-fiber-rows") || "";
         _debug.fbProbe = docEl.getAttribute("data-nls-fiber-probe") || "";
+        _debug.fbStep = docEl.getAttribute("data-nls-fiber-step") || "";
+        _debug.fbAttempts = docEl.getAttribute("data-nls-fiber-attempts") || "";
+        _debug.fbErr = docEl.getAttribute("data-nls-fiber-err") || "";
+        _debug.fetchLog = docEl.getAttribute("data-nls-fetch-log") || "";
+        _debug.fetchOther = docEl.getAttribute("data-nls-fetch-other") || "";
+        _debug.piPhase = docEl.getAttribute("data-nls-pi-phase") || "";
+        _debug.ndgr = docEl.getAttribute("data-nls-ndgr") || "";
       }
     } catch {
     }
@@ -2882,6 +3087,7 @@
       viewerUserId: viewer.viewerUserId,
       broadcasterUserId,
       viewerCountFromDom,
+      recentActiveUsers: countRecentActiveUsers(activeUserTimestamps, Date.now()),
       _debug
     };
   }
@@ -2894,6 +3100,11 @@
   }
   function buildInterceptCacheExportItems() {
     const avatarByUid = /* @__PURE__ */ new Map();
+    for (const [uid, av] of interceptedAvatars) {
+      if (uid && isHttpAvatarUrl(av) && !avatarByUid.has(uid)) {
+        avatarByUid.set(uid, String(av).trim());
+      }
+    }
     for (const v of interceptedUsers.values()) {
       const uid = String(v?.uid || "").trim();
       const av = String(v?.av || "").trim();
@@ -2905,7 +3116,7 @@
       const uid = String(v?.uid || "").trim();
       const name = String(v?.name || "").trim() || (uid ? String(interceptedNicknames.get(uid) || "").trim() : "");
       const av = String(v?.av || "").trim() || String(avatarByUid.get(uid) || "").trim();
-      if (!uid && !isHttpAvatarUrl(av)) continue;
+      if (!uid && !name && !isHttpAvatarUrl(av)) continue;
       items.push({
         no: String(no || "").trim(),
         ...uid ? { uid } : {},
@@ -2966,7 +3177,7 @@
       return true;
     }
     if (msg.type === "NLS_POST_COMMENT") {
-      if (!isWatchPageMainFrameForMessages()) return;
+      if (!canPostCommentInThisFrame()) return;
       const text = "text" in msg ? String(
         /** @type {{ text?: unknown }} */
         msg.text || ""
@@ -3039,6 +3250,7 @@
                 ...name ? { name } : {},
                 ...av || prevAv ? { av: av || prevAv } : {}
               });
+              if (uid && av) interceptedAvatars.set(uid, av);
             }
           }
           sendResponse({ ok: true, items: buildInterceptCacheExportItems() });
@@ -3105,7 +3317,9 @@
     return broadcasterUidCache;
   }
   function enrichRowsWithInterceptedUserIds(rows) {
-    if (!interceptedUsers.size && !interceptedNicknames.size) return rows;
+    if (!interceptedUsers.size && !interceptedNicknames.size && !interceptedAvatars.size) {
+      return rows;
+    }
     const broadcasterUid = detectBroadcasterUserIdFromDom();
     return rows.map((r) => {
       const no = String(r.commentNo ?? "").trim();
@@ -3114,11 +3328,13 @@
       const interceptedUid = entry?.uid ? String(entry.uid).trim() : "";
       const rowLikelyContaminated = Boolean(rowUid && broadcasterUid && rowUid === broadcasterUid);
       const userId = (interceptedUid && (!rowUid || rowLikelyContaminated) ? interceptedUid : rowUid) || interceptedUid || null;
-      const canUseInterceptMeta = Boolean(interceptedUid && userId === interceptedUid);
+      const canUseInterceptMeta = Boolean(
+        entry && (interceptedUid && userId === interceptedUid || String(entry?.name || "").trim() || isHttpAvatarUrl(entry?.av))
+      );
       const rowNick = r.nickname ? String(r.nickname).trim() : "";
       const nickname = (canUseInterceptMeta ? String(entry?.name || "").trim() : "") || rowNick || (userId ? interceptedNicknames.get(String(userId)) : "") || "";
       const rowAv = String(r.avatarUrl || "").trim();
-      const av = rowAv || (canUseInterceptMeta && isHttpAvatarUrl(entry?.av) ? String(entry?.av || "").trim() : "");
+      const av = rowAv || (canUseInterceptMeta && isHttpAvatarUrl(entry?.av) ? String(entry?.av || "").trim() : userId && isHttpAvatarUrl(interceptedAvatars.get(String(userId))) ? String(interceptedAvatars.get(String(userId)) || "").trim() : "");
       return {
         ...r,
         userId,
@@ -3127,6 +3343,78 @@
       };
     });
   }
+  function consumeMatchedSelfPostedRecents(added, pendingItems, lid) {
+    const live = String(lid || "").trim().toLowerCase();
+    const rows = Array.isArray(added) ? added : [];
+    const items = Array.isArray(pendingItems) ? pendingItems : [];
+    if (!live || !rows.length || !items.length) {
+      return { markedIds: /* @__PURE__ */ new Set(), remainingItems: items, changed: false };
+    }
+    const recents = items.map((it, itemIndex) => ({
+      itemIndex,
+      liveId: String(it?.liveId || "").trim().toLowerCase(),
+      at: Number(it?.at) || 0,
+      textNorm: String(it?.textNorm || "")
+    })).filter((it) => it.liveId === live && it.at > 0 && it.textNorm).sort((a, b) => a.at - b.at || a.itemIndex - b.itemIndex);
+    if (!recents.length) {
+      return { markedIds: /* @__PURE__ */ new Set(), remainingItems: items, changed: false };
+    }
+    const byText = /* @__PURE__ */ new Map();
+    for (let i = 0; i < rows.length; i += 1) {
+      const entry = rows[i];
+      if (entry?.selfPosted) continue;
+      const textNorm = normalizeCommentText(entry?.text);
+      const id = String(entry?.id || "").trim();
+      if (!textNorm || !id) continue;
+      const bucket = byText.get(textNorm) || [];
+      bucket.push({
+        id,
+        capturedAt: Number(entry?.capturedAt || 0),
+        index: i
+      });
+      byText.set(textNorm, bucket);
+    }
+    for (const bucket of byText.values()) {
+      bucket.sort((a, b) => {
+        if (a.capturedAt !== b.capturedAt) return a.capturedAt - b.capturedAt;
+        return a.index - b.index;
+      });
+    }
+    const markedIds = /* @__PURE__ */ new Set();
+    const consumedIndexes = /* @__PURE__ */ new Set();
+    for (const recent of recents) {
+      const bucket = byText.get(recent.textNorm);
+      if (!bucket?.length) continue;
+      let best = null;
+      let bestScore = Number.POSITIVE_INFINITY;
+      let bestIndex = Number.POSITIVE_INFINITY;
+      for (const candidate of bucket) {
+        if (markedIds.has(candidate.id)) continue;
+        const cap = candidate.capturedAt;
+        if (cap < recent.at - SELF_POST_MATCH_EARLY_MS || cap > recent.at + SELF_POST_MATCH_LATE_MS) {
+          continue;
+        }
+        const delta = cap - recent.at;
+        const score = Math.abs(delta) + (delta >= 0 ? 0 : SELF_POST_MATCH_EARLY_MS + 1);
+        if (score < bestScore || score === bestScore && candidate.index < bestIndex) {
+          best = candidate;
+          bestScore = score;
+          bestIndex = candidate.index;
+        }
+      }
+      if (!best) continue;
+      markedIds.add(best.id);
+      consumedIndexes.add(recent.itemIndex);
+    }
+    if (!markedIds.size && !consumedIndexes.size) {
+      return { markedIds, remainingItems: items, changed: false };
+    }
+    return {
+      markedIds,
+      remainingItems: items.filter((_, i) => !consumedIndexes.has(i)),
+      changed: true
+    };
+  }
   async function persistCommentRows(rows) {
     if (!rows?.length || !recording || !liveId || !locationAllowsCommentRecording() || !hasExtensionContext()) {
       return;
@@ -3134,15 +3422,34 @@
     const enriched = enrichRowsWithInterceptedUserIds(rows);
     const key = commentsStorageKey(liveId);
     try {
-      const bag = await chrome.storage.local.get(key);
+      const bag = await chrome.storage.local.get([key, KEY_SELF_POSTED_RECENTS]);
       const existing = Array.isArray(bag[key]) ? bag[key] : [];
-      const { next, storageTouched } = mergeNewComments(
+      const pendingRaw = bag[KEY_SELF_POSTED_RECENTS];
+      const pendingItems = pendingRaw && typeof pendingRaw === "object" && Array.isArray(pendingRaw.items) ? pendingRaw.items.filter(
+        (x) => x && typeof x.liveId === "string" && typeof x.textNorm === "string" && typeof x.at === "number"
+      ) : [];
+      const mergedRows = mergeNewComments(
         liveId,
         existing,
         enriched
       );
-      if (!storageTouched) return;
-      await chrome.storage.local.set({ [key]: next });
+      let { next, storageTouched } = mergedRows;
+      const { added } = mergedRows;
+      const consumed = consumeMatchedSelfPostedRecents(added, pendingItems, liveId);
+      if (consumed.markedIds.size) {
+        next = next.map((entry) => {
+          const id = String(entry?.id || "").trim();
+          if (!id || !consumed.markedIds.has(id) || entry?.selfPosted) return entry;
+          return { ...entry, selfPosted: true };
+        });
+        storageTouched = true;
+      }
+      const pendingTouched = consumed.changed;
+      if (!storageTouched && !pendingTouched) return;
+      await chrome.storage.local.set({
+        [key]: next,
+        ...pendingTouched ? { [KEY_SELF_POSTED_RECENTS]: { items: consumed.remainingItems } } : {}
+      });
       await chrome.storage.local.remove(KEY_STORAGE_WRITE_ERROR);
     } catch (err) {
       if (isContextInvalidatedError(err) || !hasExtensionContext()) return;
@@ -3202,6 +3509,8 @@
         pendingRoots.clear();
         interceptedUsers.clear();
         interceptedNicknames.clear();
+        interceptedAvatars.clear();
+        activeUserTimestamps.clear();
         broadcasterUidCache = "";
         broadcasterUidCacheAt = 0;
         wsViewerCount = null;
@@ -3233,6 +3542,8 @@
         pendingRoots.clear();
         interceptedUsers.clear();
         interceptedNicknames.clear();
+        interceptedAvatars.clear();
+        activeUserTimestamps.clear();
         broadcasterUidCache = "";
         broadcasterUidCacheAt = 0;
         wsViewerCount = null;
@@ -3382,8 +3693,11 @@
     return isNicoVideoJpHost(href);
   }
   var _pollDiag = { ran: 0, ok: 0, err: "", status: 0, htmlLen: 0, wcMatch: "", ccMatch: "" };
+  var POLL_TIMEOUT_MS = 12e3;
   async function pollStatsFromPage() {
     _pollDiag.ran += 1;
+    const ac = typeof AbortController !== "undefined" ? new AbortController() : null;
+    const tid = ac ? setTimeout(() => ac.abort(), POLL_TIMEOUT_MS) : null;
     try {
       const href = window.location.href;
       if (!href || !href.startsWith("http")) {
@@ -3391,12 +3705,12 @@
         return;
       }
       const url = new URL(href);
-      url.searchParams.set("_nls_t", String(Date.now()));
+      url.searchParams.delete("_nls_t");
       const resp = await fetch(url.href, {
         credentials: "same-origin",
-        cache: "no-store",
-        headers: { "Accept": "text/html" }
+        ...ac ? { signal: ac.signal } : {}
       });
+      if (tid) clearTimeout(tid);
       _pollDiag.status = resp.status;
       if (!resp.ok) {
         _pollDiag.err = `http-${resp.status}`;
@@ -3428,6 +3742,7 @@
         _pollDiag.err = "no-match";
       }
     } catch (e) {
+      if (tid) clearTimeout(tid);
       _pollDiag.err = String(e?.message || e || "unknown").substring(0, 80);
     }
   }
@@ -3439,6 +3754,7 @@
     startPageFrameLoop();
     await loadPageFrameSettings().catch(() => {
     });
+    bindNativeSelfPostedRecorder();
     mutationObserver = new MutationObserver((records) => {
       if (!recording || !liveId || !locationAllowsCommentRecording()) {
         return;

@@ -28,6 +28,7 @@ function userIdFromNicoUserIconHttpUrl(url) {
  *   userId?: string|null,
  *   nickname?: string,
  *   avatarUrl?: string,
+ *   selfPosted?: boolean,
  *   capturedAt?: number
  * }} StoredComment
  */
