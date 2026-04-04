@@ -1598,12 +1598,23 @@
     if (!props || typeof props !== "object") return null;
     const candidates = [
       props?.program?.beginAt,
+      props?.program?.beginTime,
       props?.program?.openTime,
+      props?.program?.vposBaseAt,
       props?.program?.schedule?.begin,
-      props?.program?.beginTime
+      props?.program?.schedule?.openTime,
+      props?.socialGroup?.programBeginTime,
+      props?.program?.nicoliveProgramId ? void 0 : void 0
     ];
     for (const c of candidates) {
-      if (c && typeof c === "string" && c.length >= 10) return c;
+      if (c == null) continue;
+      if (typeof c === "string" && c.length >= 10) {
+        const t = new Date(c).getTime();
+        if (Number.isFinite(t) && t > 0) return t;
+      }
+      if (typeof c === "number" && Number.isFinite(c) && c > 0) {
+        return c < 1e12 ? c * 1e3 : c;
+      }
     }
     return null;
   }
@@ -1645,6 +1656,7 @@
   var wsViewerCount = null;
   var wsCommentCount = null;
   var wsViewerCountUpdatedAt = 0;
+  var programBeginAtMs = null;
   var pendingRoots = /* @__PURE__ */ new Set();
   var flushTimer = null;
   var mutationObserver = null;
@@ -1934,6 +1946,14 @@
   window.addEventListener("message", (e) => {
     if (e.source !== window) return;
     if (!e.data || typeof e.data.type !== "string") return;
+    if (e.data.type === "NLS_INTERCEPT_SCHEDULE") {
+      const b = e.data.begin;
+      if (typeof b === "string" && b.length >= 10) {
+        const t = new Date(b).getTime();
+        if (Number.isFinite(t)) programBeginAtMs = t;
+      }
+      return;
+    }
     if (e.data.type === "NLS_INTERCEPT_STATISTICS") {
       const v = e.data.viewers;
       if (typeof v === "number" && Number.isFinite(v) && v >= 0) {
@@ -2983,15 +3003,17 @@
     }
     const _debug = {};
     try {
+      const _edProps = extractEmbeddedDataProps(document);
       Object.assign(_debug, {
         wsViewerCount,
         wsCommentCount,
         wsAge: wsViewerCountUpdatedAt ? Date.now() - wsViewerCountUpdatedAt : -1,
         intercept: interceptedUsers.size,
-        embeddedVC: (() => {
-          const p = extractEmbeddedDataProps(document);
-          return p ? pickViewerCountFromEmbeddedData(p) : null;
-        })(),
+        embeddedVC: _edProps ? pickViewerCountFromEmbeddedData(_edProps) : null,
+        programBeginAtMs,
+        embeddedBeginAt: _edProps ? pickProgramBeginAt(_edProps) : null,
+        startAtText,
+        edProgramKeys: _edProps?.program ? Object.keys(_edProps.program).slice(0, 20).join(",") : "",
         poll: { ..._pollDiag }
       });
       const sels = {
@@ -3108,13 +3130,30 @@
       viewerCountFromDom,
       totalComments: wsCommentCount,
       streamAgeMin: (() => {
+        if (programBeginAtMs != null && Number.isFinite(programBeginAtMs)) {
+          const age = (Date.now() - programBeginAtMs) / 6e4;
+          if (age >= 0) return Math.round(age);
+        }
         const props = extractEmbeddedDataProps(document);
-        const begin = props ? pickProgramBeginAt(props) : null;
-        if (!begin) return null;
-        const t = new Date(begin).getTime();
-        if (!Number.isFinite(t)) return null;
-        const age = (Date.now() - t) / 6e4;
-        return age >= 0 ? Math.round(age) : null;
+        const beginMs = props ? pickProgramBeginAt(props) : null;
+        if (beginMs != null && Number.isFinite(beginMs)) {
+          const age = (Date.now() - beginMs) / 6e4;
+          if (age >= 0) return Math.round(age);
+        }
+        const satm = startAtText.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})\([^)]*\)\s+(\d{1,2}):(\d{2})/);
+        if (satm) {
+          const d = new Date(+satm[1], +satm[2] - 1, +satm[3], +satm[4], +satm[5]);
+          const age = (Date.now() - d.getTime()) / 6e4;
+          if (age >= 0 && age < 1440) return Math.round(age);
+        }
+        try {
+          const playerArea = document.querySelector('[class*="player" i], [class*="Player" i], [id*="player" i], video')?.closest('[class*="player" i], [class*="Player" i], [id*="player" i]') || document.querySelector('[class*="player" i], [class*="Player" i]');
+          const txt = playerArea?.textContent || "";
+          const pm = txt.match(/(\d{1,2}):(\d{2}):(\d{2})\s*\/\s*\d/);
+          if (pm) return +pm[1] * 60 + +pm[2];
+        } catch {
+        }
+        return null;
       })(),
       recentActiveUsers: countRecentActiveUsers(activeUserTimestamps, Date.now()),
       _debug
@@ -3603,6 +3642,7 @@
         broadcasterUidCacheAt = 0;
         wsViewerCount = null;
         wsViewerCountUpdatedAt = 0;
+        programBeginAtMs = null;
         liveId = ctx.liveId;
         reconnectMutationObserver();
         pendingRoots.add(document.body);
@@ -3636,6 +3676,7 @@
         broadcasterUidCacheAt = 0;
         wsViewerCount = null;
         wsViewerCountUpdatedAt = 0;
+        programBeginAtMs = null;
         liveId = next;
         reconnectMutationObserver();
         pendingRoots.add(document.body);

@@ -252,21 +252,112 @@
 
   // src/lib/concurrentEstimate.js
   var DEFAULT_WINDOW_MS = 5 * 60 * 1e3;
-  var DEFAULT_MULTIPLIER = 10;
+  var MULTIPLIER_TABLE = (
+    /** @type {const} */
+    [
+      [50, 4],
+      [200, 5],
+      [500, 6],
+      [1e3, 7],
+      [3e3, 10],
+      [8e3, 15],
+      [2e4, 20],
+      [5e4, 25]
+    ]
+  );
+  var VISITOR_SOFT_CAP_RATIO = 0.35;
+  function dynamicMultiplier(totalVisitors) {
+    if (typeof totalVisitors !== "number" || !Number.isFinite(totalVisitors) || totalVisitors <= 0) {
+      return 7;
+    }
+    const T = MULTIPLIER_TABLE;
+    if (totalVisitors <= T[0][0]) return T[0][1];
+    if (totalVisitors >= T[T.length - 1][0]) return T[T.length - 1][1];
+    for (let i = 0; i < T.length - 1; i++) {
+      if (totalVisitors <= T[i + 1][0]) {
+        const [v0, m0] = T[i];
+        const [v1, m1] = T[i + 1];
+        const t = (Math.log(totalVisitors) - Math.log(v0)) / (Math.log(v1) - Math.log(v0));
+        return Math.round((m0 + t * (m1 - m0)) * 10) / 10;
+      }
+    }
+    return 7;
+  }
+  function retentionRate(ageMin) {
+    if (typeof ageMin !== "number" || !Number.isFinite(ageMin) || ageMin < 0) return 0.4;
+    return Math.max(0.08, 0.48 * Math.exp(-5e-3 * ageMin));
+  }
   function estimateConcurrentViewers({
     recentActiveUsers,
     totalVisitors,
+    streamAgeMin,
     multiplier
   }) {
-    const m = typeof multiplier === "number" && multiplier > 0 ? multiplier : DEFAULT_MULTIPLIER;
     const active = typeof recentActiveUsers === "number" && recentActiveUsers >= 0 ? Math.floor(recentActiveUsers) : 0;
-    let estimated = active * m;
-    let capped = false;
-    if (typeof totalVisitors === "number" && Number.isFinite(totalVisitors) && totalVisitors > 0 && estimated > totalVisitors) {
-      estimated = totalVisitors;
-      capped = true;
+    const hasVisitors = typeof totalVisitors === "number" && Number.isFinite(totalVisitors) && totalVisitors > 0;
+    const hasAge = typeof streamAgeMin === "number" && Number.isFinite(streamAgeMin) && streamAgeMin >= 0;
+    const m = typeof multiplier === "number" && multiplier > 0 ? multiplier : dynamicMultiplier(hasVisitors ? totalVisitors : null);
+    const signalA = active > 0 ? active * m : 0;
+    let signalB = 0;
+    let retPct = (
+      /** @type {number|null} */
+      null
+    );
+    if (hasVisitors && hasAge) {
+      retPct = retentionRate(
+        /** @type {number} */
+        streamAgeMin
+      );
+      signalB = Math.round(
+        /** @type {number} */
+        totalVisitors * retPct
+      );
     }
-    return { estimated, activeCommenters: active, multiplier: m, capped };
+    let estimated = 0;
+    let method = "none";
+    if (signalA > 0 && signalB > 0) {
+      estimated = Math.round(Math.sqrt(signalA * signalB));
+      method = "combined";
+    } else if (signalA > 0) {
+      estimated = Math.round(signalA);
+      method = "active_only";
+    } else if (signalB > 0) {
+      estimated = signalB;
+      method = "retention_only";
+    }
+    let capped = false;
+    if (hasVisitors) {
+      if (method === "active_only") {
+        const softCap = Math.round(
+          /** @type {number} */
+          totalVisitors * VISITOR_SOFT_CAP_RATIO
+        );
+        if (estimated > softCap) {
+          estimated = softCap;
+          capped = true;
+        }
+      }
+      if (estimated > /** @type {number} */
+      totalVisitors) {
+        estimated = /** @type {number} */
+        totalVisitors;
+        capped = true;
+      }
+    }
+    return {
+      estimated,
+      activeCommenters: active,
+      multiplier: m,
+      capped,
+      method,
+      signalA: Math.round(signalA),
+      signalB,
+      retentionPct: retPct != null ? Math.round(retPct * 100) : null,
+      streamAgeMin: hasAge ? (
+        /** @type {number} */
+        streamAgeMin
+      ) : null
+    };
   }
 
   // src/lib/liveAudienceDom.js
@@ -2423,14 +2514,20 @@
     const recentActive = typeof snapshot.recentActiveUsers === "number" ? snapshot.recentActiveUsers : 0;
     if (concurrentEstEl) {
       if (recentActive > 0) {
+        const streamAge = typeof snapshot.streamAgeMin === "number" && snapshot.streamAgeMin >= 0 ? snapshot.streamAgeMin : void 0;
         const est = estimateConcurrentViewers({
           recentActiveUsers: recentActive,
-          totalVisitors: typeof vc === "number" && vc > 0 ? vc : void 0
+          totalVisitors: typeof vc === "number" && vc > 0 ? vc : void 0,
+          streamAgeMin: streamAge
         });
         concurrentEstEl.textContent = `~${est.estimated}`;
-        concurrentEstEl.title = `\u76F4\u8FD15\u5206\u306E\u30B3\u30E1\u30F3\u30BF\u30FC ${est.activeCommenters}\u4EBA \xD7 ${est.multiplier}`;
+        const methodLabel = est.method === "combined" ? "\u8907\u5408" : est.method === "retention_only" ? "\u6EDE\u7559" : "\u30B3\u30E1\u7387";
+        const parts = [`${est.activeCommenters}\u4EBA\xD7${est.multiplier}\u2248${est.signalA}`];
+        if (est.signalB > 0) parts.push(`\u6EDE\u7559${est.retentionPct}%\u2248${est.signalB}`);
+        parts.push(methodLabel);
+        concurrentEstEl.title = parts.join(" | ");
         if (concurrentSubEl) {
-          concurrentSubEl.textContent = `5\u5206\u5185 ${est.activeCommenters}\u4EBA\xD7${est.multiplier}`;
+          concurrentSubEl.textContent = est.method === "combined" ? `${est.activeCommenters}\u4EBA\xD7${est.multiplier} + \u6EDE\u7559${est.retentionPct}%` : `5\u5206\u5185 ${est.activeCommenters}\u4EBA\xD7${est.multiplier}`;
         }
       } else {
         concurrentEstEl.textContent = "\u2014";
@@ -2464,7 +2561,8 @@
     if (noteEl) {
       const parts = [
         "\u516C\u5F0F\u306E\u6570\u5024\u3067\u306F\u3042\u308A\u307E\u305B\u3093\u3002\u6765\u5834\u8005\u6570\u306F NDGR / embedded-data \u304B\u3089\u7D0430\u79D2\u66F4\u65B0\u3002",
-        "\u63A8\u5B9A\u540C\u6642\u63A5\u7D9A = \u76F4\u8FD15\u5206\u306E\u30E6\u30CB\u30FC\u30AF\u30B3\u30E1\u30F3\u30BF\u30FC\u6570 \xD7 10\uFF08\u6765\u5834\u8005\u6570\u304C\u4E0A\u9650\uFF09\u3002",
+        "\u63A8\u5B9A\u540C\u6642\u63A5\u7D9A = \u30B3\u30E1\u30F3\u30BF\u30FC\u6CD5(5\u5206\u30E6\u30CB\u30FC\u30AF\xD7\u52D5\u7684\u500D\u7387) \u3068 \u6EDE\u7559\u6CD5(\u6765\u5834\u8005\xD7\u6B8B\u7559\u7387) \u306E\u5E7E\u4F55\u5E73\u5747\u3002",
+        "\u52D5\u7684\u500D\u7387\u306F\u914D\u4FE1\u898F\u6A21\u30675\u301C28\uFF08\u5927\u898F\u6A21\u307B\u3069\u30B3\u30E1\u7387\u4F4E\u4E0B\uFF09\u3002\u6EDE\u7559\u7387\u306F\u914D\u4FE1\u7D4C\u904E\u6642\u9593\u306748%\u21928%\u6E1B\u8870\u3002",
         "\u30E6\u30CB\u30FC\u30AF\u306F userId \u306E\u7A2E\u985E\u6570\uFF08\u672A\u53D6\u5F97\u6642\u306F https \u30A2\u30A4\u30B3\u30F3 URL \u7A2E\u985E\u6570\u3092 \u2248 \u8868\u793A\uFF09\u3002"
       ];
       const dbg = snapshot?._debug;

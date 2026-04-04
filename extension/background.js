@@ -14,6 +14,10 @@ const KEY_AUTO_BACKUP_STATE = 'nls_auto_backup_state';
 const KEY_LAST_WATCH_URL = 'nls_last_watch_url';
 const AUTO_BACKUP_ALARM = 'nls_auto_backup_every_5m';
 const AUTO_BACKUP_PERIOD_MINUTES = 5;
+const AUTO_BACKUP_DB_NAME = 'nls_auto_backup_v1';
+const AUTO_BACKUP_DB_STORE = 'snapshots';
+const AUTO_BACKUP_DB_VERSION = 1;
+const AUTO_BACKUP_MAX_PER_LIVE = 24;
 
 function commentsStorageKey(liveId) {
   const id = String(liveId || '').trim().toLowerCase();
@@ -56,35 +60,76 @@ function canonicalWatchUrl(liveId, rawUrl) {
   return `https://live.nicovideo.jp/watch/${lid}`;
 }
 
-function formatBackupStamp(at) {
-  const d = new Date(at);
-  const pad = (n) => String(n).padStart(2, '0');
-  return (
-    d.getFullYear() +
-    pad(d.getMonth() + 1) +
-    pad(d.getDate()) +
-    '-' +
-    pad(d.getHours()) +
-    pad(d.getMinutes()) +
-    pad(d.getSeconds())
-  );
+function isIndexedDbAvailable() {
+  return typeof indexedDB !== 'undefined';
 }
 
-function buildAutoBackupFilename(liveId, exportedAt) {
-  const lid = String(liveId || '').trim().toLowerCase();
-  return `nicolivelog-auto/${lid}/nicolivelog-${lid}-${formatBackupStamp(exportedAt)}.json`;
+function openAutoBackupDb() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(AUTO_BACKUP_DB_NAME, AUTO_BACKUP_DB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(AUTO_BACKUP_DB_STORE)) {
+        const store = db.createObjectStore(AUTO_BACKUP_DB_STORE, {
+          keyPath: 'id',
+          autoIncrement: true
+        });
+        store.createIndex('byLive', 'liveId', { unique: false });
+      }
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
 }
 
-function encodeBase64Utf8(text) {
-  const bytes = new TextEncoder().encode(String(text || ''));
-  let binary = '';
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary);
-}
+async function saveInternalAutoBackup(payload) {
+  if (!isIndexedDbAvailable()) return false;
+  const db = await openAutoBackupDb();
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(AUTO_BACKUP_DB_STORE, 'readwrite');
+      const store = tx.objectStore(AUTO_BACKUP_DB_STORE);
+      const idx = store.index('byLive');
+      const liveId = String(payload?.liveId || '').trim().toLowerCase();
 
-function createJsonDataUrl(payload) {
-  const json = JSON.stringify(payload, null, 2);
-  return `data:application/json;charset=utf-8;base64,${encodeBase64Utf8(json)}`;
+      const addReq = store.add({
+        liveId,
+        exportedAt: Number(payload?.exportedAtEpochMs || Date.now()) || Date.now(),
+        updatedAt: Number(payload?.updatedAt || 0) || 0,
+        lastCommentAt: Number(payload?.lastCommentAt || 0) || 0,
+        commentCount: Math.max(0, Number(payload?.commentCount) || 0),
+        watchUrl: String(payload?.watchUrl || '').trim(),
+        payload
+      });
+      addReq.onerror = () => reject(addReq.error);
+      addReq.onsuccess = () => {
+        const getReq = idx.getAll(liveId);
+        getReq.onerror = () => reject(getReq.error);
+        getReq.onsuccess = () => {
+          const all = Array.isArray(getReq.result) ? getReq.result : [];
+          all.sort(
+            (a, b) =>
+              (Number(a?.exportedAt || 0) - Number(b?.exportedAt || 0)) ||
+              (Number(a?.id || 0) - Number(b?.id || 0))
+          );
+          const overflow = Math.max(0, all.length - AUTO_BACKUP_MAX_PER_LIVE);
+          for (let i = 0; i < overflow; i += 1) {
+            const id = Number(all[i]?.id || 0);
+            if (id > 0) store.delete(id);
+          }
+        };
+      };
+
+      tx.oncomplete = () => resolve(undefined);
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+    return true;
+  } catch {
+    return false;
+  } finally {
+    db.close();
+  }
 }
 
 async function ensureAutoBackupAlarm() {
@@ -118,6 +163,7 @@ async function backupLiveCommentsIfNeeded(liveId, meta, lastWatchUrl) {
     kind: 'nicolivelog-auto-backup',
     version: 1,
     exportedAt: new Date(exportedAt).toISOString(),
+    exportedAtEpochMs: exportedAt,
     liveId: lid,
     watchUrl: canonicalWatchUrl(lid, meta?.watchUrl || lastWatchUrl),
     commentCount: comments.length,
@@ -125,12 +171,8 @@ async function backupLiveCommentsIfNeeded(liveId, meta, lastWatchUrl) {
     lastCommentAt: Number(meta?.lastCommentAt) || 0,
     comments
   };
-  await chrome.downloads.download({
-    url: createJsonDataUrl(payload),
-    filename: buildAutoBackupFilename(lid, exportedAt),
-    saveAs: false,
-    conflictAction: 'uniquify'
-  });
+  const saved = await saveInternalAutoBackup(payload);
+  if (!saved) return null;
   return {
     liveId: lid,
     backupAt: exportedAt,

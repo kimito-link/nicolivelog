@@ -3,7 +3,8 @@ import { describe, it, expect } from 'vitest';
 import {
   extractEmbeddedDataProps,
   pickViewerCountFromEmbeddedData,
-  pickWsUrlFromEmbeddedData
+  pickWsUrlFromEmbeddedData,
+  pickProgramBeginAt
 } from './embeddedDataExtract.js';
 
 const SAMPLE_PROPS = JSON.stringify({
@@ -76,5 +77,42 @@ describe('pickWsUrlFromEmbeddedData', () => {
   it('パスが無ければ null', () => {
     expect(pickWsUrlFromEmbeddedData({})).toBeNull();
     expect(pickWsUrlFromEmbeddedData({ site: {} })).toBeNull();
+  });
+});
+
+describe('pickProgramBeginAt', () => {
+  it('ISO 8601 文字列を epoch ms に変換', () => {
+    const props = { program: { beginAt: '2024-08-18T12:28:17+09:00' } };
+    const ms = pickProgramBeginAt(props);
+    expect(ms).toBeTypeOf('number');
+    expect(ms).toBeGreaterThan(0);
+    expect(new Date(ms).getUTCFullYear()).toBe(2024);
+  });
+
+  it('Unix 秒 (< 1e12) を ms に変換', () => {
+    const props = { program: { beginTime: 1723951697 } };
+    const ms = pickProgramBeginAt(props);
+    expect(ms).toBe(1723951697000);
+  });
+
+  it('epoch ms (>= 1e12) はそのまま', () => {
+    const props = { program: { beginTime: 1723951697000 } };
+    expect(pickProgramBeginAt(props)).toBe(1723951697000);
+  });
+
+  it('program.openTime にフォールバック', () => {
+    const props = { program: { openTime: '2024-08-18T12:00:00+09:00' } };
+    expect(pickProgramBeginAt(props)).toBeGreaterThan(0);
+  });
+
+  it('program.schedule.begin にフォールバック', () => {
+    const props = { program: { schedule: { begin: '2024-08-18T12:00:00+09:00' } } };
+    expect(pickProgramBeginAt(props)).toBeGreaterThan(0);
+  });
+
+  it('値が無ければ null', () => {
+    expect(pickProgramBeginAt({})).toBeNull();
+    expect(pickProgramBeginAt({ program: {} })).toBeNull();
+    expect(pickProgramBeginAt(null)).toBeNull();
   });
 });

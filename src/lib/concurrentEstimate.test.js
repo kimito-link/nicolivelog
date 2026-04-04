@@ -2,8 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   countRecentActiveUsers,
   estimateConcurrentViewers,
-  DEFAULT_WINDOW_MS,
-  DEFAULT_MULTIPLIER
+  dynamicMultiplier,
+  retentionRate,
+  DEFAULT_WINDOW_MS
 } from './concurrentEstimate.js';
 
 describe('countRecentActiveUsers', () => {
@@ -49,28 +50,123 @@ describe('countRecentActiveUsers', () => {
   });
 });
 
+describe('dynamicMultiplier', () => {
+  it('visitors が null/undefined/NaN なら 7', () => {
+    expect(dynamicMultiplier(null)).toBe(7);
+    expect(dynamicMultiplier(undefined)).toBe(7);
+    expect(dynamicMultiplier(NaN)).toBe(7);
+    expect(dynamicMultiplier(-1)).toBe(7);
+  });
+
+  it('visitors <= 50 なら 4', () => {
+    expect(dynamicMultiplier(10)).toBe(4);
+    expect(dynamicMultiplier(50)).toBe(4);
+  });
+
+  it('visitors >= 50000 なら 25', () => {
+    expect(dynamicMultiplier(50000)).toBe(25);
+    expect(dynamicMultiplier(100000)).toBe(25);
+  });
+
+  it('較正ポイント: 1000 → 7', () => {
+    expect(dynamicMultiplier(1000)).toBe(7);
+  });
+
+  it('較正ポイント: 3000 → 10', () => {
+    expect(dynamicMultiplier(3000)).toBe(10);
+  });
+
+  it('来場者数が増えると倍率も増加', () => {
+    const m100 = dynamicMultiplier(100);
+    const m1000 = dynamicMultiplier(1000);
+    const m10000 = dynamicMultiplier(10000);
+    expect(m100).toBeLessThan(m1000);
+    expect(m1000).toBeLessThan(m10000);
+  });
+
+  it('でかもも較正: 2580 visitors → 約 9.5', () => {
+    const m = dynamicMultiplier(2580);
+    expect(m).toBeGreaterThan(8.5);
+    expect(m).toBeLessThan(11);
+  });
+
+  it('あかねこ較正: 8000 visitors → 15', () => {
+    expect(dynamicMultiplier(8000)).toBe(15);
+  });
+});
+
+describe('retentionRate', () => {
+  it('0分で約 48%', () => {
+    expect(retentionRate(0)).toBeCloseTo(0.48, 2);
+  });
+
+  it('時間経過で低下', () => {
+    expect(retentionRate(60)).toBeLessThan(retentionRate(0));
+    expect(retentionRate(180)).toBeLessThan(retentionRate(60));
+  });
+
+  it('底値は 8%', () => {
+    expect(retentionRate(2000)).toBeCloseTo(0.08, 2);
+  });
+
+  it('無効値なら 40% フォールバック', () => {
+    expect(retentionRate(NaN)).toBeCloseTo(0.40, 2);
+    expect(retentionRate(-10)).toBeCloseTo(0.40, 2);
+  });
+
+  it('180分で約 20%', () => {
+    const r = retentionRate(180);
+    expect(r).toBeGreaterThan(0.15);
+    expect(r).toBeLessThan(0.25);
+  });
+});
+
 describe('estimateConcurrentViewers', () => {
-  it('アクティブユーザー × デフォルト乗数', () => {
+  it('active のみ（visitors なし）→ active_only, デフォルト倍率=7', () => {
     const r = estimateConcurrentViewers({ recentActiveUsers: 50 });
-    expect(r.estimated).toBe(50 * DEFAULT_MULTIPLIER);
-    expect(r.activeCommenters).toBe(50);
-    expect(r.multiplier).toBe(DEFAULT_MULTIPLIER);
+    expect(r.estimated).toBe(350);
+    expect(r.method).toBe('active_only');
+    expect(r.multiplier).toBe(7);
     expect(r.capped).toBe(false);
   });
 
-  it('カスタム乗数', () => {
+  it('カスタム倍率を指定', () => {
     const r = estimateConcurrentViewers({ recentActiveUsers: 20, multiplier: 15 });
     expect(r.estimated).toBe(300);
     expect(r.multiplier).toBe(15);
+    expect(r.method).toBe('active_only');
   });
 
-  it('来場者数でキャップ', () => {
+  it('visitors 指定で動的倍率', () => {
+    const r = estimateConcurrentViewers({
+      recentActiveUsers: 60,
+      totalVisitors: 8000
+    });
+    expect(r.multiplier).toBe(15);
+    expect(r.method).toBe('active_only');
+    expect(r.estimated).toBeGreaterThan(600);
+  });
+
+  it('visitors + streamAge → combined (幾何平均)', () => {
+    const r = estimateConcurrentViewers({
+      recentActiveUsers: 60,
+      totalVisitors: 8754,
+      streamAgeMin: 173
+    });
+    expect(r.method).toBe('combined');
+    expect(r.signalA).toBeGreaterThan(0);
+    expect(r.signalB).toBeGreaterThan(0);
+    expect(r.retentionPct).toBeGreaterThan(0);
+    expect(r.streamAgeMin).toBe(173);
+  });
+
+  it('来場者数でキャップ（ソフトキャップ→ハードキャップ）', () => {
     const r = estimateConcurrentViewers({
       recentActiveUsers: 100,
       totalVisitors: 500,
       multiplier: 10
     });
-    expect(r.estimated).toBe(500);
+    expect(r.estimated).toBe(Math.round(500 * 0.35));
     expect(r.capped).toBe(true);
   });
 
@@ -78,16 +174,47 @@ describe('estimateConcurrentViewers', () => {
     const r = estimateConcurrentViewers({
       recentActiveUsers: 10,
       totalVisitors: 5000,
-      multiplier: 10
+      multiplier: 5
     });
-    expect(r.estimated).toBe(100);
+    expect(r.estimated).toBe(50);
     expect(r.capped).toBe(false);
   });
 
-  it('アクティブ 0 なら推定 0', () => {
+  it('active_only でソフトキャップ: visitors × 35%', () => {
+    const r = estimateConcurrentViewers({
+      recentActiveUsers: 94,
+      totalVisitors: 1114
+    });
+    expect(r.method).toBe('active_only');
+    expect(r.estimated).toBeLessThanOrEqual(Math.round(1114 * 0.35));
+    expect(r.capped).toBe(true);
+  });
+
+  it('combined ではソフトキャップ不適用（幾何平均で自然に抑制）', () => {
+    const r = estimateConcurrentViewers({
+      recentActiveUsers: 60,
+      totalVisitors: 8754,
+      streamAgeMin: 173
+    });
+    expect(r.method).toBe('combined');
+    expect(r.estimated).toBeGreaterThan(800);
+    expect(r.estimated).toBeLessThan(1400);
+  });
+
+  it('アクティブ 0 / visitors + age あり → retention_only', () => {
+    const r = estimateConcurrentViewers({
+      recentActiveUsers: 0,
+      totalVisitors: 5000,
+      streamAgeMin: 60
+    });
+    expect(r.method).toBe('retention_only');
+    expect(r.estimated).toBeGreaterThan(0);
+  });
+
+  it('すべて 0 なら none, 推定 0', () => {
     const r = estimateConcurrentViewers({ recentActiveUsers: 0 });
     expect(r.estimated).toBe(0);
-    expect(r.activeCommenters).toBe(0);
+    expect(r.method).toBe('none');
   });
 
   it('totalVisitors が無効なら無視', () => {
@@ -95,22 +222,61 @@ describe('estimateConcurrentViewers', () => {
       recentActiveUsers: 10,
       totalVisitors: NaN
     });
-    expect(r.estimated).toBe(100);
-    expect(r.capped).toBe(false);
+    expect(r.estimated).toBe(70);
+    expect(r.method).toBe('active_only');
   });
 
-  it('multiplier が無効ならデフォルト', () => {
+  it('multiplier が無効ならデフォルト動的倍率', () => {
     const r = estimateConcurrentViewers({
       recentActiveUsers: 5,
       multiplier: -1
     });
-    expect(r.estimated).toBe(5 * DEFAULT_MULTIPLIER);
-    expect(r.multiplier).toBe(DEFAULT_MULTIPLIER);
+    expect(r.estimated).toBe(35);
+    expect(r.multiplier).toBe(7);
   });
 
   it('recentActiveUsers が小数の場合は切り捨て', () => {
     const r = estimateConcurrentViewers({ recentActiveUsers: 7.8 });
     expect(r.activeCommenters).toBe(7);
-    expect(r.estimated).toBe(70);
+    expect(r.estimated).toBe(49);
+  });
+
+  it('較正: でかもも 30active, 2580visitors → ~250-350', () => {
+    const r = estimateConcurrentViewers({
+      recentActiveUsers: 30,
+      totalVisitors: 2580
+    });
+    expect(r.estimated).toBeGreaterThan(200);
+    expect(r.estimated).toBeLessThan(400);
+  });
+
+  it('較正: あかねこ 60active, 8754visitors, 173min → ~800-1400', () => {
+    const r = estimateConcurrentViewers({
+      recentActiveUsers: 60,
+      totalVisitors: 8754,
+      streamAgeMin: 173
+    });
+    expect(r.estimated).toBeGreaterThan(800);
+    expect(r.estimated).toBeLessThan(1400);
+  });
+
+  it('較正: あやりん 94active, 1114visitors → ソフトキャップで ~390', () => {
+    const r = estimateConcurrentViewers({
+      recentActiveUsers: 94,
+      totalVisitors: 1114
+    });
+    expect(r.estimated).toBeLessThan(500);
+    expect(r.estimated).toBeGreaterThan(300);
+    expect(r.capped).toBe(true);
+  });
+
+  it('小規模配信: 5 active, 120 visitors, 30min', () => {
+    const r = estimateConcurrentViewers({
+      recentActiveUsers: 5,
+      totalVisitors: 120,
+      streamAgeMin: 30
+    });
+    expect(r.estimated).toBeGreaterThan(15);
+    expect(r.estimated).toBeLessThan(120);
   });
 });

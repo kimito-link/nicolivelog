@@ -48,6 +48,7 @@ import { decodeChunkedMessage, decodePackedSegment } from '../lib/ndgrDecode.js'
 
   const MSG_TYPE = 'NLS_INTERCEPT_USERID';
   const MSG_STATISTICS = 'NLS_INTERCEPT_STATISTICS';
+  const MSG_SCHEDULE = 'NLS_INTERCEPT_SCHEDULE';
 
   /** @type {Map<string, { uid?: string, name?: string, av?: string }>} */
   const batch = new Map();
@@ -394,6 +395,23 @@ import { decodeChunkedMessage, decodePackedSegment } from '../lib/ndgrDecode.js'
     );
   }
 
+  let _scheduleSent = false;
+  /** @param {unknown} obj */
+  function tryForwardSchedule(obj) {
+    if (_scheduleSent) return;
+    if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return;
+    const o = /** @type {Record<string, unknown>} */ (obj);
+    if (o.type !== 'schedule') return;
+    const d = o.data;
+    if (!d || typeof d !== 'object') return;
+    const dd = /** @type {Record<string, unknown>} */ (d);
+    const begin = dd.begin || dd.beginAt || dd.openTime;
+    if (typeof begin === 'string' && begin.length >= 10) {
+      _scheduleSent = true;
+      window.postMessage({ type: MSG_SCHEDULE, begin }, '*');
+    }
+  }
+
   /** @param {unknown} raw */
   function tryProcess(raw) {
     if (typeof raw === 'string') {
@@ -401,6 +419,7 @@ import { decodeChunkedMessage, decodePackedSegment } from '../lib/ndgrDecode.js'
       try {
         const parsed = JSON.parse(raw);
         tryForwardStatistics(parsed);
+        tryForwardSchedule(parsed);
         dig(parsed, 0);
       } catch {
         /* not JSON */

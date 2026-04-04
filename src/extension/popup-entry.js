@@ -2602,14 +2602,23 @@ function renderWatchMetaCard(snapshot, commentEntries = []) {
     : 0;
   if (concurrentEstEl) {
     if (recentActive > 0) {
+      const streamAge = typeof snapshot.streamAgeMin === 'number' && snapshot.streamAgeMin >= 0
+        ? snapshot.streamAgeMin : undefined;
       const est = estimateConcurrentViewers({
         recentActiveUsers: recentActive,
-        totalVisitors: typeof vc === 'number' && vc > 0 ? vc : undefined
+        totalVisitors: typeof vc === 'number' && vc > 0 ? vc : undefined,
+        streamAgeMin: streamAge
       });
       concurrentEstEl.textContent = `~${est.estimated}`;
-      concurrentEstEl.title = `直近5分のコメンター ${est.activeCommenters}人 × ${est.multiplier}`;
+      const methodLabel = est.method === 'combined' ? '複合' : est.method === 'retention_only' ? '滞留' : 'コメ率';
+      const parts = [`${est.activeCommenters}人×${est.multiplier}≈${est.signalA}`];
+      if (est.signalB > 0) parts.push(`滞留${est.retentionPct}%≈${est.signalB}`);
+      parts.push(methodLabel);
+      concurrentEstEl.title = parts.join(' | ');
       if (concurrentSubEl) {
-        concurrentSubEl.textContent = `5分内 ${est.activeCommenters}人×${est.multiplier}`;
+        concurrentSubEl.textContent = est.method === 'combined'
+          ? `${est.activeCommenters}人×${est.multiplier} + 滞留${est.retentionPct}%`
+          : `5分内 ${est.activeCommenters}人×${est.multiplier}`;
       }
     } else {
       concurrentEstEl.textContent = '—';
@@ -2645,7 +2654,8 @@ function renderWatchMetaCard(snapshot, commentEntries = []) {
   if (noteEl) {
     const parts = [
       '公式の数値ではありません。来場者数は NDGR / embedded-data から約30秒更新。',
-      '推定同時接続 = 直近5分のユニークコメンター数 × 10（来場者数が上限）。',
+      '推定同時接続 = コメンター法(5分ユニーク×動的倍率) と 滞留法(来場者×残留率) の幾何平均。',
+      '動的倍率は配信規模で5〜28（大規模ほどコメ率低下）。滞留率は配信経過時間で48%→8%減衰。',
       'ユニークは userId の種類数（未取得時は https アイコン URL 種類数を ≈ 表示）。'
     ];
     const dbg = snapshot?._debug;

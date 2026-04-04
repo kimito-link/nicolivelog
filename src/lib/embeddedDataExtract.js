@@ -54,21 +54,32 @@ export function pickWsUrlFromEmbeddedData(props) {
 }
 
 /**
- * embedded-data props から配信開始時刻(ISO 8601)を取得する。
- * program.beginAt / program.openTime / program.schedule.begin 等を探す。
+ * embedded-data props から配信開始時刻を epoch ms として取得する。
+ * ISO 8601 文字列・Unix 秒・epoch ms のいずれにも対応。
  * @param {Record<string, any>} props
- * @returns {string | null} ISO 8601 文字列 or null
+ * @returns {number | null} epoch ms or null
  */
 export function pickProgramBeginAt(props) {
   if (!props || typeof props !== 'object') return null;
   const candidates = [
     props?.program?.beginAt,
-    props?.program?.openTime,
-    props?.program?.schedule?.begin,
     props?.program?.beginTime,
+    props?.program?.openTime,
+    props?.program?.vposBaseAt,
+    props?.program?.schedule?.begin,
+    props?.program?.schedule?.openTime,
+    props?.socialGroup?.programBeginTime,
+    props?.program?.nicoliveProgramId ? undefined : undefined,
   ];
   for (const c of candidates) {
-    if (c && typeof c === 'string' && c.length >= 10) return c;
+    if (c == null) continue;
+    if (typeof c === 'string' && c.length >= 10) {
+      const t = new Date(c).getTime();
+      if (Number.isFinite(t) && t > 0) return t;
+    }
+    if (typeof c === 'number' && Number.isFinite(c) && c > 0) {
+      return c < 1e12 ? c * 1000 : c;
+    }
   }
   return null;
 }

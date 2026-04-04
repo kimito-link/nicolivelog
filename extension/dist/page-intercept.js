@@ -211,6 +211,7 @@
     window.__NLS_PAGE_INTERCEPT__ = true;
     const MSG_TYPE = "NLS_INTERCEPT_USERID";
     const MSG_STATISTICS = "NLS_INTERCEPT_STATISTICS";
+    const MSG_SCHEDULE = "NLS_INTERCEPT_SCHEDULE";
     const batch = /* @__PURE__ */ new Map();
     const dirtyUsers = /* @__PURE__ */ new Map();
     let timer = null;
@@ -523,12 +524,34 @@
         "*"
       );
     }
+    let _scheduleSent = false;
+    function tryForwardSchedule(obj) {
+      if (_scheduleSent) return;
+      if (!obj || typeof obj !== "object" || Array.isArray(obj)) return;
+      const o = (
+        /** @type {Record<string, unknown>} */
+        obj
+      );
+      if (o.type !== "schedule") return;
+      const d = o.data;
+      if (!d || typeof d !== "object") return;
+      const dd = (
+        /** @type {Record<string, unknown>} */
+        d
+      );
+      const begin = dd.begin || dd.beginAt || dd.openTime;
+      if (typeof begin === "string" && begin.length >= 10) {
+        _scheduleSent = true;
+        window.postMessage({ type: MSG_SCHEDULE, begin }, "*");
+      }
+    }
     function tryProcess(raw) {
       if (typeof raw === "string") {
         if (raw.length < 4 || raw.length > 1e6) return;
         try {
           const parsed = JSON.parse(raw);
           tryForwardStatistics(parsed);
+          tryForwardSchedule(parsed);
           dig(parsed, 0);
         } catch {
         }

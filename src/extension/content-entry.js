@@ -98,6 +98,9 @@ let wsViewerCount = null;
 let wsCommentCount = null;
 /** @type {number} */
 let wsViewerCountUpdatedAt = 0;
+/** WebSocket schedule メッセージから取得した配信開始時刻 (epoch ms) */
+/** @type {number|null} */
+let programBeginAtMs = null;
 /** @type {Set<Element|Node>} */
 const pendingRoots = new Set();
 /** @type {number|null} */
@@ -462,6 +465,15 @@ function isHttpAvatarUrl(v) {
 window.addEventListener('message', (e) => {
   if (e.source !== window) return;
   if (!e.data || typeof e.data.type !== 'string') return;
+
+  if (e.data.type === 'NLS_INTERCEPT_SCHEDULE') {
+    const b = e.data.begin;
+    if (typeof b === 'string' && b.length >= 10) {
+      const t = new Date(b).getTime();
+      if (Number.isFinite(t)) programBeginAtMs = t;
+    }
+    return;
+  }
 
   if (e.data.type === 'NLS_INTERCEPT_STATISTICS') {
     const v = e.data.viewers;
@@ -1794,12 +1806,17 @@ function collectWatchPageSnapshot() {
 
   const _debug = {};
   try {
+    const _edProps = extractEmbeddedDataProps(document);
     Object.assign(_debug, {
       wsViewerCount,
       wsCommentCount,
       wsAge: wsViewerCountUpdatedAt ? Date.now() - wsViewerCountUpdatedAt : -1,
       intercept: interceptedUsers.size,
-      embeddedVC: (() => { const p = extractEmbeddedDataProps(document); return p ? pickViewerCountFromEmbeddedData(p) : null; })(),
+      embeddedVC: _edProps ? pickViewerCountFromEmbeddedData(_edProps) : null,
+      programBeginAtMs,
+      embeddedBeginAt: _edProps ? pickProgramBeginAt(_edProps) : null,
+      startAtText,
+      edProgramKeys: _edProps?.program ? Object.keys(_edProps.program).slice(0, 20).join(',') : '',
       poll: { ..._pollDiag },
     });
     const sels = {
@@ -1915,13 +1932,35 @@ function collectWatchPageSnapshot() {
     viewerCountFromDom,
     totalComments: wsCommentCount,
     streamAgeMin: (() => {
+      // Priority 1: WebSocket schedule message
+      if (programBeginAtMs != null && Number.isFinite(programBeginAtMs)) {
+        const age = (Date.now() - programBeginAtMs) / 60000;
+        if (age >= 0) return Math.round(age);
+      }
+      // Priority 2: embedded-data props
       const props = extractEmbeddedDataProps(document);
-      const begin = props ? pickProgramBeginAt(props) : null;
-      if (!begin) return null;
-      const t = new Date(begin).getTime();
-      if (!Number.isFinite(t)) return null;
-      const age = (Date.now() - t) / 60000;
-      return age >= 0 ? Math.round(age) : null;
+      const beginMs = props ? pickProgramBeginAt(props) : null;
+      if (beginMs != null && Number.isFinite(beginMs)) {
+        const age = (Date.now() - beginMs) / 60000;
+        if (age >= 0) return Math.round(age);
+      }
+      // Priority 3: page title "YYYY/MM/DD(曜) HH:MM開始"
+      const satm = startAtText.match(/(\d{4})\/(\d{1,2})\/(\d{1,2})\([^)]*\)\s+(\d{1,2}):(\d{2})/);
+      if (satm) {
+        const d = new Date(+satm[1], +satm[2] - 1, +satm[3], +satm[4], +satm[5]);
+        const age = (Date.now() - d.getTime()) / 60000;
+        if (age >= 0 && age < 1440) return Math.round(age);
+      }
+      // Priority 4: player elapsed time from narrow DOM scope
+      try {
+        const playerArea = document.querySelector('[class*="player" i], [class*="Player" i], [id*="player" i], video')
+          ?.closest('[class*="player" i], [class*="Player" i], [id*="player" i]')
+          || document.querySelector('[class*="player" i], [class*="Player" i]');
+        const txt = playerArea?.textContent || '';
+        const pm = txt.match(/(\d{1,2}):(\d{2}):(\d{2})\s*\/\s*\d/);
+        if (pm) return +pm[1] * 60 + +pm[2];
+      } catch { /* no-op */ }
+      return null;
     })(),
     recentActiveUsers: countRecentActiveUsers(activeUserTimestamps, Date.now()),
     _debug
@@ -2535,6 +2574,7 @@ function syncLiveIdFromLocation() {
       broadcasterUidCacheAt = 0;
       wsViewerCount = null;
       wsViewerCountUpdatedAt = 0;
+      programBeginAtMs = null;
       liveId = ctx.liveId;
       reconnectMutationObserver();
       pendingRoots.add(document.body);
@@ -2569,6 +2609,7 @@ function syncLiveIdFromLocation() {
       broadcasterUidCacheAt = 0;
       wsViewerCount = null;
       wsViewerCountUpdatedAt = 0;
+      programBeginAtMs = null;
       liveId = next;
       reconnectMutationObserver();
       pendingRoots.add(document.body);
