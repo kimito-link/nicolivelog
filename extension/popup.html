@@ -81,22 +81,64 @@
         max-height: none;
         overflow: visible;
         font-size: var(--nl-base-font, 15px);
+        border: none;
+        outline: none;
+        box-shadow: none;
+      }
+
+      html.nl-inline,
+      html.nl-inline:focus-within {
+        outline: none;
+        box-shadow: none;
       }
 
       html.nl-inline body .nl-main {
         overflow: visible;
+        border: none;
+        outline: none;
+        box-shadow: none;
+      }
+
+      /* フォーカスが内側にあっても「大きな枠」だけ消す（各コントロールの :focus-visible は維持） */
+      html.nl-inline body .nl-main:focus-within,
+      html.nl-inline body section.nl-comment-compose,
+      html.nl-inline body section.nl-comment-compose:focus-within {
+        outline: none !important;
+        box-shadow: none !important;
       }
 
       html.nl-inline body .nl-sub {
         font-size: 11px;
       }
 
+      /* 視聴ページ埋め込み時は「浮いた白箱」枠を付けない（ボーダー・影・大きな角丸を外す） */
       html.nl-inline body .nl-stats,
       html.nl-inline body .nl-record,
       html.nl-inline body .nl-comment-compose,
       html.nl-inline body #userRoomList,
       html.nl-inline body .nl-watch-meta {
-        border-radius: 16px;
+        border: none;
+        border-radius: 0;
+        box-shadow: none;
+      }
+
+      html.nl-inline body .nl-frame-switch {
+        border: none;
+        border-radius: 0;
+        box-shadow: none;
+      }
+
+      html.nl-inline body .nl-capture {
+        border-top: 1px solid color-mix(in srgb, var(--nl-border) 55%, transparent);
+        margin-top: 6px;
+        padding-top: 6px;
+      }
+
+      html.nl-inline body .nl-voice-os-guide {
+        border: none;
+        background: transparent;
+        padding-left: 0;
+        padding-right: 0;
       }
 
       html.nl-inline body #userRoomList li {

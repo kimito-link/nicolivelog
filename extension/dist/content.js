@@ -1344,8 +1344,31 @@
     host.appendChild(iframe);
     return host;
   }
+  function findFrameInsertAnchorFromVideo(base) {
+    if (!(base instanceof HTMLElement)) return base;
+    const viewportArea = Math.max(1, window.innerWidth * window.innerHeight);
+    let best = null;
+    let cur = base;
+    for (let i = 0; i < 8 && cur; i++) {
+      if (cur === document.body || cur === document.documentElement) break;
+      if (cur.querySelector?.(`#${INLINE_POPUP_HOST_ID}`)) {
+        cur = cur.parentElement;
+        continue;
+      }
+      const rect = cur.getBoundingClientRect();
+      const area = rect.width * rect.height;
+      const aspect = rect.width / Math.max(rect.height, 1);
+      if (rect.width >= 260 && rect.height >= 140 && area <= viewportArea * 0.92 && aspect >= 1 && aspect <= 3.4) {
+        const score = area * (1.25 - Math.min(Math.abs(aspect - 1.78), 1.1) * 0.2);
+        if (!best || score > best.score) best = { el: cur, score };
+      }
+      cur = cur.parentElement;
+    }
+    return best?.el || base;
+  }
   function renderInlineHostAnchoredToVideo(video) {
-    const parent = video.parentElement;
+    const insertAfter = findFrameInsertAnchorFromVideo(video);
+    const parent = insertAfter.parentElement;
     if (!parent) return;
     const host = ensureInlinePopupHost();
     const vr = video.getBoundingClientRect();
@@ -1361,9 +1384,10 @@
       { width: pr.width, height: pr.height, top: pr.top, left: pr.left },
       viewport
     );
-    if (host.parentElement !== parent || host.previousSibling !== video) {
-      const next = video.nextSibling;
-      if (next) parent.insertBefore(host, next);
+    const insertNext = insertAfter.nextSibling;
+    const needsMove = host.parentElement !== parent || host.previousSibling !== insertAfter;
+    if (needsMove) {
+      if (insertNext) parent.insertBefore(host, insertNext);
       else parent.appendChild(host);
     }
     host.style.boxSizing = "border-box";

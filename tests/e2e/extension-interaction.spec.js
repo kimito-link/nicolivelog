@@ -7,7 +7,7 @@ const KEY_RECORDING = 'nls_recording_enabled';
 
 /**
  * ヘッド付き（playwright.config の headless: false）で UI が実際に操作できることを確認する。
- * - ツールバー: manifest の action.default_popup で popup.html が開く（MV3 で未設定だとクリックしても何も起きない）
+ * - ツールバー: default_popup は無し（二重表示防止）。popup は chrome-extension://…/popup.html を直接開いて検証
  * - 埋め込み: 視聴ページ内 iframe は cross-origin でも Playwright の frameLocator で操作可能
  */
 test.describe('extension interaction', () => {

@@ -13,8 +13,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "nicolivelog",
-    "default_popup": "popup.html"
+    "default_title": "nicolivelog"
   },
   "content_scripts": [
     {
