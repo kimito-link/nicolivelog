@@ -25,6 +25,9 @@ export const KEY_THUMB_INTERVAL_MS = 'nls_thumb_interval_ms';
 /** 音声入力: 認識終了後に自動でコメント送信するか */
 export const KEY_VOICE_AUTOSEND = 'nls_voice_autosend';
 
+/** ポップアップコメント欄: Enter のみでも送信するか（音声入力メイン向け。既定オフ） */
+export const KEY_COMMENT_ENTER_SEND = 'nls_comment_enter_send';
+
 /** 音声入力: 使用するマイクの deviceId（空は既定） */
 export const KEY_VOICE_INPUT_DEVICE = 'nls_voice_input_device';
 

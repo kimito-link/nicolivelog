@@ -55,6 +55,7 @@
   var KEY_THUMB_AUTO = "nls_thumb_auto_enabled";
   var KEY_THUMB_INTERVAL_MS = "nls_thumb_interval_ms";
   var KEY_VOICE_AUTOSEND = "nls_voice_autosend";
+  var KEY_COMMENT_ENTER_SEND = "nls_comment_enter_send";
   var KEY_VOICE_INPUT_DEVICE = "nls_voice_input_device";
   var KEY_SELF_POSTED_RECENTS = "nls_self_posted_recents";
   var KEY_INLINE_PANEL_WIDTH_MODE = "nls_inline_panel_width_mode";
@@ -68,6 +69,19 @@
   function commentsStorageKey(liveId) {
     const id = String(liveId || "").trim().toLowerCase();
     return `nls_comments_${id}`;
+  }
+
+  // src/lib/commentComposeShortcuts.js
+  function commentComposeKeyAction(p) {
+    if (p.key !== "Enter") return "default";
+    if (p.isComposing) return "default";
+    const mod = Boolean(p.ctrlKey || p.metaKey);
+    if (mod) return "submit";
+    if (p.enterSendsComment) {
+      if (p.shiftKey) return "default";
+      return "submit";
+    }
+    return "default";
   }
 
   // src/lib/voiceInputDevices.js
@@ -1771,6 +1785,15 @@
     const bag = await chrome.storage.local.get(KEY_VOICE_AUTOSEND);
     cb.checked = bag[KEY_VOICE_AUTOSEND] !== false;
   }
+  async function applyCommentEnterSendFromStorage() {
+    const cb = (
+      /** @type {HTMLInputElement|null} */
+      $("commentEnterSend")
+    );
+    if (!cb) return;
+    const bag = await chrome.storage.local.get(KEY_COMMENT_ENTER_SEND);
+    cb.checked = bag[KEY_COMMENT_ENTER_SEND] === true;
+  }
   function setVoiceDeviceCheckStatus(el, text, kind = "idle") {
     if (!el) return;
     el.textContent = text;
@@ -2817,6 +2840,10 @@
       /** @type {HTMLInputElement|null} */
       $("voiceAutoSend")
     );
+    const commentEnterSend = (
+      /** @type {HTMLInputElement|null} */
+      $("commentEnterSend")
+    );
     const voiceDeviceSel = (
       /** @type {HTMLSelectElement|null} */
       $("voiceInputDevice")
@@ -3117,6 +3144,11 @@
         [KEY_VOICE_AUTOSEND]: voiceAutoSend.checked
       });
     });
+    commentEnterSend?.addEventListener("change", async () => {
+      await chrome.storage.local.set({
+        [KEY_COMMENT_ENTER_SEND]: commentEnterSend.checked
+      });
+    });
     voiceDeviceSel?.addEventListener("change", async () => {
       await chrome.storage.local.set({
         [KEY_VOICE_INPUT_DEVICE]: voiceDeviceSel.value
@@ -3339,7 +3371,15 @@
       });
     });
     commentInput?.addEventListener("keydown", (e) => {
-      if (!e.ctrlKey || e.key !== "Enter") return;
+      const action = commentComposeKeyAction({
+        key: e.key,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        shiftKey: e.shiftKey,
+        isComposing: Boolean(e.isComposing) || e.keyCode === 229,
+        enterSendsComment: Boolean(commentEnterSend?.checked)
+      });
+      if (action !== "submit") return;
       e.preventDefault();
       submitComment().catch(() => {
         setPostStatus(
@@ -3358,6 +3398,8 @@
       });
       applyVoiceAutosendFromStorage().catch(() => {
       });
+      applyCommentEnterSendFromStorage().catch(() => {
+      });
       refreshVoiceInputDeviceList().catch(() => {
       });
       safeRefresh();
@@ -3374,6 +3416,10 @@
       }
       if (changes[KEY_VOICE_AUTOSEND]) {
         applyVoiceAutosendFromStorage().catch(() => {
+        });
+      }
+      if (changes[KEY_COMMENT_ENTER_SEND]) {
+        applyCommentEnterSendFromStorage().catch(() => {
         });
       }
       safeRefresh();

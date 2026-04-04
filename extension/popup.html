@@ -211,6 +211,36 @@
         pointer-events: none;
       }
 
+      .nl-header-brand {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        align-items: flex-start;
+        gap: clamp(8px, 2.2vw, 12px);
+      }
+
+      .nl-header-mark {
+        flex-shrink: 0;
+        width: clamp(26px, 7.5vw, 34px);
+        height: auto;
+        max-height: 40px;
+        object-fit: contain;
+        margin-top: 1px;
+        border-radius: 999px;
+        box-shadow: 0 1px 4px rgb(2 6 23 / 22%);
+        opacity: 0.97;
+      }
+
+      .nl-header-titles {
+        flex: 1;
+        min-width: 0;
+      }
+
+      html.nl-inline body .nl-header-mark {
+        width: clamp(24px, 6.5vw, 30px);
+        max-height: 36px;
+      }
+
       .nl-logo {
         position: relative;
         z-index: 1;
@@ -1423,6 +1453,101 @@
         white-space: nowrap;
       }
 
+      .nl-tanuki-voice-hint {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: flex-start;
+        gap: 10px 12px;
+        margin: 10px 0 8px;
+        padding: clamp(8px, 2vw, 11px) clamp(9px, 2.5vw, 12px);
+        border-radius: 12px;
+        background: linear-gradient(
+          145deg,
+          rgb(255 252 248),
+          rgb(255 244 235 / 95%)
+        );
+        border: 1px solid color-mix(in srgb, var(--nl-border) 55%, #c9a574);
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+
+      html.nl-inline body .nl-tanuki-voice-hint {
+        border-style: solid;
+        background: rgb(255 250 245 / 88%);
+      }
+
+      .nl-tanuki-voice-hint-avatar {
+        flex: 0 0 auto;
+        align-self: flex-end;
+        filter: drop-shadow(0 2px 4px rgb(0 0 0 / 10%));
+      }
+
+      .nl-tanuki-voice-hint-img {
+        display: block;
+        width: clamp(52px, 16vw, 72px);
+        height: auto;
+        max-height: 88px;
+        object-fit: contain;
+      }
+
+      .nl-tanuki-voice-hint-bubble {
+        flex: 1 1 min(100%, 11rem);
+        min-width: 0;
+        position: relative;
+        padding: 10px 12px 11px 14px;
+        margin-left: 2px;
+        background: rgb(255 255 255 / 94%);
+        border: 1px solid var(--nl-border);
+        border-radius: 14px;
+        box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
+      }
+
+      .nl-tanuki-voice-hint-bubble::before {
+        content: '';
+        position: absolute;
+        left: -7px;
+        bottom: 16px;
+        width: 12px;
+        height: 12px;
+        background: inherit;
+        border-left: 1px solid var(--nl-border);
+        border-bottom: 1px solid var(--nl-border);
+        transform: rotate(45deg);
+        border-radius: 0 0 0 3px;
+      }
+
+      .nl-tanuki-voice-hint-title {
+        margin: 0 0 6px;
+        font-size: clamp(11px, calc(var(--nl-base-font) * 0.85), 14px);
+        font-weight: 800;
+        color: #6b4a2a;
+        letter-spacing: 0.02em;
+      }
+
+      .nl-tanuki-voice-hint-body {
+        font-size: clamp(10.5px, calc(var(--nl-base-font) * 0.8), 13.5px);
+        line-height: 1.65;
+        color: var(--nl-text);
+      }
+
+      .nl-tanuki-voice-hint-body p {
+        margin: 0 0 8px;
+      }
+
+      .nl-tanuki-voice-hint-body p:last-child {
+        margin-bottom: 0;
+      }
+
+      .nl-tanuki-voice-hint kbd {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.88em;
+        padding: 1px 5px;
+        border-radius: 4px;
+        border: 1px solid var(--nl-border);
+        background: var(--nl-bg-soft);
+        white-space: nowrap;
+      }
+
       .nl-btn-row {
         display: flex;
         flex-wrap: wrap;
@@ -1784,6 +1909,65 @@
         overflow: hidden;
       }
 
+      .nl-powered-by {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: center;
+        gap: 10px 18px;
+        margin: 14px 2px 6px;
+        padding: 16px 10px 12px;
+        border-top: 1px solid color-mix(in srgb, var(--nl-border) 65%, transparent);
+        opacity: 1;
+      }
+
+      .nl-powered-by-label {
+        font-size: clamp(13px, calc(var(--nl-base-font) * 0.92), 17px);
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--nl-muted);
+        white-space: nowrap;
+      }
+
+      .nl-powered-by-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        line-height: 0;
+        text-decoration: none;
+        border-radius: 10px;
+        outline-offset: 3px;
+      }
+
+      .nl-powered-by-link:focus-visible {
+        outline: 2px solid var(--nl-accent);
+      }
+
+      .nl-powered-by-link:hover .nl-powered-by-logo {
+        opacity: 0.92;
+      }
+
+      .nl-powered-by-logo {
+        display: block;
+        height: clamp(36px, 10vw, 56px);
+        width: auto;
+        max-width: min(360px, 96vw);
+        object-fit: contain;
+        object-position: center;
+      }
+
+      html.nl-inline body .nl-powered-by {
+        margin-top: 12px;
+        padding-top: 14px;
+        padding-bottom: 14px;
+      }
+
+      html.nl-inline body .nl-powered-by-logo {
+        height: clamp(34px, 9.5vw, 52px);
+        max-width: min(340px, 95vw);
+      }
+
       @media (max-width: 380px) {
         html,
         body {
@@ -1926,8 +2110,22 @@
   </head>
   <body>
     <header class="nl-header">
-      <div class="nl-logo">nicolivelog</div>
-      <p class="nl-sub">ニコ生の応援コメントを、このPCで見える化（記録は自分でON）</p>
+      <div class="nl-header-brand">
+        <img
+          class="nl-header-mark"
+          src="images/logo/kimito-maru-black.png"
+          alt=""
+          width="32"
+          height="32"
+          decoding="async"
+        />
+        <div class="nl-header-titles">
+          <div class="nl-logo">nicolivelog</div>
+          <p class="nl-sub">
+            ニコ生の応援コメントを、このPCで見える化（記録は自分でON）
+          </p>
+        </div>
+      </div>
     </header>
 
     <div class="nl-main">
@@ -2064,6 +2262,49 @@
           <strong>chrome://extensions</strong>
           を開き、nicolivelog の<strong>「更新」</strong>を押してから、必要なら watch ページも再読み込みしてください（拡張は自動では再読み込みされません）。
         </p>
+        <aside
+          class="nl-tanuki-voice-hint"
+          role="note"
+          aria-labelledby="tanukiVoiceHintTitle"
+        >
+          <div class="nl-tanuki-voice-hint-avatar" aria-hidden="true">
+            <img
+              class="nl-tanuki-voice-hint-img"
+              src="images/yukkuri-charactore-english/tanunee/tanuki-yukkuri-half-eyes-mouth-closed.png"
+              alt=""
+              width="72"
+              height="72"
+              decoding="async"
+            />
+          </div>
+          <div class="nl-tanuki-voice-hint-bubble">
+            <p id="tanukiVoiceHintTitle" class="nl-tanuki-voice-hint-title">
+              たぬ姉
+            </p>
+            <div class="nl-tanuki-voice-hint-body">
+              <p>
+                やあ…たぬ姉だよ。下の入力欄をクリックしてフォーカスしてから話すと、OS
+                の音声入力で文字が入ることが多いよ。
+              </p>
+              <p>
+                <strong>Windows</strong> なら…<kbd>Win</kbd> キーと
+                <kbd>H</kbd> を同時に押すと、音声入力のバーが出ることが多いよ（バージョンで違うかも）。
+              </p>
+              <p>
+                <strong>Mac</strong> なら…「システム設定 → キーボード → 音声入力」をオンにしてから、よくあるのは
+                <kbd>Fn</kbd> を2回、か <kbd>Control</kbd>
+                を2回、だよ。実際のショートカットは設定画面で確認してね。
+              </p>
+              <p>
+                拡張の「音声入力」ボタンが見えないレイアウトでも、この方法なら使えることがあるよ。細かい手順は下の「ガイド」を開いてね。
+              </p>
+              <p>
+                音声メインなら「Enter でも送信」にチェックを…キーボードで打つ人は
+                <kbd>Ctrl</kbd>+<kbd>Enter</kbd>（Mac は <kbd>Cmd</kbd>+<kbd>Enter</kbd>）がおすすめだよ。
+              </p>
+            </div>
+          </div>
+        </aside>
         <details class="nl-voice-os-guide">
           <summary>PCの音声入力でも入れます（ガイド）</summary>
           <div class="nl-voice-os-guide-body">
@@ -2077,7 +2318,9 @@
                 で音声入力を開き、この欄に向かって話す（バージョンにより名称・設定が異なります）。
               </li>
               <li>
-                <strong>Mac</strong>：システム設定のキーボードでディクテーションをオンにし、この欄にフォーカスした状態で入力（ショートカットは機種・設定によります）。
+                <strong>Mac</strong>：システム設定のキーボードで<strong>音声入力</strong>をオンにし、この欄にフォーカスした状態で話す。ショートカットは多くの環境で
+                <kbd>Fn</kbd> を2回、または <kbd>Control</kbd>
+                を2回（設定の「音声入力」パネルで変更・確認できます）。
               </li>
             </ul>
           </div>
@@ -2125,7 +2368,17 @@
             <input type="checkbox" id="voiceAutoSend" checked />
             認識後に送信
           </label>
+          <label
+            class="nl-voice-autosend"
+            title="IME 変換中の Enter は送信しません。Ctrl+Enter / Cmd+Enter は常に送信できます。"
+          >
+            <input type="checkbox" id="commentEnterSend" />
+            Enter でも送信
+          </label>
         </div>
+        <p class="nl-export-note nl-compose-enter-hint" aria-live="polite">
+          音声入力メイン向け。キーボード入力メインは Ctrl+Enter（Mac は Cmd+Enter）推奨。
+        </p>
       </section>
 
       <div class="nl-btn-row">
@@ -2167,6 +2420,26 @@
 
       <h2>応援可視化（ユーザー別）</h2>
       <ul id="userRoomList" aria-live="polite"></ul>
+
+      <footer class="nl-powered-by" role="contentinfo" aria-label="ブランド表記">
+        <span class="nl-powered-by-label">Powered by</span>
+        <a
+          class="nl-powered-by-link"
+          href="https://kimito-link.com/"
+          target="_blank"
+          rel="noopener noreferrer"
+          title="Kimito-Link Project 公式サイト（新しいタブで開きます）"
+        >
+          <img
+            class="nl-powered-by-logo"
+            src="images/logo/kimito-link-color.png"
+            alt="Kimito-Link Project（kimito-link.com を新しいタブで開く）"
+            width="300"
+            height="52"
+            decoding="async"
+          />
+        </a>
+      </footer>
     </div>
 
     <script src="dist/popup.js"></script>

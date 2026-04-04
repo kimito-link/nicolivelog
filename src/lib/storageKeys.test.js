@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  KEY_COMMENT_ENTER_SEND,
   KEY_LAST_WATCH_URL,
   KEY_RECORDING,
   KEY_SELF_POSTED_RECENTS,
@@ -16,6 +17,7 @@ describe('storage key constants', () => {
     expect(KEY_LAST_WATCH_URL).toMatch(/^nls_/);
     expect(KEY_STORAGE_WRITE_ERROR).toMatch(/^nls_/);
     expect(KEY_SELF_POSTED_RECENTS).toMatch(/^nls_/);
+    expect(KEY_COMMENT_ENTER_SEND).toMatch(/^nls_/);
   });
 
   it('commentsStorageKey は trim + 小文字', () => {
