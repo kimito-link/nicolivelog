@@ -67,6 +67,9 @@
     if (s === INLINE_PANEL_WIDTH_VIDEO) return INLINE_PANEL_WIDTH_VIDEO;
     return INLINE_PANEL_WIDTH_PLAYER_ROW;
   }
+  function isCommentEnterSendEnabled(raw) {
+    return raw !== false;
+  }
   function commentsStorageKey(liveId) {
     const id = String(liveId || "").trim().toLowerCase();
     return `nls_comments_${id}`;
@@ -1810,7 +1813,7 @@
     );
     if (!cb) return;
     const bag = await chrome.storage.local.get(KEY_COMMENT_ENTER_SEND);
-    cb.checked = bag[KEY_COMMENT_ENTER_SEND] === true;
+    cb.checked = isCommentEnterSendEnabled(bag[KEY_COMMENT_ENTER_SEND]);
   }
   async function applyStoryGrowthCollapsedFromStorage() {
     const btn = (

@@ -9,6 +9,7 @@ import {
   INLINE_PANEL_WIDTH_PLAYER_ROW,
   INLINE_PANEL_WIDTH_VIDEO,
   commentsStorageKey,
+  isCommentEnterSendEnabled,
   normalizeInlinePanelWidthMode
 } from './storageKeys.js';
 
@@ -37,5 +38,12 @@ describe('storage key constants', () => {
     expect(normalizeInlinePanelWidthMode(INLINE_PANEL_WIDTH_VIDEO)).toBe(
       INLINE_PANEL_WIDTH_VIDEO
     );
+  });
+
+  it('isCommentEnterSendEnabled は false のみ無効（未設定時は既定ON）', () => {
+    expect(isCommentEnterSendEnabled(undefined)).toBe(true);
+    expect(isCommentEnterSendEnabled(null)).toBe(true);
+    expect(isCommentEnterSendEnabled(true)).toBe(true);
+    expect(isCommentEnterSendEnabled(false)).toBe(false);
   });
 });

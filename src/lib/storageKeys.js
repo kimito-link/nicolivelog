@@ -25,7 +25,7 @@ export const KEY_THUMB_INTERVAL_MS = 'nls_thumb_interval_ms';
 /** 音声入力: 認識終了後に自動でコメント送信するか */
 export const KEY_VOICE_AUTOSEND = 'nls_voice_autosend';
 
-/** ポップアップコメント欄: Enter のみでも送信するか（音声入力メイン向け。既定オフ） */
+/** ポップアップコメント欄: Enter のみでも送信するか（ニコ生互換。既定オン） */
 export const KEY_COMMENT_ENTER_SEND = 'nls_comment_enter_send';
 
 /** 応援アイコン列（りんくグリッド）を折りたたむか（true で非表示） */
@@ -48,6 +48,11 @@ export function normalizeInlinePanelWidthMode(raw) {
   const s = String(raw || '').trim();
   if (s === INLINE_PANEL_WIDTH_VIDEO) return INLINE_PANEL_WIDTH_VIDEO;
   return INLINE_PANEL_WIDTH_PLAYER_ROW;
+}
+
+/** @param {unknown} raw */
+export function isCommentEnterSendEnabled(raw) {
+  return raw !== false;
 }
 
 /** @param {string} liveId lv123 */

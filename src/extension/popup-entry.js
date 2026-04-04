@@ -21,6 +21,7 @@ import {
   INLINE_PANEL_WIDTH_PLAYER_ROW,
   INLINE_PANEL_WIDTH_VIDEO,
   commentsStorageKey,
+  isCommentEnterSendEnabled,
   normalizeInlinePanelWidthMode
 } from '../lib/storageKeys.js';
 import { commentComposeKeyAction } from '../lib/commentComposeShortcuts.js';
@@ -1864,7 +1865,7 @@ async function applyCommentEnterSendFromStorage() {
   const cb = /** @type {HTMLInputElement|null} */ ($('commentEnterSend'));
   if (!cb) return;
   const bag = await chrome.storage.local.get(KEY_COMMENT_ENTER_SEND);
-  cb.checked = bag[KEY_COMMENT_ENTER_SEND] === true;
+  cb.checked = isCommentEnterSendEnabled(bag[KEY_COMMENT_ENTER_SEND]);
 }
 
 async function applyStoryGrowthCollapsedFromStorage() {
