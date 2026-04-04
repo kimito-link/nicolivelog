@@ -8,11 +8,40 @@ import { extractPairsFromBinaryUtf8 } from '../lib/interceptBinaryTextExtract.js
 (() => {
   'use strict';
   if (window.__NLS_PAGE_INTERCEPT__) return;
-  const host = String(window.location?.host || '');
-  const path = String(window.location?.pathname || '');
-  const isNicoHost = host.endsWith('.nicovideo.jp') || host === 'nicovideo.jp';
-  const isWatchPage = isNicoHost && (path.startsWith('/watch/') || path.startsWith('/embed/'));
-  const isLocalDev = host === '127.0.0.1:3456' || host === 'localhost:3456';
+  const href = String(window.location?.href || '');
+  const referrer = String(document.referrer || '');
+  /** @param {string} raw */
+  const parseUrl = (raw) => {
+    try {
+      return new URL(String(raw || ''));
+    } catch {
+      return null;
+    }
+  };
+  /** @param {string} h */
+  const isNicoHost = (h) =>
+    String(h || '').endsWith('.nicovideo.jp') || String(h || '') === 'nicovideo.jp';
+  /** @param {string} h */
+  const isLocalHost = (h) =>
+    String(h || '') === '127.0.0.1:3456' || String(h || '') === 'localhost:3456';
+  /** @param {string} p */
+  const isWatchLikePath = (p) =>
+    String(p || '').startsWith('/watch/') || String(p || '').startsWith('/embed/');
+  const here = parseUrl(href);
+  const ref = parseUrl(referrer);
+  const host = String(here?.host || window.location?.host || '');
+  const path = String(here?.pathname || window.location?.pathname || '');
+  const isAboutLikeFrame = /^(about:blank|about:srcdoc|blob:|data:)/i.test(href);
+  const isRefWatchPage = Boolean(
+    ref &&
+      (isNicoHost(ref.host) || isLocalHost(ref.host)) &&
+      isWatchLikePath(ref.pathname)
+  );
+  const isWatchPage =
+    (isNicoHost(host) && isWatchLikePath(path)) ||
+    (isAboutLikeFrame && isRefWatchPage);
+  const isLocalDev =
+    isLocalHost(host) || (isAboutLikeFrame && Boolean(ref && isLocalHost(ref.host)));
   if (!isWatchPage && !isLocalDev) return;
   window.__NLS_PAGE_INTERCEPT__ = true;
 
@@ -23,6 +52,28 @@ import { extractPairsFromBinaryUtf8 } from '../lib/interceptBinaryTextExtract.js
   const batch = new Map();
   /** @type {number|null} */
   let timer = null;
+  const diag = {
+    enqueued: 0,
+    posted: 0,
+    wsMessages: 0,
+    fetchHits: 0
+  };
+
+  function publishDiag() {
+    const root = document.documentElement;
+    if (!root) return;
+    root.setAttribute('data-nls-page-intercept', '1');
+    root.setAttribute('data-nls-page-intercept-enqueued', String(diag.enqueued));
+    root.setAttribute('data-nls-page-intercept-posted', String(diag.posted));
+    root.setAttribute('data-nls-page-intercept-ws', String(diag.wsMessages));
+    root.setAttribute('data-nls-page-intercept-fetch', String(diag.fetchHits));
+    if (href) root.setAttribute('data-nls-page-intercept-href', href.slice(0, 240));
+    if (referrer) {
+      root.setAttribute('data-nls-page-intercept-referrer', referrer.slice(0, 240));
+    }
+  }
+
+  publishDiag();
 
   /** userId→nickname の補助マップ（ユーザー情報メッセージ用） */
   /** @type {Map<string, string>} */
@@ -51,6 +102,8 @@ import { extractPairsFromBinaryUtf8 } from '../lib/interceptBinaryTextExtract.js
     }
     batch.clear();
     if (entries.length > 0) {
+      diag.posted += entries.length;
+      publishDiag();
       window.postMessage({ type: MSG_TYPE, entries }, '*');
     }
   }
@@ -68,6 +121,8 @@ import { extractPairsFromBinaryUtf8 } from '../lib/interceptBinaryTextExtract.js
     const name = String(nickname ?? '').trim();
     const av = normalizeAvatarUrl(avatarUrl);
     if (!uid && !name && !av) return;
+    diag.enqueued += 1;
+    publishDiag();
     if (name && uid) knownNames.set(uid, name);
     if (av && uid) knownAvatars.set(uid, av);
     const prev = batch.get(no);
@@ -302,6 +357,8 @@ import { extractPairsFromBinaryUtf8 } from '../lib/interceptBinaryTextExtract.js
         const ws = new target(...args);
         ws.addEventListener('message', (/** @type {MessageEvent} */ e) => {
           try {
+            diag.wsMessages += 1;
+            publishDiag();
             tryProcess(e.data);
           } catch {
             /* never break the page */
@@ -322,12 +379,7 @@ import { extractPairsFromBinaryUtf8 } from '../lib/interceptBinaryTextExtract.js
   const origFetch = window.fetch;
   if (typeof origFetch === 'function') {
     window.fetch = function (...args) {
-      let p;
-      try {
-        p = origFetch.apply(this, args);
-      } catch (syncErr) {
-        throw syncErr;
-      }
+      const p = origFetch.apply(this, args);
       void (async () => {
         try {
           const res = await p;
@@ -337,14 +389,30 @@ import { extractPairsFromBinaryUtf8 } from '../lib/interceptBinaryTextExtract.js
             url.includes('nimg.jp') ||
             url.includes('dmc.nico') ||
             url.includes('nicolive') ||
+            url.includes('ndgr') ||
             url.includes('127.0.0.1:3456') ||
             url.includes('localhost:3456');
-          if (isNico) {
-            const ct = res.headers?.get('content-type') || '';
-            if (ct.includes('json') || ct.includes('protobuf') || ct.includes('octet')) {
-              const clone = res.clone();
-              try { tryProcess(await clone.arrayBuffer()); } catch { /* no-op */ }
-            }
+          if (!isNico) return;
+          diag.fetchHits += 1;
+          publishDiag();
+          const ct = res.headers?.get('content-type') || '';
+          const isBinary = ct.includes('protobuf') || ct.includes('octet') || ct.includes('grpc');
+          const isJson = ct.includes('json');
+          if (!isBinary && !isJson) return;
+          const clone = res.clone();
+          if (isBinary && clone.body) {
+            const reader = clone.body.getReader();
+            void (async () => {
+              try {
+                for (;;) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  if (value) tryProcessBinaryBuffer(value);
+                }
+              } catch { /* stream end */ }
+            })();
+          } else {
+            try { tryProcess(await clone.arrayBuffer()); } catch { /* no-op */ }
           }
         } catch {
           /* fetch rejection — ignore */

@@ -4,7 +4,10 @@
 
 const MAX_REASONABLE_VIEWERS = 12_000_000;
 
-/** 全角数字・全角カンマを半角に（表記ゆれ対策） */
+/**
+ * 全角数字・全角カンマを半角に（表記ゆれ対策）
+ * @param {string} text
+ */
 export function normalizeDigitsForViewerScan(text) {
   let s = String(text || '');
   const fw = '０１２３４５６７８９，';
@@ -22,6 +25,7 @@ export function normalizeDigitsForViewerScan(text) {
  */
 export function gatherWatchPageTextForViewerScan(doc) {
   if (!doc) return '';
+  /** @type {string[]} */
   const chunks = [];
 
   /** @param {Document|DocumentFragment|null|undefined} root */
@@ -31,7 +35,11 @@ export function gatherWatchPageTextForViewerScan(doc) {
       const body = root instanceof Document ? root.body : root;
       if (body) {
         chunks.push(String(body.textContent || ''));
-        chunks.push(String(body.innerText || ''));
+        if ('innerText' in body) {
+          chunks.push(
+            String(/** @type {HTMLElement} */ (body).innerText || '')
+          );
+        }
       }
     } catch {
       // no-op
@@ -99,7 +107,7 @@ export function parseViewerCountFromLooseText(chunk) {
     /(\d[\d,]*)\s*人\s*が\s*視聴/,
     /(\d[\d,]*)\s*人\s*視聴中/,
     /(\d[\d,]*)\s*名が視聴/,
-    /視聴者数\s*[：:　\s]*(\d[\d,]*)(?!\d)/,
+    /視聴者数\s*[：:\u3000\s]*(\d[\d,]*)(?!\d)/,
     /視聴者\s*(\d[\d,]*)(?!\d)/,
     /(\d[\d,]*)\s*人\s*が\s*オンライン/,
     /同時視聴\s*[:：]?\s*(\d[\d,]*)(?!\d)/,
@@ -202,6 +210,7 @@ export function parseViewerCountFromInlineScripts(doc) {
  */
 export function parseViewerCountFromSnapshotMetas(metas) {
   if (!Array.isArray(metas) || !metas.length) return null;
+  /** @type {string[]} */
   const chunks = [];
   for (const m of metas) {
     const v = String(m?.value || '');

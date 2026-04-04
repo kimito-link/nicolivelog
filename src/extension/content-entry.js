@@ -450,10 +450,6 @@ window.addEventListener('message', (e) => {
       wsViewerCount = v;
       wsViewerCountUpdatedAt = Date.now();
     }
-    const c = e.data.comments;
-    if (typeof c === 'number' && Number.isFinite(c) && c >= 0) {
-      wsCommentCount = c;
-    }
     return;
   }
 
@@ -1551,6 +1547,76 @@ function collectWatchPageSnapshot() {
       parseViewerCountFromSnapshotMetas(metas);
   }
 
+  const _debug = {};
+  try {
+    Object.assign(_debug, {
+      wsViewerCount,
+      wsCommentCount,
+      wsAge: wsViewerCountUpdatedAt ? Date.now() - wsViewerCountUpdatedAt : -1,
+      intercept: interceptedUsers.size,
+      embeddedVC: (() => { const p = extractEmbeddedDataProps(document); return p ? pickViewerCountFromEmbeddedData(p) : null; })(),
+      poll: { ..._pollDiag },
+    });
+    const sels = {
+      tblRow: 'div.table-row',
+      roleRow: '[role="row"]',
+      gaPanel: '.ga-ns-comment-panel',
+      cClass: '[class*="comment" i]',
+      dCType: '[data-comment-type]',
+      uicon: 'img[src*="usericon"], img[src*="nicoaccount"]',
+      dgrid: '[class*="data-grid"]',
+      dgridRow: '[class*="data-grid"] > div',
+    };
+    const c = {};
+    for (const [k, sel] of Object.entries(sels)) {
+      try { c[k] = document.querySelectorAll(sel).length; } catch { c[k] = -1; }
+    }
+    _debug.dom = c;
+
+    const grid = document.querySelector('[class*="comment-data-grid"], [class*="data-grid"]');
+    if (grid) {
+      const kids = Array.from(grid.children).slice(0, 3);
+      _debug.gridTag = grid.tagName;
+      _debug.gridCls = (grid.className || '').substring(0, 80);
+      _debug.gridKidCount = grid.children.length;
+      _debug.gridKids = kids.map(ch => {
+        const attrs = [];
+        for (let i = 0; i < Math.min(ch.attributes.length, 6); i++) {
+          const a = ch.attributes[i];
+          if (a.name === 'class') continue;
+          attrs.push(`${a.name}=${String(a.value).substring(0, 30)}`);
+        }
+        const firstChild = ch.children[0];
+        const fcInfo = firstChild ? `${firstChild.tagName}.${(firstChild.className || '').substring(0, 40)}` : '';
+        return {
+          tag: ch.tagName,
+          cls: (ch.className || '').substring(0, 80),
+          childCount: ch.children.length,
+          attrs: attrs.join(' '),
+          fc: fcInfo,
+          txt: (ch.textContent || '').substring(0, 50).replace(/\s+/g, ' ')
+        };
+      });
+      const deepKid = grid.querySelector('div > div > div');
+      if (deepKid) {
+        _debug.deepSample = {
+          tag: deepKid.tagName,
+          cls: (deepKid.className || '').substring(0, 80),
+          txt: (deepKid.textContent || '').substring(0, 60).replace(/\s+/g, ' '),
+        };
+      }
+    }
+
+    const docEl = document.documentElement;
+    if (docEl) {
+      _debug.pi = docEl.getAttribute('data-nls-page-intercept') || '';
+      _debug.piEnq = docEl.getAttribute('data-nls-page-intercept-enqueued') || '';
+      _debug.piPost = docEl.getAttribute('data-nls-page-intercept-posted') || '';
+      _debug.piWs = docEl.getAttribute('data-nls-page-intercept-ws') || '';
+      _debug.piFetch = docEl.getAttribute('data-nls-page-intercept-fetch') || '';
+    }
+  } catch { /* no-op */ }
+
   return {
     title: String(document.title || ''),
     url,
@@ -1568,7 +1634,8 @@ function collectWatchPageSnapshot() {
     viewerNickname: viewer.viewerNickname,
     viewerUserId: viewer.viewerUserId,
     broadcasterUserId,
-    viewerCountFromDom
+    viewerCountFromDom,
+    _debug
   };
 }
 
@@ -1708,7 +1775,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.type === 'NLS_EXPORT_INTERCEPT_CACHE') {
-    if (!isWatchPageMainFrameForMessages()) return;
+    if (!canExportWatchSnapshotFromThisFrame()) {
+      sendResponse({
+        ok: false,
+        error: 'watchページ以外では取得できません'
+      });
+      return;
+    }
     void (async () => {
       try {
         const deep =
@@ -1718,7 +1791,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             'deep' in msg &&
             /** @type {{ deep?: unknown }} */ (msg).deep
           );
-        if (deep && isNicoLiveWatchUrl(window.location.href)) {
+        if (deep && locationAllowsCommentRecording()) {
           const rows = await harvestVirtualCommentList({
             document,
             extractCommentsFromNode,
@@ -1949,7 +2022,6 @@ function syncLiveIdFromLocation() {
       broadcasterUidCache = '';
       broadcasterUidCacheAt = 0;
       wsViewerCount = null;
-      wsCommentCount = null;
       wsViewerCountUpdatedAt = 0;
       liveId = ctx.liveId;
       reconnectMutationObserver();
@@ -1982,7 +2054,6 @@ function syncLiveIdFromLocation() {
       broadcasterUidCache = '';
       broadcasterUidCacheAt = 0;
       wsViewerCount = null;
-      wsCommentCount = null;
       wsViewerCountUpdatedAt = 0;
       liveId = next;
       reconnectMutationObserver();
@@ -2173,34 +2244,51 @@ function canExportWatchSnapshotFromThisFrame() {
   return isNicoVideoJpHost(href);
 }
 
-/**
- * ページ HTML を再取得して embedded-data から最新の視聴者数を得る。
- * WS statistics が来ていない場合のフォールバック。
- */
+const _pollDiag = { ran: 0, ok: 0, err: '', status: 0, htmlLen: 0, wcMatch: '', ccMatch: '' };
+
 async function pollStatsFromPage() {
+  _pollDiag.ran += 1;
   try {
     const href = window.location.href;
-    if (!href || !href.startsWith('http')) return;
-    const resp = await fetch(href, { credentials: 'same-origin' });
-    if (!resp.ok) return;
-    const html = await resp.text();
-    const wc = html.match(/"watchCount"\s*:\s*(\d+)/);
+    if (!href || !href.startsWith('http')) { _pollDiag.err = 'bad-href'; return; }
+    const url = new URL(href);
+    url.searchParams.set('_nls_t', String(Date.now()));
+    const resp = await fetch(url.href, {
+      credentials: 'same-origin',
+      cache: 'no-store',
+      headers: { 'Accept': 'text/html' }
+    });
+    _pollDiag.status = resp.status;
+    if (!resp.ok) { _pollDiag.err = `http-${resp.status}`; return; }
+    let html = await resp.text();
+    _pollDiag.htmlLen = html.length;
+    if (html.includes('&quot;')) html = html.replace(/&quot;/g, '"');
+    if (html.includes('&amp;')) html = html.replace(/&amp;/g, '&');
+    const wc =
+      html.match(/"watchCount"\s*:\s*(\d+)/) ||
+      html.match(/"watching(?:Count)?"\s*:\s*(\d+)/i);
+    _pollDiag.wcMatch = wc ? wc[0].substring(0, 40) : '';
     if (wc?.[1]) {
       const n = parseInt(wc[1], 10);
       if (Number.isFinite(n) && n >= 0) {
         wsViewerCount = n;
         wsViewerCountUpdatedAt = Date.now();
+        _pollDiag.ok += 1;
       }
     }
-    const cc = html.match(/"commentCount"\s*:\s*(\d+)/);
+    const cc =
+      html.match(/"commentCount"\s*:\s*(\d+)/) ||
+      html.match(/"comments"\s*:\s*(\d+)/);
+    _pollDiag.ccMatch = cc ? cc[0].substring(0, 40) : '';
     if (cc?.[1]) {
       const n = parseInt(cc[1], 10);
       if (Number.isFinite(n) && n >= 0) {
         wsCommentCount = n;
       }
     }
-  } catch {
-    /* network error — ignore */
+    if (!wc && !cc) { _pollDiag.err = 'no-match'; }
+  } catch (e) {
+    _pollDiag.err = String(e?.message || e || 'unknown').substring(0, 80);
   }
 }
 

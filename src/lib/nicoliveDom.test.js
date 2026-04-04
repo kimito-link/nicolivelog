@@ -347,6 +347,24 @@ describe('extractCommentsFromNode', () => {
     expect(list).toHaveLength(1);
   });
 
+  it('comment-data-grid ラッパーの結合テキストをコメントとして誤抽出しない', () => {
+    const root = document.createElement('div');
+    root.innerHTML = `
+      <div class="comment-data-grid">
+        <div class="table-row" data-comment-type="normal">
+          <span class="comment-number">2467</span><span class="comment-text">a</span>
+        </div>
+        <div class="table-row" data-comment-type="normal">
+          <span class="comment-number">2468</span><span class="comment-text">b</span>
+        </div>
+      </div>`;
+    const list = extractCommentsFromNode(root);
+    expect(list).toEqual([
+      { commentNo: '2467', text: 'a', userId: null },
+      { commentNo: '2468', text: 'b', userId: null }
+    ]);
+  });
+
   it('.program-recommend-panel 内の li は無視', () => {
     // table-row があるとルート結合 innerText パースをスキップし、ROW_QUERY 経路の除外だけを検証する
     const root = document.createElement('div');
@@ -413,6 +431,26 @@ describe('resolveUserIdForNicoLiveCommentRow', () => {
     };
     row.appendChild(cell);
     expect(resolveUserIdForNicoLiveCommentRow(row)).toBe('87654321');
+  });
+
+  it('行内子の fiber が行ルートへ return しても祖先 userId は採用しない', () => {
+    const row = document.createElement('div');
+    row.className = 'table-row';
+    row.setAttribute('data-comment-type', 'normal');
+    row['__reactFiber$row'] = {
+      memoizedProps: { userId: '11111111' },
+      return: null
+    };
+    const cell = document.createElement('span');
+    cell.className = 'content-area';
+    cell.innerHTML =
+      '<span class="comment-number">3</span><span class="comment-text">c</span>';
+    cell['__reactFiber$cell'] = {
+      memoizedProps: {},
+      return: row['__reactFiber$row']
+    };
+    row.appendChild(cell);
+    expect(resolveUserIdForNicoLiveCommentRow(row)).toBe(null);
   });
 });
 

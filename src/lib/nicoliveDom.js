@@ -409,7 +409,7 @@ export function extractUserIdFromReactFiberSelfOnly(el) {
   if (!el || el.nodeType !== 1) return null;
   const fiber = getReactFiber(el);
   if (!fiber) return null;
-  return walkFiberForUserId(fiber, 6);
+  return pickUserIdFromFiber(fiber);
 }
 
 /**
@@ -493,11 +493,19 @@ const USERID_PROP_KEYS = [
 function walkFiberForUserId(fiber, maxDepth) {
   let cur = fiber;
   for (let i = 0; i < maxDepth && cur; i++) {
-    for (const bag of [cur.memoizedProps, cur.pendingProps]) {
-      const id = pickUserIdFromBag(bag);
-      if (id) return id;
-    }
+    const id = pickUserIdFromFiber(cur);
+    if (id) return id;
     cur = cur.return;
+  }
+  return null;
+}
+
+/** @param {Record<string, unknown>} fiber @returns {string|null} */
+function pickUserIdFromFiber(fiber) {
+  if (!fiber || typeof fiber !== 'object') return null;
+  for (const bag of [fiber.memoizedProps, fiber.pendingProps]) {
+    const id = pickUserIdFromBag(bag);
+    if (id) return id;
   }
   return null;
 }
@@ -733,19 +741,24 @@ export function extractCommentsFromNode(root) {
     push(parseCommentElement(el));
   }
 
-  try {
-    el.querySelectorAll(ROW_QUERY).forEach((node) => {
-      if (node.closest?.('.program-recommend-panel')) return;
-      if (node.closest?.('article.program-card')) return;
-      push(parseCommentElement(node));
-    });
-  } catch {
-    // セレクタが古い環境で失敗しても続行
-    el.querySelectorAll('li').forEach((node) => {
-      if (node.closest?.('.program-recommend-panel')) return;
-      if (node.closest?.('article.program-card')) return;
-      push(parseCommentElement(node));
-    });
+  const genericQuery =
+    tableRows.length > 0 ? 'li,[role="listitem"]' : ROW_QUERY;
+
+  if (genericQuery) {
+    try {
+      el.querySelectorAll(genericQuery).forEach((node) => {
+        if (node.closest?.('.program-recommend-panel')) return;
+        if (node.closest?.('article.program-card')) return;
+        push(parseCommentElement(node));
+      });
+    } catch {
+      // セレクタが古い環境で失敗しても続行
+      el.querySelectorAll('li').forEach((node) => {
+        if (node.closest?.('.program-recommend-panel')) return;
+        if (node.closest?.('article.program-card')) return;
+        push(parseCommentElement(node));
+      });
+    }
   }
 
   return out;

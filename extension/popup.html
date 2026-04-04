@@ -647,17 +647,52 @@
       }
 
       .nl-story-detail {
+        position: relative;
         margin-top: 6px;
         padding: 6px;
         border: 1px solid color-mix(in srgb, var(--nl-accent) 24%, var(--nl-border) 76%);
         border-radius: 10px;
         background: color-mix(in srgb, var(--nl-surface) 90%, #e9f9ff 10%);
+        overflow: visible;
       }
 
       .nl-story-detail.is-preview {
         border-style: dashed;
         opacity: 0.94;
         background: color-mix(in srgb, var(--nl-surface) 88%, #dbeafe 12%);
+      }
+
+      .nl-story-detail.is-hover-bubble {
+        position: fixed;
+        margin-top: 0;
+        width: min(280px, calc(100vw - 16px));
+        max-width: min(280px, calc(100vw - 16px));
+        padding: 7px 8px;
+        opacity: 0.98;
+        z-index: 999;
+        box-shadow:
+          0 10px 24px rgb(2 17 31 / 24%),
+          0 2px 8px rgb(2 17 31 / 12%);
+      }
+
+      .nl-story-detail.is-hover-bubble::after {
+        content: '';
+        position: absolute;
+        left: var(--nl-story-detail-arrow-left, 18px);
+        bottom: -8px;
+        transform: translateX(-50%);
+        width: 0;
+        height: 0;
+        border-left: 7px solid transparent;
+        border-right: 7px solid transparent;
+        border-top: 8px solid color-mix(in srgb, var(--nl-surface) 88%, #dbeafe 12%);
+      }
+
+      .nl-story-detail.is-hover-bubble.is-hover-below::after {
+        top: -8px;
+        bottom: auto;
+        border-top: 0;
+        border-bottom: 8px solid color-mix(in srgb, var(--nl-surface) 88%, #dbeafe 12%);
       }
 
       .nl-story-detail.is-pinned-detail {

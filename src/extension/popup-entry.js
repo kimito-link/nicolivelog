@@ -1047,7 +1047,9 @@ const STORY_GROWTH_STATE = {
   /** syncStorySourceEntries の内容が変わったあと DOM を付け直すための簡易シグネチャ */
   sourceSig: '',
   /** ホバー解除の遅延用 */
-  hoverClearTimer: /** @type {ReturnType<typeof setTimeout>|null} */ (null)
+  hoverClearTimer: /** @type {ReturnType<typeof setTimeout>|null} */ (null),
+  /** ホバー中アイコンの viewport 座標 */
+  hoverAnchorRect: /** @type {DOMRect|null} */ (null)
 };
 
 /** アイコン列が参照するコメント（全件） */
@@ -1106,12 +1108,26 @@ function cancelStoryHoverClearTimer() {
   }
 }
 
+/** @param {Element|null|undefined} el */
+function updateStoryHoverAnchorFromElement(el) {
+  if (!(el instanceof Element)) {
+    STORY_GROWTH_STATE.hoverAnchorRect = null;
+    return;
+  }
+  try {
+    STORY_GROWTH_STATE.hoverAnchorRect = el.getBoundingClientRect();
+  } catch {
+    STORY_GROWTH_STATE.hoverAnchorRect = null;
+  }
+}
+
 function scheduleStoryHoverClear() {
   cancelStoryHoverClearTimer();
   STORY_GROWTH_STATE.hoverClearTimer = window.setTimeout(() => {
     STORY_GROWTH_STATE.hoverClearTimer = null;
     if (!STORY_GROWTH_STATE.pinnedCommentId) {
       STORY_GROWTH_STATE.hoverPreviewCommentId = null;
+      STORY_GROWTH_STATE.hoverAnchorRect = null;
       renderStoryCommentDetailPanel();
     }
   }, 140);
@@ -1120,6 +1136,7 @@ function scheduleStoryHoverClear() {
 function clearPinnedStoryComment() {
   STORY_GROWTH_STATE.pinnedCommentId = null;
   STORY_GROWTH_STATE.hoverPreviewCommentId = null;
+  STORY_GROWTH_STATE.hoverAnchorRect = null;
   cancelStoryHoverClearTimer();
   syncGrowthIconSelection(STORY_GROWTH_STATE.root);
   renderStoryCommentDetailPanel();
@@ -1175,6 +1192,7 @@ function bindStoryDetailHoverBridge() {
     if (rel instanceof Element && rel.closest?.('img.nl-story-growth-icon'))
       return;
     STORY_GROWTH_STATE.hoverPreviewCommentId = null;
+    STORY_GROWTH_STATE.hoverAnchorRect = null;
     renderStoryCommentDetailPanel();
   });
 }
@@ -1325,13 +1343,19 @@ function renderStoryCommentDetailPanel() {
   const pinned = STORY_GROWTH_STATE.pinnedCommentId;
   const hover = STORY_GROWTH_STATE.hoverPreviewCommentId;
   const effectiveId = pinned || hover;
+  const isHoverBubble = Boolean(!pinned && hover);
 
   wrap.classList.toggle('is-preview', Boolean(!pinned && hover));
   wrap.classList.toggle('is-pinned-detail', Boolean(pinned));
+  wrap.classList.toggle('is-hover-bubble', isHoverBubble);
+  wrap.classList.remove('is-hover-below');
 
   if (!effectiveId) {
     wrap.hidden = true;
     listEl.innerHTML = '';
+    wrap.style.removeProperty('left');
+    wrap.style.removeProperty('top');
+    wrap.style.removeProperty('--nl-story-detail-arrow-left');
     return;
   }
 
@@ -1387,9 +1411,12 @@ function renderStoryCommentDetailPanel() {
   const modeLabel = pinned ? '固定' : 'プレビュー';
   metaEl.textContent = `${modeLabel} · No.${commentNo} / ${at} / ${liveId}`;
 
-  const recent = entriesRelatedForStoryDetail(STORY_SOURCE_STATE.entries, entry, {
-    limit: 5
-  });
+  const recent = storyDetailRecentEntries(
+    STORY_SOURCE_STATE.entries,
+    entry,
+    lidForOwn,
+    { limit: 5 }
+  );
   listEl.innerHTML = '';
   listEl.hidden = recent.length === 0;
   for (const row of recent) {
@@ -1401,6 +1428,43 @@ function renderStoryCommentDetailPanel() {
   }
 
   wrap.hidden = false;
+  wrap.style.removeProperty('left');
+  wrap.style.removeProperty('top');
+  wrap.style.removeProperty('--nl-story-detail-arrow-left');
+
+  if (isHoverBubble && STORY_GROWTH_STATE.hoverAnchorRect) {
+    const anchor = STORY_GROWTH_STATE.hoverAnchorRect;
+    const margin = 8;
+    const gap = 10;
+    const minLeft = 6;
+    const maxWidth = Math.min(280, Math.max(180, window.innerWidth - 16));
+    wrap.style.maxWidth = `${maxWidth}px`;
+    wrap.style.visibility = 'hidden';
+    const measuredWidth = Math.min(maxWidth, Math.max(180, wrap.offsetWidth || 220));
+    const measuredHeight = wrap.offsetHeight || 120;
+    const anchorCenter = anchor.left + anchor.width / 2;
+    let left = Math.round(anchorCenter - measuredWidth / 2);
+    left = Math.max(minLeft, Math.min(left, window.innerWidth - measuredWidth - minLeft));
+    let top = Math.round(anchor.top - measuredHeight - gap);
+    let below = false;
+    if (top < margin) {
+      top = Math.round(anchor.bottom + gap);
+      below = true;
+    }
+    top = Math.max(margin, Math.min(top, window.innerHeight - measuredHeight - margin));
+    const arrowLeft = Math.max(
+      14,
+      Math.min(measuredWidth - 14, Math.round(anchorCenter - left))
+    );
+    wrap.style.left = `${left}px`;
+    wrap.style.top = `${top}px`;
+    wrap.style.setProperty('--nl-story-detail-arrow-left', `${arrowLeft}px`);
+    wrap.classList.toggle('is-hover-below', below);
+    wrap.style.visibility = '';
+  } else {
+    wrap.style.maxWidth = '';
+    wrap.style.visibility = '';
+  }
 }
 
 /**
@@ -1464,6 +1528,112 @@ function selfPostedRecentsFingerprintForLive(liveId) {
   return `${n}|${maxAt}|${h}`;
 }
 
+/**
+ * ストーリー詳細リスト用。
+ * userId があるときは同一 userId の直近、ID未取得でも自己投稿と分かるときは
+ * 自分が打ったコメントだけを直近順で出す。
+ *
+ * @param {PopupCommentEntry[]} entries
+ * @param {PopupCommentEntry|null|undefined} focusEntry
+ * @param {string} liveId
+ * @param {{ limit?: number }} [opts]
+ * @returns {PopupCommentEntry[]}
+ */
+function storyDetailRecentEntries(entries, focusEntry, liveId, opts = {}) {
+  const list = Array.isArray(entries) ? entries : [];
+  const entry = focusEntry || null;
+  const limit = Number(opts.limit) > 0 ? Number(opts.limit) : 5;
+  if (!entry || list.length === 0) return [];
+
+  const uid = String(entry.userId || '').trim();
+  if (uid) {
+    return entriesRelatedForStoryDetail(list, entry, { limit });
+  }
+
+  if (!isOwnPostedSupportComment(entry, liveId)) return [];
+  return list
+    .filter((row) => isOwnPostedSupportComment(row, liveId))
+    .slice(-limit)
+    .reverse();
+}
+
+/** @param {string} text */
+function storyCommentTextPenalty(text) {
+  const s = normalizeCommentText(text).replace(/\n+/g, ' ').trim();
+  if (!s) return Number.POSITIVE_INFINITY;
+  const numberedTokens =
+    s.match(/(?:^|[\s\u3000])\d{3,9}(?=\s+\S)/g)?.length || 0;
+  return s.length + Math.max(0, numberedTokens - 1) * 240;
+}
+
+/**
+ * 同一 commentNo の重複保存があるとき、短く自然な本文と欠損の少ないメタを優先する。
+ * 旧バグで混ざった「複数コメント連結行」を UI 表示前に潰す。
+ *
+ * @param {PopupCommentEntry[]} entries
+ * @returns {{ next: PopupCommentEntry[], changed: boolean }}
+ */
+function normalizeStoredCommentEntries(entries) {
+  const list = Array.isArray(entries) ? entries : [];
+  if (list.length <= 1) return { next: list, changed: false };
+
+  /** @type {PopupCommentEntry[]} */
+  const out = [];
+  /** @type {Map<string, number>} */
+  const indexByKey = new Map();
+  let changed = false;
+
+  /**
+   * @param {PopupCommentEntry} prev
+   * @param {PopupCommentEntry} next
+   * @returns {PopupCommentEntry}
+   */
+  const mergeVariant = (prev, next) => {
+    const prevText = normalizeCommentText(prev.text);
+    const nextText = normalizeCommentText(next.text);
+    const preferNextText =
+      Boolean(nextText) &&
+      (storyCommentTextPenalty(nextText) < storyCommentTextPenalty(prevText));
+    const userId =
+      String(next.userId || '').trim() || String(prev.userId || '').trim() || null;
+    const nickname =
+      String(next.nickname || '').trim() || String(prev.nickname || '').trim() || '';
+    const avatarUrl =
+      String(next.avatarUrl || '').trim() || String(prev.avatarUrl || '').trim() || '';
+    return {
+      ...prev,
+      ...(preferNextText ? { text: nextText || prevText } : {}),
+      ...(userId ? { userId } : { userId: null }),
+      ...(nickname ? { nickname } : {}),
+      ...(avatarUrl ? { avatarUrl } : {})
+    };
+  };
+
+  for (const raw of list) {
+    const entry = /** @type {PopupCommentEntry} */ (raw);
+    const no = String(entry?.commentNo || '').trim();
+    const key =
+      /^\d+$/.test(no)
+        ? `no:${no}`
+        : `${String(entry?.liveId || '').trim().toLowerCase()}|${normalizeCommentText(entry?.text || '')}|${Number(entry?.capturedAt || 0)}`;
+    const existingIndex = indexByKey.get(key);
+    if (existingIndex == null) {
+      indexByKey.set(key, out.length);
+      out.push(entry);
+      continue;
+    }
+    const merged = mergeVariant(out[existingIndex], entry);
+    if (merged !== out[existingIndex]) {
+      changed = true;
+      out[existingIndex] = merged;
+    } else {
+      changed = true;
+    }
+  }
+
+  return { next: out, changed: changed || out.length !== list.length };
+}
+
 /** @returns {string} */
 function storySourceSignature() {
   const e = STORY_SOURCE_STATE.entries;
@@ -1521,6 +1691,20 @@ function bindStoryGrowthInteractions(root) {
     if (!sid) return;
     cancelStoryHoverClearTimer();
     STORY_GROWTH_STATE.hoverPreviewCommentId = sid;
+    updateStoryHoverAnchorFromElement(img);
+    renderStoryCommentDetailPanel();
+  });
+
+  root.addEventListener('pointermove', (ev) => {
+    if (!storyHoverPreviewEnabled()) return;
+    if (STORY_GROWTH_STATE.pinnedCommentId) return;
+    const el = ev.target;
+    const img =
+      el instanceof Element ? el.closest('img.nl-story-growth-icon') : null;
+    if (!img || !root.contains(img)) return;
+    const sid = img.getAttribute('data-comment-id');
+    if (!sid || STORY_GROWTH_STATE.hoverPreviewCommentId !== sid) return;
+    updateStoryHoverAnchorFromElement(img);
     renderStoryCommentDetailPanel();
   });
 
@@ -1958,6 +2142,39 @@ function renderWatchMetaCard(snapshot, commentEntries = []) {
       '公式の数値ではありません。同時接続は embedded-data / WebSocket / ページ再取得からの読み取りで、約45秒ごとに更新されます。',
       'ユニークは userId の種類数（未取得時は https のアイコン URL の種類数を ≈ で表示）です。'
     ];
+    const dbg = snapshot?._debug;
+    if (dbg) {
+      parts.push(
+        `\n[DEBUG] wsVC=${dbg.wsViewerCount} wsCmt=${dbg.wsCommentCount} wsAge=${dbg.wsAge}ms` +
+        ` intcpt=${dbg.intercept} embVC=${dbg.embeddedVC}`
+      );
+      if (dbg.poll) {
+        const pl = dbg.poll;
+        parts.push(
+          `\n[POLL] ran=${pl.ran} ok=${pl.ok} status=${pl.status} html=${pl.htmlLen}` +
+          ` wc=${pl.wcMatch || '-'} err=${pl.err || '-'}`
+        );
+      }
+      parts.push(
+        `\n[PI] pi=${dbg.pi || '0'} enq=${dbg.piEnq || '0'} post=${dbg.piPost || '0'}` +
+        ` ws=${dbg.piWs || '0'} fetch=${dbg.piFetch || '0'}`
+      );
+      if (dbg.dom) {
+        parts.push(
+          `\n[DOM] ${Object.entries(dbg.dom).map(([k,v]) => `${k}=${v}`).join(' ')}`
+        );
+      }
+      if (dbg.gridKids && Array.isArray(dbg.gridKids)) {
+        parts.push(`\n[GRID] kids=${dbg.gridKidCount}`);
+        for (const gk of dbg.gridKids) {
+          parts.push(`\n  <${gk.tag} cls="${gk.cls}" ch=${gk.childCount} ${gk.attrs}> "${gk.txt}"`);
+          if (gk.fc) parts.push(` fc=<${gk.fc}>`);
+        }
+      }
+      if (dbg.deepSample) {
+        parts.push(`\n[DEEP] <${dbg.deepSample.tag} cls="${dbg.deepSample.cls}"> "${dbg.deepSample.txt}"`);
+      }
+    }
     noteEl.textContent = parts.join('');
   }
   if (audience) audience.hidden = false;
@@ -2173,19 +2390,78 @@ function normalizeInterceptCacheItems(raw) {
 }
 
 /**
+ * 同一 commentNo の intercept 情報をマージする。
+ * @param {{ no: string, uid: string, name: string, av: string }[]} items
+ * @returns {{ no: string, uid: string, name: string, av: string }[]}
+ */
+function mergeInterceptCacheItems(items) {
+  if (!Array.isArray(items) || items.length === 0) return [];
+  /** @type {Map<string, { no: string, uid: string, name: string, av: string }>} */
+  const byNo = new Map();
+  for (const it of items) {
+    const no = String(it?.no || '').trim();
+    if (!no) continue;
+    const prev = byNo.get(no);
+    if (!prev) {
+      byNo.set(no, {
+        no,
+        uid: String(it?.uid || '').trim(),
+        name: String(it?.name || '').trim(),
+        av: isHttpOrHttpsUrl(it?.av) ? String(it.av || '').trim() : ''
+      });
+      continue;
+    }
+    byNo.set(no, {
+      no,
+      uid: String(it?.uid || '').trim() || prev.uid,
+      name: String(it?.name || '').trim() || prev.name,
+      av: (isHttpOrHttpsUrl(it?.av) ? String(it.av || '').trim() : '') || prev.av
+    });
+  }
+  return [...byNo.values()];
+}
+
+/**
  * @param {string} watchUrl
  * @param {{ deep?: boolean }} [opts]
  * @returns {Promise<{ no: string, uid: string, name: string, av: string }[]>}
  */
 async function requestInterceptCacheFromOpenTab(watchUrl, opts = {}) {
-  const res = /** @type {{ ok?: boolean, items?: unknown }|null} */ (
-    await sendMessageToWatchTabs(watchUrl, {
-      type: 'NLS_EXPORT_INTERCEPT_CACHE',
-      ...(opts.deep ? { deep: true } : {})
-    })
-  );
-  if (!res || res.ok !== true) return [];
-  return normalizeInterceptCacheItems(res.items);
+  const candidates = await collectWatchTabCandidates(watchUrl);
+  if (!candidates.length) return [];
+
+  /** @type {{ no: string, uid: string, name: string, av: string }[]} */
+  const merged = [];
+  for (const candidate of candidates) {
+    try {
+      const ranked = await listWatchFramesWithInnerText(candidate.id);
+      const tried = new Set();
+      const tryOrder = [...ranked.map((r) => r.frameId), 0];
+      for (const fid of tryOrder) {
+        if (tried.has(fid)) continue;
+        tried.add(fid);
+        try {
+          const res = /** @type {{ ok?: boolean, items?: unknown }|null} */ (
+            await tabsSendMessageWithRetry(
+              candidate.id,
+              {
+                type: 'NLS_EXPORT_INTERCEPT_CACHE',
+                ...(opts.deep ? { deep: true } : {})
+              },
+              { frameId: fid, maxAttempts: 5, delayMs: 90 }
+            )
+          );
+          if (!res || res.ok !== true) continue;
+          merged.push(...normalizeInterceptCacheItems(res.items));
+        } catch {
+          // 次の frameId を試す
+        }
+      }
+    } catch {
+      // 次の candidate tab を試す
+    }
+  }
+  return mergeInterceptCacheItems(merged);
 }
 
 /**
@@ -2599,7 +2875,7 @@ async function refresh() {
     return;
   }
 
-  const snapshotKey = `${lv}|${url}|s10`;
+  const snapshotKey = `${lv}|${url}|s11`;
   if (watchMetaCache.key !== snapshotKey || !watchMetaCache.snapshot) {
     watchMetaCache.key = snapshotKey;
     const { snapshot } = await requestWatchPageSnapshotFromOpenTab(url);
@@ -2610,6 +2886,13 @@ async function refresh() {
   const key = commentsStorageKey(lv);
   const data = await chrome.storage.local.get(key);
   let arr = Array.isArray(data[key]) ? data[key] : [];
+  const normalizedStored = normalizeStoredCommentEntries(
+    /** @type {PopupCommentEntry[]} */ (arr)
+  );
+  if (normalizedStored.changed) {
+    arr = normalizedStored.next;
+    await storageSetSafe({ [key]: arr });
+  }
   STORY_AVATAR_DIAG_STATE.total = arr.length;
   STORY_AVATAR_DIAG_STATE.withUid = countEntriesWithUserId(arr);
   STORY_AVATAR_DIAG_STATE.withAvatar = countEntriesWithAvatar(arr);

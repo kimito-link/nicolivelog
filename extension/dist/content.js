@@ -736,7 +736,7 @@
     if (!el || el.nodeType !== 1) return null;
     const fiber = getReactFiber(el);
     if (!fiber) return null;
-    return walkFiberForUserId(fiber, 6);
+    return pickUserIdFromFiber(fiber);
   }
   function extractUserIdFromReactFiberInSubtree(root, maxNodes = 56, opts = {}) {
     if (!root || root.nodeType !== 1) return null;
@@ -791,11 +791,17 @@
   function walkFiberForUserId(fiber, maxDepth) {
     let cur = fiber;
     for (let i = 0; i < maxDepth && cur; i++) {
-      for (const bag of [cur.memoizedProps, cur.pendingProps]) {
-        const id = pickUserIdFromBag(bag);
-        if (id) return id;
-      }
+      const id = pickUserIdFromFiber(cur);
+      if (id) return id;
       cur = cur.return;
+    }
+    return null;
+  }
+  function pickUserIdFromFiber(fiber) {
+    if (!fiber || typeof fiber !== "object") return null;
+    for (const bag of [fiber.memoizedProps, fiber.pendingProps]) {
+      const id = pickUserIdFromBag(bag);
+      if (id) return id;
     }
     return null;
   }
@@ -960,18 +966,21 @@
     if (!skipRootBlobParse && tag !== "ul" && tag !== "ol") {
       push(parseCommentElement(el));
     }
-    try {
-      el.querySelectorAll(ROW_QUERY).forEach((node) => {
-        if (node.closest?.(".program-recommend-panel")) return;
-        if (node.closest?.("article.program-card")) return;
-        push(parseCommentElement(node));
-      });
-    } catch {
-      el.querySelectorAll("li").forEach((node) => {
-        if (node.closest?.(".program-recommend-panel")) return;
-        if (node.closest?.("article.program-card")) return;
-        push(parseCommentElement(node));
-      });
+    const genericQuery = tableRows.length > 0 ? 'li,[role="listitem"]' : ROW_QUERY;
+    if (genericQuery) {
+      try {
+        el.querySelectorAll(genericQuery).forEach((node) => {
+          if (node.closest?.(".program-recommend-panel")) return;
+          if (node.closest?.("article.program-card")) return;
+          push(parseCommentElement(node));
+        });
+      } catch {
+        el.querySelectorAll("li").forEach((node) => {
+          if (node.closest?.(".program-recommend-panel")) return;
+          if (node.closest?.("article.program-card")) return;
+          push(parseCommentElement(node));
+        });
+      }
     }
     return out;
   }
@@ -1103,7 +1112,14 @@
         const body = root instanceof Document ? root.body : root;
         if (body) {
           chunks.push(String(body.textContent || ""));
-          chunks.push(String(body.innerText || ""));
+          if ("innerText" in body) {
+            chunks.push(
+              String(
+                /** @type {HTMLElement} */
+                body.innerText || ""
+              )
+            );
+          }
         }
       } catch {
       }
@@ -1156,7 +1172,7 @@
       /(\d[\d,]*)\s*人\s*が\s*視聴/,
       /(\d[\d,]*)\s*人\s*視聴中/,
       /(\d[\d,]*)\s*名が視聴/,
-      /視聴者数\s*[：:　\s]*(\d[\d,]*)(?!\d)/,
+      /視聴者数\s*[：:\u3000\s]*(\d[\d,]*)(?!\d)/,
       /視聴者\s*(\d[\d,]*)(?!\d)/,
       /(\d[\d,]*)\s*人\s*が\s*オンライン/,
       /同時視聴\s*[:：]?\s*(\d[\d,]*)(?!\d)/,
@@ -1885,10 +1901,6 @@
       if (typeof v === "number" && Number.isFinite(v) && v >= 0) {
         wsViewerCount = v;
         wsViewerCountUpdatedAt = Date.now();
-      }
-      const c = e.data.comments;
-      if (typeof c === "number" && Number.isFinite(c) && c >= 0) {
-        wsCommentCount = c;
       }
       return;
     }
@@ -2753,6 +2765,81 @@
     if (viewerCountFromDom == null) {
       viewerCountFromDom = parseLiveViewerCountFromDocument(document) ?? parseViewerCountFromSnapshotMetas(metas);
     }
+    const _debug = {};
+    try {
+      Object.assign(_debug, {
+        wsViewerCount,
+        wsCommentCount,
+        wsAge: wsViewerCountUpdatedAt ? Date.now() - wsViewerCountUpdatedAt : -1,
+        intercept: interceptedUsers.size,
+        embeddedVC: (() => {
+          const p = extractEmbeddedDataProps(document);
+          return p ? pickViewerCountFromEmbeddedData(p) : null;
+        })(),
+        poll: { ..._pollDiag }
+      });
+      const sels = {
+        tblRow: "div.table-row",
+        roleRow: '[role="row"]',
+        gaPanel: ".ga-ns-comment-panel",
+        cClass: '[class*="comment" i]',
+        dCType: "[data-comment-type]",
+        uicon: 'img[src*="usericon"], img[src*="nicoaccount"]',
+        dgrid: '[class*="data-grid"]',
+        dgridRow: '[class*="data-grid"] > div'
+      };
+      const c = {};
+      for (const [k, sel] of Object.entries(sels)) {
+        try {
+          c[k] = document.querySelectorAll(sel).length;
+        } catch {
+          c[k] = -1;
+        }
+      }
+      _debug.dom = c;
+      const grid = document.querySelector('[class*="comment-data-grid"], [class*="data-grid"]');
+      if (grid) {
+        const kids = Array.from(grid.children).slice(0, 3);
+        _debug.gridTag = grid.tagName;
+        _debug.gridCls = (grid.className || "").substring(0, 80);
+        _debug.gridKidCount = grid.children.length;
+        _debug.gridKids = kids.map((ch) => {
+          const attrs = [];
+          for (let i = 0; i < Math.min(ch.attributes.length, 6); i++) {
+            const a = ch.attributes[i];
+            if (a.name === "class") continue;
+            attrs.push(`${a.name}=${String(a.value).substring(0, 30)}`);
+          }
+          const firstChild = ch.children[0];
+          const fcInfo = firstChild ? `${firstChild.tagName}.${(firstChild.className || "").substring(0, 40)}` : "";
+          return {
+            tag: ch.tagName,
+            cls: (ch.className || "").substring(0, 80),
+            childCount: ch.children.length,
+            attrs: attrs.join(" "),
+            fc: fcInfo,
+            txt: (ch.textContent || "").substring(0, 50).replace(/\s+/g, " ")
+          };
+        });
+        const deepKid = grid.querySelector("div > div > div");
+        if (deepKid) {
+          _debug.deepSample = {
+            tag: deepKid.tagName,
+            cls: (deepKid.className || "").substring(0, 80),
+            txt: (deepKid.textContent || "").substring(0, 60).replace(/\s+/g, " ")
+          };
+        }
+      }
+      const docEl = document.documentElement;
+      if (docEl) {
+        _debug.pi = docEl.getAttribute("data-nls-page-intercept") || "";
+        _debug.piEnq = docEl.getAttribute("data-nls-page-intercept-enqueued") || "";
+        _debug.piPost = docEl.getAttribute("data-nls-page-intercept-posted") || "";
+        _debug.piWs = docEl.getAttribute("data-nls-page-intercept-ws") || "";
+        _debug.piFetch = docEl.getAttribute("data-nls-page-intercept-fetch") || "";
+      }
+    } catch {
+    }
     return {
       title: String(document.title || ""),
       url,
@@ -2770,7 +2857,8 @@
       viewerNickname: viewer.viewerNickname,
       viewerUserId: viewer.viewerUserId,
       broadcasterUserId,
-      viewerCountFromDom
+      viewerCountFromDom,
+      _debug
     };
   }
   function isWatchPageMainFrameForMessages() {
@@ -2895,12 +2983,18 @@
       }
     }
     if (msg.type === "NLS_EXPORT_INTERCEPT_CACHE") {
-      if (!isWatchPageMainFrameForMessages()) return;
+      if (!canExportWatchSnapshotFromThisFrame()) {
+        sendResponse({
+          ok: false,
+          error: "watch\u30DA\u30FC\u30B8\u4EE5\u5916\u3067\u306F\u53D6\u5F97\u3067\u304D\u307E\u305B\u3093"
+        });
+        return;
+      }
       void (async () => {
         try {
           const deep = !!(msg && typeof msg === "object" && "deep" in msg && /** @type {{ deep?: unknown }} */
           msg.deep);
-          if (deep && isNicoLiveWatchUrl(window.location.href)) {
+          if (deep && locationAllowsCommentRecording()) {
             const rows = await harvestVirtualCommentList({
               document,
               extractCommentsFromNode,
@@ -3087,7 +3181,6 @@
         broadcasterUidCache = "";
         broadcasterUidCacheAt = 0;
         wsViewerCount = null;
-        wsCommentCount = null;
         wsViewerCountUpdatedAt = 0;
         liveId = ctx.liveId;
         reconnectMutationObserver();
@@ -3119,7 +3212,6 @@
         broadcasterUidCache = "";
         broadcasterUidCacheAt = 0;
         wsViewerCount = null;
-        wsCommentCount = null;
         wsViewerCountUpdatedAt = 0;
         liveId = next;
         reconnectMutationObserver();
@@ -3265,29 +3357,54 @@
     }
     return isNicoVideoJpHost(href);
   }
+  var _pollDiag = { ran: 0, ok: 0, err: "", status: 0, htmlLen: 0, wcMatch: "", ccMatch: "" };
   async function pollStatsFromPage() {
+    _pollDiag.ran += 1;
     try {
       const href = window.location.href;
-      if (!href || !href.startsWith("http")) return;
-      const resp = await fetch(href, { credentials: "same-origin" });
-      if (!resp.ok) return;
-      const html = await resp.text();
-      const wc = html.match(/"watchCount"\s*:\s*(\d+)/);
+      if (!href || !href.startsWith("http")) {
+        _pollDiag.err = "bad-href";
+        return;
+      }
+      const url = new URL(href);
+      url.searchParams.set("_nls_t", String(Date.now()));
+      const resp = await fetch(url.href, {
+        credentials: "same-origin",
+        cache: "no-store",
+        headers: { "Accept": "text/html" }
+      });
+      _pollDiag.status = resp.status;
+      if (!resp.ok) {
+        _pollDiag.err = `http-${resp.status}`;
+        return;
+      }
+      let html = await resp.text();
+      _pollDiag.htmlLen = html.length;
+      if (html.includes("&quot;")) html = html.replace(/&quot;/g, '"');
+      if (html.includes("&amp;")) html = html.replace(/&amp;/g, "&");
+      const wc = html.match(/"watchCount"\s*:\s*(\d+)/) || html.match(/"watching(?:Count)?"\s*:\s*(\d+)/i);
+      _pollDiag.wcMatch = wc ? wc[0].substring(0, 40) : "";
       if (wc?.[1]) {
         const n = parseInt(wc[1], 10);
         if (Number.isFinite(n) && n >= 0) {
           wsViewerCount = n;
           wsViewerCountUpdatedAt = Date.now();
+          _pollDiag.ok += 1;
         }
       }
-      const cc = html.match(/"commentCount"\s*:\s*(\d+)/);
+      const cc = html.match(/"commentCount"\s*:\s*(\d+)/) || html.match(/"comments"\s*:\s*(\d+)/);
+      _pollDiag.ccMatch = cc ? cc[0].substring(0, 40) : "";
       if (cc?.[1]) {
         const n = parseInt(cc[1], 10);
         if (Number.isFinite(n) && n >= 0) {
           wsCommentCount = n;
         }
       }
-    } catch {
+      if (!wc && !cc) {
+        _pollDiag.err = "no-match";
+      }
+    } catch (e) {
+      _pollDiag.err = String(e?.message || e || "unknown").substring(0, 80);
     }
   }
   async function start() {

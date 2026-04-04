@@ -269,7 +269,7 @@
       /(\d[\d,]*)\s*人\s*が\s*視聴/,
       /(\d[\d,]*)\s*人\s*視聴中/,
       /(\d[\d,]*)\s*名が視聴/,
-      /視聴者数\s*[：:　\s]*(\d[\d,]*)(?!\d)/,
+      /視聴者数\s*[：:\u3000\s]*(\d[\d,]*)(?!\d)/,
       /視聴者\s*(\d[\d,]*)(?!\d)/,
       /(\d[\d,]*)\s*人\s*が\s*オンライン/,
       /同時視聴\s*[:：]?\s*(\d[\d,]*)(?!\d)/,
@@ -1188,6 +1188,11 @@
     hoverClearTimer: (
       /** @type {ReturnType<typeof setTimeout>|null} */
       null
+    ),
+    /** ホバー中アイコンの viewport 座標 */
+    hoverAnchorRect: (
+      /** @type {DOMRect|null} */
+      null
     )
   };
   var STORY_SOURCE_STATE = {
@@ -1240,12 +1245,24 @@
       STORY_GROWTH_STATE.hoverClearTimer = null;
     }
   }
+  function updateStoryHoverAnchorFromElement(el) {
+    if (!(el instanceof Element)) {
+      STORY_GROWTH_STATE.hoverAnchorRect = null;
+      return;
+    }
+    try {
+      STORY_GROWTH_STATE.hoverAnchorRect = el.getBoundingClientRect();
+    } catch {
+      STORY_GROWTH_STATE.hoverAnchorRect = null;
+    }
+  }
   function scheduleStoryHoverClear() {
     cancelStoryHoverClearTimer();
     STORY_GROWTH_STATE.hoverClearTimer = window.setTimeout(() => {
       STORY_GROWTH_STATE.hoverClearTimer = null;
       if (!STORY_GROWTH_STATE.pinnedCommentId) {
         STORY_GROWTH_STATE.hoverPreviewCommentId = null;
+        STORY_GROWTH_STATE.hoverAnchorRect = null;
         renderStoryCommentDetailPanel();
       }
     }, 140);
@@ -1253,6 +1270,7 @@
   function clearPinnedStoryComment() {
     STORY_GROWTH_STATE.pinnedCommentId = null;
     STORY_GROWTH_STATE.hoverPreviewCommentId = null;
+    STORY_GROWTH_STATE.hoverAnchorRect = null;
     cancelStoryHoverClearTimer();
     syncGrowthIconSelection(STORY_GROWTH_STATE.root);
     renderStoryCommentDetailPanel();
@@ -1303,6 +1321,7 @@
       if (rel instanceof Element && rel.closest?.("img.nl-story-growth-icon"))
         return;
       STORY_GROWTH_STATE.hoverPreviewCommentId = null;
+      STORY_GROWTH_STATE.hoverAnchorRect = null;
       renderStoryCommentDetailPanel();
     });
   }
@@ -1434,11 +1453,17 @@
     const pinned = STORY_GROWTH_STATE.pinnedCommentId;
     const hover = STORY_GROWTH_STATE.hoverPreviewCommentId;
     const effectiveId = pinned || hover;
+    const isHoverBubble = Boolean(!pinned && hover);
     wrap.classList.toggle("is-preview", Boolean(!pinned && hover));
     wrap.classList.toggle("is-pinned-detail", Boolean(pinned));
+    wrap.classList.toggle("is-hover-bubble", isHoverBubble);
+    wrap.classList.remove("is-hover-below");
     if (!effectiveId) {
       wrap.hidden = true;
       listEl.innerHTML = "";
+      wrap.style.removeProperty("left");
+      wrap.style.removeProperty("top");
+      wrap.style.removeProperty("--nl-story-detail-arrow-left");
       return;
     }
     const entry = getStoryEntryByStableId(effectiveId);
@@ -1489,9 +1514,12 @@
     const liveId = String(entry.liveId || STORY_SOURCE_STATE.liveId || "").trim() || "-";
     const modeLabel = pinned ? "\u56FA\u5B9A" : "\u30D7\u30EC\u30D3\u30E5\u30FC";
     metaEl.textContent = `${modeLabel} \xB7 No.${commentNo} / ${at} / ${liveId}`;
-    const recent = entriesRelatedForStoryDetail(STORY_SOURCE_STATE.entries, entry, {
-      limit: 5
-    });
+    const recent = storyDetailRecentEntries(
+      STORY_SOURCE_STATE.entries,
+      entry,
+      lidForOwn,
+      { limit: 5 }
+    );
     listEl.innerHTML = "";
     listEl.hidden = recent.length === 0;
     for (const row of recent) {
@@ -1502,6 +1530,42 @@
       listEl.appendChild(li);
     }
     wrap.hidden = false;
+    wrap.style.removeProperty("left");
+    wrap.style.removeProperty("top");
+    wrap.style.removeProperty("--nl-story-detail-arrow-left");
+    if (isHoverBubble && STORY_GROWTH_STATE.hoverAnchorRect) {
+      const anchor = STORY_GROWTH_STATE.hoverAnchorRect;
+      const margin = 8;
+      const gap = 10;
+      const minLeft = 6;
+      const maxWidth = Math.min(280, Math.max(180, window.innerWidth - 16));
+      wrap.style.maxWidth = `${maxWidth}px`;
+      wrap.style.visibility = "hidden";
+      const measuredWidth = Math.min(maxWidth, Math.max(180, wrap.offsetWidth || 220));
+      const measuredHeight = wrap.offsetHeight || 120;
+      const anchorCenter = anchor.left + anchor.width / 2;
+      let left = Math.round(anchorCenter - measuredWidth / 2);
+      left = Math.max(minLeft, Math.min(left, window.innerWidth - measuredWidth - minLeft));
+      let top = Math.round(anchor.top - measuredHeight - gap);
+      let below = false;
+      if (top < margin) {
+        top = Math.round(anchor.bottom + gap);
+        below = true;
+      }
+      top = Math.max(margin, Math.min(top, window.innerHeight - measuredHeight - margin));
+      const arrowLeft = Math.max(
+        14,
+        Math.min(measuredWidth - 14, Math.round(anchorCenter - left))
+      );
+      wrap.style.left = `${left}px`;
+      wrap.style.top = `${top}px`;
+      wrap.style.setProperty("--nl-story-detail-arrow-left", `${arrowLeft}px`);
+      wrap.classList.toggle("is-hover-below", below);
+      wrap.style.visibility = "";
+    } else {
+      wrap.style.maxWidth = "";
+      wrap.style.visibility = "";
+    }
   }
   function storyAvatarFingerprint(entries) {
     let h = 0;
@@ -1553,6 +1617,68 @@
       }
     }
     return `${n}|${maxAt}|${h}`;
+  }
+  function storyDetailRecentEntries(entries, focusEntry, liveId, opts = {}) {
+    const list = Array.isArray(entries) ? entries : [];
+    const entry = focusEntry || null;
+    const limit = Number(opts.limit) > 0 ? Number(opts.limit) : 5;
+    if (!entry || list.length === 0) return [];
+    const uid = String(entry.userId || "").trim();
+    if (uid) {
+      return entriesRelatedForStoryDetail(list, entry, { limit });
+    }
+    if (!isOwnPostedSupportComment(entry, liveId)) return [];
+    return list.filter((row) => isOwnPostedSupportComment(row, liveId)).slice(-limit).reverse();
+  }
+  function storyCommentTextPenalty(text) {
+    const s = normalizeCommentText(text).replace(/\n+/g, " ").trim();
+    if (!s) return Number.POSITIVE_INFINITY;
+    const numberedTokens = s.match(/(?:^|[\s\u3000])\d{3,9}(?=\s+\S)/g)?.length || 0;
+    return s.length + Math.max(0, numberedTokens - 1) * 240;
+  }
+  function normalizeStoredCommentEntries(entries) {
+    const list = Array.isArray(entries) ? entries : [];
+    if (list.length <= 1) return { next: list, changed: false };
+    const out = [];
+    const indexByKey = /* @__PURE__ */ new Map();
+    let changed = false;
+    const mergeVariant = (prev, next) => {
+      const prevText = normalizeCommentText(prev.text);
+      const nextText = normalizeCommentText(next.text);
+      const preferNextText = Boolean(nextText) && storyCommentTextPenalty(nextText) < storyCommentTextPenalty(prevText);
+      const userId = String(next.userId || "").trim() || String(prev.userId || "").trim() || null;
+      const nickname = String(next.nickname || "").trim() || String(prev.nickname || "").trim() || "";
+      const avatarUrl = String(next.avatarUrl || "").trim() || String(prev.avatarUrl || "").trim() || "";
+      return {
+        ...prev,
+        ...preferNextText ? { text: nextText || prevText } : {},
+        ...userId ? { userId } : { userId: null },
+        ...nickname ? { nickname } : {},
+        ...avatarUrl ? { avatarUrl } : {}
+      };
+    };
+    for (const raw of list) {
+      const entry = (
+        /** @type {PopupCommentEntry} */
+        raw
+      );
+      const no = String(entry?.commentNo || "").trim();
+      const key = /^\d+$/.test(no) ? `no:${no}` : `${String(entry?.liveId || "").trim().toLowerCase()}|${normalizeCommentText(entry?.text || "")}|${Number(entry?.capturedAt || 0)}`;
+      const existingIndex = indexByKey.get(key);
+      if (existingIndex == null) {
+        indexByKey.set(key, out.length);
+        out.push(entry);
+        continue;
+      }
+      const merged = mergeVariant(out[existingIndex], entry);
+      if (merged !== out[existingIndex]) {
+        changed = true;
+        out[existingIndex] = merged;
+      } else {
+        changed = true;
+      }
+    }
+    return { next: out, changed: changed || out.length !== list.length };
   }
   function storySourceSignature() {
     const e = STORY_SOURCE_STATE.entries;
@@ -1606,6 +1732,18 @@
       if (!sid) return;
       cancelStoryHoverClearTimer();
       STORY_GROWTH_STATE.hoverPreviewCommentId = sid;
+      updateStoryHoverAnchorFromElement(img);
+      renderStoryCommentDetailPanel();
+    });
+    root.addEventListener("pointermove", (ev) => {
+      if (!storyHoverPreviewEnabled()) return;
+      if (STORY_GROWTH_STATE.pinnedCommentId) return;
+      const el = ev.target;
+      const img = el instanceof Element ? el.closest("img.nl-story-growth-icon") : null;
+      if (!img || !root.contains(img)) return;
+      const sid = img.getAttribute("data-comment-id");
+      if (!sid || STORY_GROWTH_STATE.hoverPreviewCommentId !== sid) return;
+      updateStoryHoverAnchorFromElement(img);
       renderStoryCommentDetailPanel();
     });
     root.addEventListener("pointerout", (ev) => {
@@ -1953,6 +2091,43 @@
         "\u516C\u5F0F\u306E\u6570\u5024\u3067\u306F\u3042\u308A\u307E\u305B\u3093\u3002\u540C\u6642\u63A5\u7D9A\u306F embedded-data / WebSocket / \u30DA\u30FC\u30B8\u518D\u53D6\u5F97\u304B\u3089\u306E\u8AAD\u307F\u53D6\u308A\u3067\u3001\u7D0445\u79D2\u3054\u3068\u306B\u66F4\u65B0\u3055\u308C\u307E\u3059\u3002",
         "\u30E6\u30CB\u30FC\u30AF\u306F userId \u306E\u7A2E\u985E\u6570\uFF08\u672A\u53D6\u5F97\u6642\u306F https \u306E\u30A2\u30A4\u30B3\u30F3 URL \u306E\u7A2E\u985E\u6570\u3092 \u2248 \u3067\u8868\u793A\uFF09\u3067\u3059\u3002"
       ];
+      const dbg = snapshot?._debug;
+      if (dbg) {
+        parts.push(
+          `
+[DEBUG] wsVC=${dbg.wsViewerCount} wsCmt=${dbg.wsCommentCount} wsAge=${dbg.wsAge}ms intcpt=${dbg.intercept} embVC=${dbg.embeddedVC}`
+        );
+        if (dbg.poll) {
+          const pl = dbg.poll;
+          parts.push(
+            `
+[POLL] ran=${pl.ran} ok=${pl.ok} status=${pl.status} html=${pl.htmlLen} wc=${pl.wcMatch || "-"} err=${pl.err || "-"}`
+          );
+        }
+        parts.push(
+          `
+[PI] pi=${dbg.pi || "0"} enq=${dbg.piEnq || "0"} post=${dbg.piPost || "0"} ws=${dbg.piWs || "0"} fetch=${dbg.piFetch || "0"}`
+        );
+        if (dbg.dom) {
+          parts.push(
+            `
+[DOM] ${Object.entries(dbg.dom).map(([k, v]) => `${k}=${v}`).join(" ")}`
+          );
+        }
+        if (dbg.gridKids && Array.isArray(dbg.gridKids)) {
+          parts.push(`
+[GRID] kids=${dbg.gridKidCount}`);
+          for (const gk of dbg.gridKids) {
+            parts.push(`
+  <${gk.tag} cls="${gk.cls}" ch=${gk.childCount} ${gk.attrs}> "${gk.txt}"`);
+            if (gk.fc) parts.push(` fc=<${gk.fc}>`);
+          }
+        }
+        if (dbg.deepSample) {
+          parts.push(`
+[DEEP] <${dbg.deepSample.tag} cls="${dbg.deepSample.cls}"> "${dbg.deepSample.txt}"`);
+        }
+      }
       noteEl.textContent = parts.join("");
     }
     if (audience) audience.hidden = false;
@@ -2121,16 +2296,64 @@
     }
     return out;
   }
+  function mergeInterceptCacheItems(items) {
+    if (!Array.isArray(items) || items.length === 0) return [];
+    const byNo = /* @__PURE__ */ new Map();
+    for (const it of items) {
+      const no = String(it?.no || "").trim();
+      if (!no) continue;
+      const prev = byNo.get(no);
+      if (!prev) {
+        byNo.set(no, {
+          no,
+          uid: String(it?.uid || "").trim(),
+          name: String(it?.name || "").trim(),
+          av: isHttpOrHttpsUrl(it?.av) ? String(it.av || "").trim() : ""
+        });
+        continue;
+      }
+      byNo.set(no, {
+        no,
+        uid: String(it?.uid || "").trim() || prev.uid,
+        name: String(it?.name || "").trim() || prev.name,
+        av: (isHttpOrHttpsUrl(it?.av) ? String(it.av || "").trim() : "") || prev.av
+      });
+    }
+    return [...byNo.values()];
+  }
   async function requestInterceptCacheFromOpenTab(watchUrl, opts = {}) {
-    const res = (
-      /** @type {{ ok?: boolean, items?: unknown }|null} */
-      await sendMessageToWatchTabs(watchUrl, {
-        type: "NLS_EXPORT_INTERCEPT_CACHE",
-        ...opts.deep ? { deep: true } : {}
-      })
-    );
-    if (!res || res.ok !== true) return [];
-    return normalizeInterceptCacheItems(res.items);
+    const candidates = await collectWatchTabCandidates(watchUrl);
+    if (!candidates.length) return [];
+    const merged = [];
+    for (const candidate of candidates) {
+      try {
+        const ranked = await listWatchFramesWithInnerText(candidate.id);
+        const tried = /* @__PURE__ */ new Set();
+        const tryOrder = [...ranked.map((r) => r.frameId), 0];
+        for (const fid of tryOrder) {
+          if (tried.has(fid)) continue;
+          tried.add(fid);
+          try {
+            const res = (
+              /** @type {{ ok?: boolean, items?: unknown }|null} */
+              await tabsSendMessageWithRetry(
+                candidate.id,
+                {
+                  type: "NLS_EXPORT_INTERCEPT_CACHE",
+                  ...opts.deep ? { deep: true } : {}
+                },
+                { frameId: fid, maxAttempts: 5, delayMs: 90 }
+              )
+            );
+            if (!res || res.ok !== true) continue;
+            merged.push(...normalizeInterceptCacheItems(res.items));
+          } catch {
+          }
+        }
+      } catch {
+      }
+    }
+    return mergeInterceptCacheItems(merged);
   }
   function mergeCommentsWithInterceptCache(entries, items, opts = {}) {
     if (!Array.isArray(entries) || entries.length === 0 || items.length === 0) {
@@ -2511,7 +2734,7 @@
       renderUserRooms([]);
       return;
     }
-    const snapshotKey = `${lv}|${url}|s10`;
+    const snapshotKey = `${lv}|${url}|s11`;
     if (watchMetaCache.key !== snapshotKey || !watchMetaCache.snapshot) {
       watchMetaCache.key = snapshotKey;
       const { snapshot } = await requestWatchPageSnapshotFromOpenTab(url);
@@ -2521,6 +2744,14 @@
     const key = commentsStorageKey(lv);
     const data = await chrome.storage.local.get(key);
     let arr = Array.isArray(data[key]) ? data[key] : [];
+    const normalizedStored = normalizeStoredCommentEntries(
+      /** @type {PopupCommentEntry[]} */
+      arr
+    );
+    if (normalizedStored.changed) {
+      arr = normalizedStored.next;
+      await storageSetSafe({ [key]: arr });
+    }
     STORY_AVATAR_DIAG_STATE.total = arr.length;
     STORY_AVATAR_DIAG_STATE.withUid = countEntriesWithUserId(arr);
     STORY_AVATAR_DIAG_STATE.withAvatar = countEntriesWithAvatar(arr);

@@ -76,17 +76,54 @@
   (() => {
     "use strict";
     if (window.__NLS_PAGE_INTERCEPT__) return;
-    const host = String(window.location?.host || "");
-    const path = String(window.location?.pathname || "");
-    const isNicoHost = host.endsWith(".nicovideo.jp") || host === "nicovideo.jp";
-    const isWatchPage = isNicoHost && (path.startsWith("/watch/") || path.startsWith("/embed/"));
-    const isLocalDev = host === "127.0.0.1:3456" || host === "localhost:3456";
+    const href = String(window.location?.href || "");
+    const referrer = String(document.referrer || "");
+    const parseUrl = (raw) => {
+      try {
+        return new URL(String(raw || ""));
+      } catch {
+        return null;
+      }
+    };
+    const isNicoHost = (h) => String(h || "").endsWith(".nicovideo.jp") || String(h || "") === "nicovideo.jp";
+    const isLocalHost = (h) => String(h || "") === "127.0.0.1:3456" || String(h || "") === "localhost:3456";
+    const isWatchLikePath = (p) => String(p || "").startsWith("/watch/") || String(p || "").startsWith("/embed/");
+    const here = parseUrl(href);
+    const ref = parseUrl(referrer);
+    const host = String(here?.host || window.location?.host || "");
+    const path = String(here?.pathname || window.location?.pathname || "");
+    const isAboutLikeFrame = /^(about:blank|about:srcdoc|blob:|data:)/i.test(href);
+    const isRefWatchPage = Boolean(
+      ref && (isNicoHost(ref.host) || isLocalHost(ref.host)) && isWatchLikePath(ref.pathname)
+    );
+    const isWatchPage = isNicoHost(host) && isWatchLikePath(path) || isAboutLikeFrame && isRefWatchPage;
+    const isLocalDev = isLocalHost(host) || isAboutLikeFrame && Boolean(ref && isLocalHost(ref.host));
     if (!isWatchPage && !isLocalDev) return;
     window.__NLS_PAGE_INTERCEPT__ = true;
     const MSG_TYPE = "NLS_INTERCEPT_USERID";
     const MSG_STATISTICS = "NLS_INTERCEPT_STATISTICS";
     const batch = /* @__PURE__ */ new Map();
     let timer = null;
+    const diag = {
+      enqueued: 0,
+      posted: 0,
+      wsMessages: 0,
+      fetchHits: 0
+    };
+    function publishDiag() {
+      const root = document.documentElement;
+      if (!root) return;
+      root.setAttribute("data-nls-page-intercept", "1");
+      root.setAttribute("data-nls-page-intercept-enqueued", String(diag.enqueued));
+      root.setAttribute("data-nls-page-intercept-posted", String(diag.posted));
+      root.setAttribute("data-nls-page-intercept-ws", String(diag.wsMessages));
+      root.setAttribute("data-nls-page-intercept-fetch", String(diag.fetchHits));
+      if (href) root.setAttribute("data-nls-page-intercept-href", href.slice(0, 240));
+      if (referrer) {
+        root.setAttribute("data-nls-page-intercept-referrer", referrer.slice(0, 240));
+      }
+    }
+    publishDiag();
     const knownNames = /* @__PURE__ */ new Map();
     const knownAvatars = /* @__PURE__ */ new Map();
     function flush() {
@@ -106,6 +143,8 @@
       }
       batch.clear();
       if (entries.length > 0) {
+        diag.posted += entries.length;
+        publishDiag();
         window.postMessage({ type: MSG_TYPE, entries }, "*");
       }
     }
@@ -121,6 +160,8 @@
       const name = String(nickname ?? "").trim();
       const av = normalizeAvatarUrl(avatarUrl);
       if (!uid && !name && !av) return;
+      diag.enqueued += 1;
+      publishDiag();
       if (name && uid) knownNames.set(uid, name);
       if (av && uid) knownAvatars.set(uid, av);
       const prev = batch.get(no);
@@ -339,6 +380,8 @@
           const ws = new target(...args);
           ws.addEventListener("message", (e) => {
             try {
+              diag.wsMessages += 1;
+              publishDiag();
               tryProcess(e.data);
             } catch {
             }
@@ -356,25 +399,36 @@
     const origFetch = window.fetch;
     if (typeof origFetch === "function") {
       window.fetch = function(...args) {
-        let p;
-        try {
-          p = origFetch.apply(this, args);
-        } catch (syncErr) {
-          throw syncErr;
-        }
+        const p = origFetch.apply(this, args);
         void (async () => {
           try {
             const res = await p;
             const url = typeof args[0] === "string" ? args[0] : args[0]?.url || "";
-            const isNico = url.includes("nicovideo.jp") || url.includes("nimg.jp") || url.includes("dmc.nico") || url.includes("nicolive") || url.includes("127.0.0.1:3456") || url.includes("localhost:3456");
-            if (isNico) {
-              const ct = res.headers?.get("content-type") || "";
-              if (ct.includes("json") || ct.includes("protobuf") || ct.includes("octet")) {
-                const clone = res.clone();
+            const isNico = url.includes("nicovideo.jp") || url.includes("nimg.jp") || url.includes("dmc.nico") || url.includes("nicolive") || url.includes("ndgr") || url.includes("127.0.0.1:3456") || url.includes("localhost:3456");
+            if (!isNico) return;
+            diag.fetchHits += 1;
+            publishDiag();
+            const ct = res.headers?.get("content-type") || "";
+            const isBinary = ct.includes("protobuf") || ct.includes("octet") || ct.includes("grpc");
+            const isJson = ct.includes("json");
+            if (!isBinary && !isJson) return;
+            const clone = res.clone();
+            if (isBinary && clone.body) {
+              const reader = clone.body.getReader();
+              void (async () => {
                 try {
-                  tryProcess(await clone.arrayBuffer());
+                  for (; ; ) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    if (value) tryProcessBinaryBuffer(value);
+                  }
                 } catch {
                 }
+              })();
+            } else {
+              try {
+                tryProcess(await clone.arrayBuffer());
+              } catch {
               }
             }
           } catch {
