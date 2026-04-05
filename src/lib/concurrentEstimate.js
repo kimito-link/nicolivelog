@@ -20,6 +20,8 @@
 
 /** @type {number} */
 export const DEFAULT_WINDOW_MS = 5 * 60 * 1000;
+export const DIRECT_VIEWERS_FRESH_MS = 75 * 1000;
+export const DIRECT_VIEWERS_NOWCAST_MAX_MS = 180 * 1000;
 
 /**
  * 動的倍率テーブル（来場者数 → 倍率）
@@ -48,6 +50,43 @@ const MULTIPLIER_TABLE = /** @type {const} */ ([
  * @type {number}
  */
 const VISITOR_SOFT_CAP_RATIO = 0.35;
+
+/**
+ * @param {number} value
+ * @param {number} min
+ * @param {number} max
+ * @returns {number}
+ */
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+/**
+ * statistics.viewers の実測更新間隔ヒントがある場合の freshness 閾値を返す。
+ * @param {number|undefined|null} officialViewerIntervalMs
+ * @returns {{ freshMs: number, nowcastMaxMs: number }}
+ */
+function resolveDirectViewersThresholds(officialViewerIntervalMs) {
+  const hinted =
+    typeof officialViewerIntervalMs === 'number' &&
+    Number.isFinite(officialViewerIntervalMs) &&
+    officialViewerIntervalMs > 0
+      ? officialViewerIntervalMs
+      : null;
+  if (hinted == null) {
+    return {
+      freshMs: DIRECT_VIEWERS_FRESH_MS,
+      nowcastMaxMs: DIRECT_VIEWERS_NOWCAST_MAX_MS
+    };
+  }
+  const freshMs = clamp(Math.round(hinted * 1.6), 45_000, 120_000);
+  const nowcastMaxMs = clamp(
+    Math.round(hinted * 4),
+    freshMs + 45_000,
+    5 * 60 * 1000
+  );
+  return { freshMs, nowcastMaxMs };
+}
 
 /**
  * 来場者数から動的倍率を算出（対数補間）。
@@ -195,5 +234,178 @@ export function estimateConcurrentViewers({
     signalB,
     retentionPct: retPct != null ? Math.round(retPct * 100) : null,
     streamAgeMin: hasAge ? /** @type {number} */ (streamAgeMin) : null,
+  };
+}
+
+/**
+ * statistics.comments の増分に対して、実際に受信できたコメント数の比率を返す。
+ * 取得元が無い／増分ゼロのときは「欠落なし」とみなして 1 を返す。
+ *
+ * @param {object} params
+ * @param {number} [params.previousStatisticsComments]
+ * @param {number} [params.currentStatisticsComments]
+ * @param {number} [params.receivedCommentsDelta]
+ * @returns {number}
+ */
+export function calcCommentCaptureRatio({
+  previousStatisticsComments,
+  currentStatisticsComments,
+  receivedCommentsDelta
+}) {
+  const prev = Number(previousStatisticsComments);
+  const curr = Number(currentStatisticsComments);
+  const received = Number(receivedCommentsDelta);
+  if (!Number.isFinite(prev) || !Number.isFinite(curr)) return 1;
+  const statsDelta = curr - prev;
+  if (!(statsDelta > 0)) return 1;
+  if (!Number.isFinite(received)) return 0;
+  return clamp(received / statsDelta, 0, 1);
+}
+
+/**
+ * @typedef {{
+ *   estimated: number,
+ *   lower: number,
+ *   upper: number,
+ *   confidence: number,
+ *   method: 'official'|'nowcast'|'fallback',
+ *   capped: boolean,
+ *   freshnessMs: number|null,
+ *   captureRatio: number|null,
+ *   base: ConcurrentEstimateResult
+ * }} ConcurrentResolutionResult
+ */
+
+/**
+ * direct viewers → nowcast → 現行推定 fallback の順で同接表示値を解決する。
+ *
+ * @param {object} params
+ * @param {number} [params.nowMs]
+ * @param {number} [params.officialViewers]
+ * @param {number} [params.officialUpdatedAtMs]
+ * @param {number} [params.officialViewerIntervalMs]
+ * @param {number} [params.previousStatisticsComments]
+ * @param {number} [params.currentStatisticsComments]
+ * @param {number} [params.receivedCommentsDelta]
+ * @param {number} params.recentActiveUsers
+ * @param {number} [params.totalVisitors]
+ * @param {number} [params.streamAgeMin]
+ * @param {number} [params.multiplier]
+ * @returns {ConcurrentResolutionResult}
+ */
+export function resolveConcurrentViewers({
+  nowMs,
+  officialViewers,
+  officialUpdatedAtMs,
+  officialViewerIntervalMs,
+  previousStatisticsComments,
+  currentStatisticsComments,
+  receivedCommentsDelta,
+  recentActiveUsers,
+  totalVisitors,
+  streamAgeMin,
+  multiplier
+}) {
+  const base = estimateConcurrentViewers({
+    recentActiveUsers,
+    totalVisitors,
+    streamAgeMin,
+    multiplier
+  });
+
+  const now = typeof nowMs === 'number' && Number.isFinite(nowMs) ? nowMs : Date.now();
+  const official =
+    typeof officialViewers === 'number' && Number.isFinite(officialViewers) && officialViewers >= 0
+      ? Math.round(officialViewers)
+      : null;
+  const updatedAt =
+    typeof officialUpdatedAtMs === 'number' && Number.isFinite(officialUpdatedAtMs)
+      ? officialUpdatedAtMs
+      : null;
+  const freshnessMs =
+    official != null && updatedAt != null ? Math.max(0, now - updatedAt) : null;
+  const thresholds = resolveDirectViewersThresholds(officialViewerIntervalMs);
+  const captureRatio =
+    previousStatisticsComments != null || currentStatisticsComments != null || receivedCommentsDelta != null
+      ? calcCommentCaptureRatio({
+          previousStatisticsComments,
+          currentStatisticsComments,
+          receivedCommentsDelta
+        })
+      : null;
+  const capture = captureRatio == null ? 1 : captureRatio;
+
+  if (official != null && freshnessMs != null && freshnessMs <= thresholds.freshMs) {
+    return {
+      estimated: official,
+      lower: official,
+      upper: official,
+      confidence: 0.98,
+      method: 'official',
+      capped: false,
+      freshnessMs,
+      captureRatio,
+      base
+    };
+  }
+
+  if (official != null && freshnessMs != null && freshnessMs <= thresholds.nowcastMaxMs) {
+    const freshnessRatio =
+      (freshnessMs - thresholds.freshMs) /
+      Math.max(1, thresholds.nowcastMaxMs - thresholds.freshMs);
+    const driftWeight = clamp(freshnessRatio * (0.35 + capture * 0.65), 0, 0.65);
+    const target = base.estimated > 0 ? base.estimated : official;
+    const rawEstimate = official + (target - official) * driftWeight;
+    const bandRatio = clamp(0.10 + freshnessRatio * 0.08 + (1 - capture) * 0.10, 0.08, 0.30);
+    const estimated = clamp(
+      Math.round(rawEstimate),
+      Math.max(0, Math.round(official * (1 - bandRatio))),
+      Math.round(official * (1 + bandRatio))
+    );
+    const confidence = clamp(
+      0.88 - freshnessRatio * 0.18 - (1 - capture) * 0.18,
+      0.45,
+      0.9
+    );
+    const rangeRatio = clamp(0.08 + freshnessRatio * 0.10 + (1 - capture) * 0.10, 0.08, 0.32);
+    return {
+      estimated,
+      lower: Math.max(0, Math.round(estimated * (1 - rangeRatio))),
+      upper: Math.round(estimated * (1 + rangeRatio)),
+      confidence,
+      method: 'nowcast',
+      capped: base.capped,
+      freshnessMs,
+      captureRatio,
+      base
+    };
+  }
+
+  const fallbackRangeRatio =
+    base.method === 'combined'
+      ? 0.20
+      : base.method === 'active_only'
+        ? 0.28
+        : base.method === 'retention_only'
+          ? 0.32
+          : 0.5;
+  const fallbackConfidence =
+    base.method === 'combined'
+      ? 0.62
+      : base.method === 'active_only'
+        ? 0.52
+        : base.method === 'retention_only'
+          ? 0.45
+          : 0.2;
+  return {
+    estimated: base.estimated,
+    lower: Math.max(0, Math.round(base.estimated * (1 - fallbackRangeRatio))),
+    upper: Math.round(base.estimated * (1 + fallbackRangeRatio)),
+    confidence: fallbackConfidence,
+    method: 'fallback',
+    capped: base.capped,
+    freshnessMs,
+    captureRatio,
+    base
   };
 }

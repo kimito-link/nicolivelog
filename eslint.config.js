@@ -63,7 +63,9 @@ export default [
       globals: {
         ...globals.node,
         ...globals.es2021,
-        chrome: 'readonly'
+        ...globals.browser,
+        chrome: 'readonly',
+        Node: 'readonly'
       }
     },
     rules: {

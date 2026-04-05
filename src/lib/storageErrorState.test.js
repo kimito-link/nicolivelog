@@ -3,6 +3,13 @@ import {
   buildStorageWriteErrorPayload,
   storageErrorRelevantToLiveId
 } from './storageErrorState.js';
+import { KEY_STORAGE_WRITE_ERROR } from './storageKeys.js';
+
+describe('storage key contract', () => {
+  it('書き込みエラーは nls_storage_write_error に保存される（README・ポップアップと一致）', () => {
+    expect(KEY_STORAGE_WRITE_ERROR).toBe('nls_storage_write_error');
+  });
+});
 
 describe('buildStorageWriteErrorPayload', () => {
   it('Error から message を短く取る', () => {

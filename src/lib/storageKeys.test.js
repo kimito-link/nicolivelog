@@ -3,10 +3,12 @@ import {
   KEY_AUTO_BACKUP_STATE,
   KEY_COMMENT_ENTER_SEND,
   KEY_STORY_GROWTH_COLLAPSED,
+  KEY_SUPPORT_VISUAL_EXPANDED,
   KEY_LAST_WATCH_URL,
   KEY_RECORDING,
   KEY_SELF_POSTED_RECENTS,
   KEY_STORAGE_WRITE_ERROR,
+  KEY_COMMENT_PANEL_STATUS,
   INLINE_PANEL_WIDTH_PLAYER_ROW,
   INLINE_PANEL_WIDTH_VIDEO,
   commentsStorageKey,
@@ -20,10 +22,12 @@ describe('storage key constants', () => {
     expect(KEY_RECORDING).toMatch(/^nls_/);
     expect(KEY_LAST_WATCH_URL).toMatch(/^nls_/);
     expect(KEY_STORAGE_WRITE_ERROR).toMatch(/^nls_/);
+    expect(KEY_COMMENT_PANEL_STATUS).toMatch(/^nls_/);
     expect(KEY_AUTO_BACKUP_STATE).toMatch(/^nls_/);
     expect(KEY_SELF_POSTED_RECENTS).toMatch(/^nls_/);
     expect(KEY_COMMENT_ENTER_SEND).toMatch(/^nls_/);
     expect(KEY_STORY_GROWTH_COLLAPSED).toMatch(/^nls_/);
+    expect(KEY_SUPPORT_VISUAL_EXPANDED).toMatch(/^nls_/);
   });
 
   it('commentsStorageKey は trim + 小文字', () => {

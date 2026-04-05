@@ -20,6 +20,11 @@ describe('findNicoCommentPanel', () => {
     document.body.innerHTML = '<div class="comment-panel" id="cp"></div>';
     expect(findNicoCommentPanel(document)?.id).toBe('cp');
   });
+
+  it('いずれのセレクタにも合致しなければ null（改修検知の前提）', () => {
+    document.body.innerHTML = '<div class="other-panel"></div>';
+    expect(findNicoCommentPanel(document)).toBeNull();
+  });
 });
 
 describe('findCommentListScrollHost', () => {

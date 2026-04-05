@@ -67,6 +67,7 @@
   var KEY_RECORDING = "nls_recording_enabled";
   var KEY_LAST_WATCH_URL = "nls_last_watch_url";
   var KEY_STORAGE_WRITE_ERROR = "nls_storage_write_error";
+  var KEY_COMMENT_PANEL_STATUS = "nls_comment_panel_status";
   var KEY_AUTO_BACKUP_STATE = "nls_auto_backup_state";
   var KEY_POPUP_FRAME = "nls_popup_frame";
   var KEY_POPUP_FRAME_CUSTOM = "nls_popup_frame_custom";
@@ -1446,7 +1447,7 @@
     const left = Number(rect.left) || 0;
     const vw = Number(viewport.innerWidth) || 0;
     const vh = Number(viewport.innerHeight) || 0;
-    if (w < 280 || h < 150) return false;
+    if (w < 260 || h < 140) return false;
     if (top > vh - 80 || left > vw - 80) return false;
     const aspect = w / Math.max(h, 1);
     if (aspect < 1.02 || aspect > 3.2) return false;
@@ -1621,6 +1622,11 @@
 
   // src/lib/concurrentEstimate.js
   var DEFAULT_WINDOW_MS = 5 * 60 * 1e3;
+  var DIRECT_VIEWERS_FRESH_MS = 75 * 1e3;
+  var DIRECT_VIEWERS_NOWCAST_MAX_MS = 180 * 1e3;
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
   function countRecentActiveUsers(userTimestamps, now, windowMs) {
     const w = typeof windowMs === "number" && windowMs > 0 ? windowMs : DEFAULT_WINDOW_MS;
     const cutoff = now - w;
@@ -1629,6 +1635,69 @@
       if (ts >= cutoff) count++;
     }
     return count;
+  }
+  function calcCommentCaptureRatio({
+    previousStatisticsComments,
+    currentStatisticsComments,
+    receivedCommentsDelta
+  }) {
+    const prev = Number(previousStatisticsComments);
+    const curr = Number(currentStatisticsComments);
+    const received = Number(receivedCommentsDelta);
+    if (!Number.isFinite(prev) || !Number.isFinite(curr)) return 1;
+    const statsDelta = curr - prev;
+    if (!(statsDelta > 0)) return 1;
+    if (!Number.isFinite(received)) return 0;
+    return clamp(received / statsDelta, 0, 1);
+  }
+
+  // src/lib/officialStatsWindow.js
+  function summarizeOfficialCommentHistory({
+    history,
+    nowMs,
+    targetWindowMs = 60 * 1e3,
+    minWindowMs = 15 * 1e3
+  }) {
+    if (!Array.isArray(history) || history.length < 2) return null;
+    const now = typeof nowMs === "number" && Number.isFinite(nowMs) ? nowMs : Date.now();
+    const valid = history.map((sample) => ({
+      at: Number(sample?.at),
+      statisticsComments: Number(sample?.statisticsComments),
+      recordedComments: Number(sample?.recordedComments)
+    })).filter(
+      (sample) => Number.isFinite(sample.at) && sample.at <= now && Number.isFinite(sample.statisticsComments) && sample.statisticsComments >= 0 && Number.isFinite(sample.recordedComments) && sample.recordedComments >= 0
+    ).sort((a, b) => a.at - b.at);
+    if (valid.length < 2) return null;
+    const current = valid[valid.length - 1];
+    let previous = null;
+    for (let i = valid.length - 2; i >= 0; i -= 1) {
+      const candidate = valid[i];
+      const windowMs = current.at - candidate.at;
+      if (!(windowMs >= minWindowMs)) continue;
+      previous = candidate;
+      if (windowMs >= targetWindowMs) break;
+    }
+    if (!previous) return null;
+    const statisticsCommentsDelta = Math.max(
+      0,
+      current.statisticsComments - previous.statisticsComments
+    );
+    const receivedCommentsDelta = Math.max(
+      0,
+      current.recordedComments - previous.recordedComments
+    );
+    return {
+      previousStatisticsComments: previous.statisticsComments,
+      currentStatisticsComments: current.statisticsComments,
+      receivedCommentsDelta,
+      statisticsCommentsDelta,
+      captureRatio: calcCommentCaptureRatio({
+        previousStatisticsComments: previous.statisticsComments,
+        currentStatisticsComments: current.statisticsComments,
+        receivedCommentsDelta
+      }),
+      sampleWindowMs: Math.max(0, current.at - previous.at)
+    };
   }
 
   // src/extension/content-entry.js
@@ -1656,6 +1725,14 @@
   var wsViewerCount = null;
   var wsCommentCount = null;
   var wsViewerCountUpdatedAt = 0;
+  var officialViewerCount = null;
+  var officialCommentCount = null;
+  var officialStatsUpdatedAt = 0;
+  var officialViewerIntervalMs = null;
+  var lastOfficialViewerTickAt = 0;
+  var officialViewerIntervals = [];
+  var officialCommentHistory = [];
+  var observedRecordedCommentCount = 0;
   var programBeginAtMs = null;
   var pendingRoots = /* @__PURE__ */ new Set();
   var flushTimer = null;
@@ -1938,10 +2015,125 @@
   var interceptedNicknames = /* @__PURE__ */ new Map();
   var interceptedAvatars = /* @__PURE__ */ new Map();
   var INTERCEPT_MAP_MAX = 8e3;
+  var ndgrChatRowsPending = [];
+  var ndgrChatRowsFlushTimer = null;
+  var NDGR_CHAT_ROWS_FLUSH_MS = 120;
+  function clearNdgrChatRowsPending() {
+    ndgrChatRowsPending.length = 0;
+    if (ndgrChatRowsFlushTimer != null) {
+      clearTimeout(ndgrChatRowsFlushTimer);
+      ndgrChatRowsFlushTimer = null;
+    }
+  }
+  async function flushNdgrChatRowsBatch(batch) {
+    if (!batch.length) return;
+    const byKey = /* @__PURE__ */ new Map();
+    for (const r of batch) {
+      if (!r || typeof r !== "object") continue;
+      const no = String(r.commentNo ?? "").trim();
+      const text = normalizeCommentText(r.text);
+      if (!no || !text) continue;
+      const k = `${no}	${text}`;
+      const uid = String(r.userId || "").trim();
+      const nick = String(r.nickname || "").trim();
+      const prev = byKey.get(k);
+      if (!prev) {
+        byKey.set(k, {
+          commentNo: no,
+          text,
+          userId: uid || null,
+          ...nick ? { nickname: nick } : {}
+        });
+        continue;
+      }
+      const mUid = uid || String(prev.userId || "").trim();
+      const mNick = nick || String(prev.nickname || "").trim();
+      byKey.set(k, {
+        commentNo: no,
+        text,
+        userId: mUid || null,
+        ...mNick ? { nickname: mNick } : {}
+      });
+    }
+    const merged = [...byKey.values()];
+    await persistCommentRows(merged);
+  }
+  function schedulePersistNdgrChatRows(rows) {
+    if (!Array.isArray(rows) || !rows.length) return;
+    ndgrChatRowsPending.push(...rows);
+    if (ndgrChatRowsFlushTimer != null) return;
+    ndgrChatRowsFlushTimer = setTimeout(() => {
+      ndgrChatRowsFlushTimer = null;
+      const slice = ndgrChatRowsPending;
+      ndgrChatRowsPending = [];
+      void flushNdgrChatRowsBatch(slice);
+    }, NDGR_CHAT_ROWS_FLUSH_MS);
+  }
   var broadcasterUidCache = "";
   var broadcasterUidCacheAt = 0;
   function isHttpAvatarUrl(v) {
     return /^https?:\/\//i.test(String(v || "").trim());
+  }
+  function resetOfficialStatsState() {
+    officialViewerCount = null;
+    officialCommentCount = null;
+    officialStatsUpdatedAt = 0;
+    officialViewerIntervalMs = null;
+    lastOfficialViewerTickAt = 0;
+    officialViewerIntervals.length = 0;
+    resetOfficialCommentSamplingState();
+  }
+  function resetOfficialCommentSamplingState() {
+    officialCommentHistory.length = 0;
+    observedRecordedCommentCount = 0;
+  }
+  function noteOfficialViewerTick(at) {
+    if (!(at > 0)) return;
+    if (lastOfficialViewerTickAt > 0) {
+      const delta = at - lastOfficialViewerTickAt;
+      if (delta >= 15e3 && delta <= 5 * 60 * 1e3) {
+        officialViewerIntervals.push(delta);
+        while (officialViewerIntervals.length > 8) officialViewerIntervals.shift();
+        const sorted = [...officialViewerIntervals].sort((a, b) => a - b);
+        const mid = Math.floor(sorted.length / 2);
+        officialViewerIntervalMs = sorted.length % 2 === 1 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
+      }
+    }
+    lastOfficialViewerTickAt = at;
+  }
+  function noteOfficialCommentSample(at) {
+    if (!recording || !liveId || !locationAllowsCommentRecording() || !Number.isFinite(at) || at <= 0 || officialCommentCount == null || !Number.isFinite(officialCommentCount) || officialCommentCount < 0) {
+      return;
+    }
+    const next = {
+      at,
+      statisticsComments: officialCommentCount,
+      recordedComments: observedRecordedCommentCount
+    };
+    const last = officialCommentHistory[officialCommentHistory.length - 1];
+    if (last && last.statisticsComments === next.statisticsComments && last.recordedComments === next.recordedComments) {
+      last.at = next.at;
+      return;
+    }
+    officialCommentHistory.push(next);
+    while (officialCommentHistory.length > 48 || officialCommentHistory.length > 2 && next.at - officialCommentHistory[0].at > 15 * 60 * 1e3) {
+      officialCommentHistory.shift();
+    }
+  }
+  function updateOfficialStatistics(stats) {
+    const at = typeof stats?.observedAt === "number" && Number.isFinite(stats.observedAt) ? stats.observedAt : Date.now();
+    let touched = false;
+    if (typeof stats?.viewers === "number" && Number.isFinite(stats.viewers) && stats.viewers >= 0) {
+      officialViewerCount = stats.viewers;
+      officialStatsUpdatedAt = at;
+      noteOfficialViewerTick(at);
+      touched = true;
+    }
+    if (typeof stats?.comments === "number" && Number.isFinite(stats.comments) && stats.comments >= 0) {
+      officialCommentCount = stats.comments;
+      touched = true;
+    }
+    if (touched) noteOfficialCommentSample(at);
   }
   window.addEventListener("message", (e) => {
     if (e.source !== window) return;
@@ -1955,15 +2147,21 @@
       return;
     }
     if (e.data.type === "NLS_INTERCEPT_STATISTICS") {
+      const now = Date.now();
       const v = e.data.viewers;
       if (typeof v === "number" && Number.isFinite(v) && v >= 0) {
         wsViewerCount = v;
-        wsViewerCountUpdatedAt = Date.now();
+        wsViewerCountUpdatedAt = now;
       }
       const c = e.data.comments;
       if (typeof c === "number" && Number.isFinite(c) && c >= 0) {
         wsCommentCount = c;
       }
+      updateOfficialStatistics({
+        ...typeof v === "number" && Number.isFinite(v) && v >= 0 ? { viewers: v } : {},
+        ...typeof c === "number" && Number.isFinite(c) && c >= 0 ? { comments: c } : {},
+        observedAt: now
+      });
       return;
     }
     if (e.data.type === "NLS_INTERCEPT_EMBEDDED_DATA") {
@@ -1971,6 +2169,25 @@
       if (typeof v === "number" && Number.isFinite(v) && v >= 0 && wsViewerCount == null) {
         wsViewerCount = v;
         wsViewerCountUpdatedAt = Date.now();
+      }
+      return;
+    }
+    if (e.data.type === "NLS_INTERCEPT_CHAT_ROWS") {
+      const raw = e.data.rows;
+      if (Array.isArray(raw) && raw.length) {
+        const cleaned = [];
+        for (const x of raw) {
+          if (!x || typeof x !== "object") continue;
+          const commentNo = String(x.commentNo ?? "").trim();
+          const text = String(x.text ?? "");
+          if (!commentNo) continue;
+          const uid = String(x.userId ?? "").trim();
+          const row = { commentNo, text, userId: uid || null };
+          const nick = String(x.nickname ?? "").trim();
+          if (nick) row.nickname = nick;
+          cleaned.push(row);
+        }
+        if (cleaned.length) schedulePersistNdgrChatRows(cleaned);
       }
       return;
     }
@@ -2092,10 +2309,10 @@
   }
   function darkenHexColor(hex, ratio) {
     const source = normalizeHexColor(hex, "#0f8fd8").slice(1);
-    const clamp = (v) => Math.max(0, Math.min(255, Math.round(v)));
-    const r = clamp(parseInt(source.slice(0, 2), 16) * (1 - ratio));
-    const g = clamp(parseInt(source.slice(2, 4), 16) * (1 - ratio));
-    const b = clamp(parseInt(source.slice(4, 6), 16) * (1 - ratio));
+    const clamp2 = (v) => Math.max(0, Math.min(255, Math.round(v)));
+    const r = clamp2(parseInt(source.slice(0, 2), 16) * (1 - ratio));
+    const g = clamp2(parseInt(source.slice(2, 4), 16) * (1 - ratio));
+    const b = clamp2(parseInt(source.slice(4, 6), 16) * (1 - ratio));
     return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
   }
   function sanitizePageFrameCustom(raw) {
@@ -2408,7 +2625,7 @@
   function isValidFrameTargetElement(el) {
     if (!(el instanceof HTMLElement)) return false;
     const rect = el.getBoundingClientRect();
-    if (rect.width < 280 || rect.height < 150) return false;
+    if (rect.width < 260 || rect.height < 140) return false;
     if (rect.top > window.innerHeight - 80 || rect.left > window.innerWidth - 80) {
       return false;
     }
@@ -2438,7 +2655,14 @@
     return video;
   }
   function findWatchFrameTargetElement() {
-    const video = pickBestInlinePanelVideo();
+    let video = pickBestInlinePanelVideo();
+    if (!video && stableFrameTarget instanceof HTMLVideoElement && stableFrameTarget.isConnected) {
+      const rect = stableFrameTarget.getBoundingClientRect();
+      const st = window.getComputedStyle(stableFrameTarget);
+      if (rect.width >= 260 && rect.height >= 140 && st.visibility !== "hidden" && st.display !== "none") {
+        video = stableFrameTarget;
+      }
+    }
     if (video) {
       stableFrameTarget = video;
       return video;
@@ -2990,16 +3214,28 @@
     const viewer = collectLoggedInViewerProfile(document, url);
     const WS_STALE_MS = 12e4;
     const wsRecent = wsViewerCount != null && wsViewerCountUpdatedAt > 0 && Date.now() - wsViewerCountUpdatedAt < WS_STALE_MS;
+    const officialCommentSummary = summarizeOfficialCommentHistory({
+      history: officialCommentHistory,
+      nowMs: Date.now(),
+      targetWindowMs: typeof officialViewerIntervalMs === "number" && officialViewerIntervalMs > 0 ? officialViewerIntervalMs : 6e4,
+      minWindowMs: 15e3
+    });
     let viewerCountFromDom = null;
+    let viewerCountSource = "none";
     if (wsRecent) {
       viewerCountFromDom = wsViewerCount;
+      viewerCountSource = "ws";
     }
     if (viewerCountFromDom == null) {
       const props = extractEmbeddedDataProps(document);
-      if (props) viewerCountFromDom = pickViewerCountFromEmbeddedData(props);
+      if (props) {
+        viewerCountFromDom = pickViewerCountFromEmbeddedData(props);
+        if (viewerCountFromDom != null) viewerCountSource = "embedded";
+      }
     }
     if (viewerCountFromDom == null) {
       viewerCountFromDom = parseLiveViewerCountFromDocument(document) ?? parseViewerCountFromSnapshotMetas(metas);
+      if (viewerCountFromDom != null) viewerCountSource = "dom";
     }
     const _debug = {};
     try {
@@ -3128,6 +3364,16 @@
       viewerUserId: viewer.viewerUserId,
       broadcasterUserId,
       viewerCountFromDom,
+      viewerCountSource,
+      officialViewerCount: typeof officialViewerCount === "number" && Number.isFinite(officialViewerCount) && officialViewerCount >= 0 ? officialViewerCount : null,
+      officialCommentCount: typeof officialCommentCount === "number" && Number.isFinite(officialCommentCount) && officialCommentCount >= 0 ? officialCommentCount : null,
+      officialStatsUpdatedAt: officialStatsUpdatedAt > 0 ? officialStatsUpdatedAt : null,
+      officialStatsFreshnessMs: officialStatsUpdatedAt > 0 ? Math.max(0, Date.now() - officialStatsUpdatedAt) : null,
+      officialViewerIntervalMs: typeof officialViewerIntervalMs === "number" && officialViewerIntervalMs > 0 ? officialViewerIntervalMs : null,
+      officialStatisticsCommentsDelta: officialCommentSummary?.statisticsCommentsDelta ?? null,
+      officialReceivedCommentsDelta: officialCommentSummary?.receivedCommentsDelta ?? null,
+      officialCommentSampleWindowMs: officialCommentSummary?.sampleWindowMs ?? null,
+      officialCaptureRatio: typeof officialCommentSummary?.captureRatio === "number" ? officialCommentSummary.captureRatio : null,
       totalComments: wsCommentCount,
       streamAgeMin: (() => {
         if (programBeginAtMs != null && Number.isFinite(programBeginAtMs)) {
@@ -3539,6 +3785,8 @@
         enriched
       );
       let { next, storageTouched } = mergedRows;
+      observedRecordedCommentCount = next.length;
+      noteOfficialCommentSample(Date.now());
       const { added } = mergedRows;
       const consumed = consumeMatchedSelfPostedRecents(added, pendingItems, liveId);
       if (consumed.markedIds.size) {
@@ -3633,7 +3881,9 @@
       rememberWatchPageUrl();
       const ctx = resolveWatchPageContext(href, liveId);
       if (ctx.liveIdChanged) {
+        void clearCommentHarvestPanelDiagnostic();
         pendingRoots.clear();
+        clearNdgrChatRowsPending();
         interceptedUsers.clear();
         interceptedNicknames.clear();
         interceptedAvatars.clear();
@@ -3641,7 +3891,9 @@
         broadcasterUidCache = "";
         broadcasterUidCacheAt = 0;
         wsViewerCount = null;
+        wsCommentCount = null;
         wsViewerCountUpdatedAt = 0;
+        resetOfficialStatsState();
         programBeginAtMs = null;
         liveId = ctx.liveId;
         reconnectMutationObserver();
@@ -3667,7 +3919,9 @@
       const fromDom = extractLiveIdFromDom(document);
       const next = fromUrl || fromDom || liveId;
       if (next !== liveId) {
+        void clearCommentHarvestPanelDiagnostic();
         pendingRoots.clear();
+        clearNdgrChatRowsPending();
         interceptedUsers.clear();
         interceptedNicknames.clear();
         interceptedAvatars.clear();
@@ -3675,7 +3929,9 @@
         broadcasterUidCache = "";
         broadcasterUidCacheAt = 0;
         wsViewerCount = null;
+        wsCommentCount = null;
         wsViewerCountUpdatedAt = 0;
+        resetOfficialStatsState();
         programBeginAtMs = null;
         liveId = next;
         reconnectMutationObserver();
@@ -3691,6 +3947,8 @@
       return;
     }
     liveId = null;
+    void clearCommentHarvestPanelDiagnostic();
+    clearNdgrChatRowsPending();
     clearThumbTimer();
     reconnectMutationObserver();
     hidePageFrameOverlay();
@@ -3758,12 +4016,65 @@
       harvestRunning = false;
     }
   }
+  var COMMENT_PANEL_MISS_THRESHOLD = 5;
+  var commentPanelMissStreak = 0;
+  var lastPublishedHarvestPanelState = null;
+  async function clearCommentHarvestPanelDiagnostic() {
+    commentPanelMissStreak = 0;
+    lastPublishedHarvestPanelState = null;
+    if (!hasExtensionContext()) return;
+    try {
+      await chrome.storage.local.remove(KEY_COMMENT_PANEL_STATUS);
+    } catch (err) {
+      if (!isContextInvalidatedError(err)) {
+      }
+    }
+  }
+  async function syncCommentHarvestPanelStatus() {
+    if (!hasExtensionContext()) return;
+    if (!recording || !liveId || !locationAllowsCommentRecording()) {
+      await clearCommentHarvestPanelDiagnostic();
+      return;
+    }
+    const panel = findNicoCommentPanel(document);
+    if (panel) {
+      commentPanelMissStreak = 0;
+      if (lastPublishedHarvestPanelState === "warn") {
+        lastPublishedHarvestPanelState = null;
+        try {
+          await chrome.storage.local.remove(KEY_COMMENT_PANEL_STATUS);
+        } catch (err) {
+          if (!isContextInvalidatedError(err)) {
+          }
+        }
+      }
+      return;
+    }
+    commentPanelMissStreak += 1;
+    if (commentPanelMissStreak < COMMENT_PANEL_MISS_THRESHOLD) return;
+    if (lastPublishedHarvestPanelState === "warn") return;
+    lastPublishedHarvestPanelState = "warn";
+    try {
+      await chrome.storage.local.set({
+        [KEY_COMMENT_PANEL_STATUS]: {
+          ok: false,
+          code: "no_comment_panel",
+          updatedAt: Date.now(),
+          liveId: String(liveId).trim().toLowerCase()
+        }
+      });
+    } catch (err) {
+      if (!isContextInvalidatedError(err)) {
+      }
+    }
+  }
   function scanVisibleCommentsNow() {
     if (!recording || !liveId || !locationAllowsCommentRecording()) return;
     const panel = findNicoCommentPanel(document);
     const root = panel || document.body;
     const rows = extractCommentsFromNode(root);
     void persistCommentRows(rows);
+    void syncCommentHarvestPanelStatus();
   }
   function attachCommentScrollHook() {
     const host = findCommentListScrollHost(document);
@@ -3939,6 +4250,9 @@
           scheduleFlush();
           scheduleDeepHarvest("recording-on");
           tryAttachScrollHookSoon();
+        } else {
+          resetOfficialCommentSamplingState();
+          void clearCommentHarvestPanelDiagnostic();
         }
       }
     });

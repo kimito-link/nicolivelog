@@ -10,6 +10,9 @@ export const KEY_LAST_WATCH_URL = 'nls_last_watch_url';
 /** 直近の chrome.storage.local 書き込み失敗（クォータ等）。成功時にコンテンツ側で削除する */
 export const KEY_STORAGE_WRITE_ERROR = 'nls_storage_write_error';
 
+/** 記録ON時にコメントパネル DOM が見つからない状態の警告（サイト改修の検知用・PII なし） */
+export const KEY_COMMENT_PANEL_STATUS = 'nls_comment_panel_status';
+
 /** 5分ごとの自動バックアップ状態（最終バックアップ時刻など） */
 export const KEY_AUTO_BACKUP_STATE = 'nls_auto_backup_state';
 
@@ -33,6 +36,9 @@ export const KEY_COMMENT_ENTER_SEND = 'nls_comment_enter_send';
 
 /** 応援アイコン列（りんくグリッド）を折りたたむか（true で非表示） */
 export const KEY_STORY_GROWTH_COLLAPSED = 'nls_story_growth_collapsed';
+
+/** 応援ビジュアル詳細（ユーザーレーン・グリッド・診断ブロック）を開いているか */
+export const KEY_SUPPORT_VISUAL_EXPANDED = 'nls_support_visual_expanded';
 
 /** 音声入力: 使用するマイクの deviceId（空は既定） */
 export const KEY_VOICE_INPUT_DEVICE = 'nls_voice_input_device';

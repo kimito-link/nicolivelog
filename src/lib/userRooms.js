@@ -2,6 +2,8 @@
  * 保存済みコメントを「ユーザー＝ルーム」に集計（純関数）
  */
 
+import { isHttpOrHttpsUrl } from './supportGrowthTileSrc.js';
+
 export const UNKNOWN_USER_KEY = '__unknown__';
 
 /**
@@ -20,12 +22,12 @@ export function displayUserLabel(userKey, nickname) {
 }
 
 /**
- * @param {{ userId?: string|null, nickname?: string, text?: string, capturedAt?: number }[]} entries
- * @returns {{ userKey: string, nickname: string, count: number, lastAt: number, lastText: string }[]}
+ * @param {{ userId?: string|null, nickname?: string, text?: string, capturedAt?: number, avatarUrl?: string|null }[]} entries
+ * @returns {{ userKey: string, nickname: string, count: number, lastAt: number, lastText: string, avatarUrl: string }[]}
  */
 export function aggregateCommentsByUser(entries) {
   const list = Array.isArray(entries) ? entries : [];
-  /** @type {Map<string, { userKey: string, nickname: string, count: number, lastAt: number, lastText: string }>} */
+  /** @type {Map<string, { userKey: string, nickname: string, count: number, lastAt: number, lastText: string, avatarUrl: string }>} */
   const map = new Map();
 
   for (const e of list) {
@@ -34,6 +36,8 @@ export function aggregateCommentsByUser(entries) {
     const capturedAt = Number(e?.capturedAt || 0);
     const text = String(e?.text || '').trim();
     const nickname = String(e?.nickname || '').trim();
+    const rawAv = String(e?.avatarUrl || '').trim();
+    const avatarCandidate = isHttpOrHttpsUrl(rawAv) ? rawAv : '';
 
     if (!map.has(userKey)) {
       map.set(userKey, {
@@ -41,7 +45,8 @@ export function aggregateCommentsByUser(entries) {
         nickname: '',
         count: 0,
         lastAt: 0,
-        lastText: ''
+        lastText: '',
+        avatarUrl: ''
       });
     }
     const row = map.get(userKey);
@@ -50,6 +55,7 @@ export function aggregateCommentsByUser(entries) {
     if (capturedAt >= row.lastAt) {
       row.lastAt = capturedAt;
       row.lastText = text.length > 60 ? `${text.slice(0, 60)}…` : text;
+      row.avatarUrl = userKey === UNKNOWN_USER_KEY ? '' : avatarCandidate;
     }
   }
 

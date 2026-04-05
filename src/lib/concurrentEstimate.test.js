@@ -1,8 +1,11 @@
 import { describe, it, expect } from 'vitest';
 import {
+  calcCommentCaptureRatio,
   countRecentActiveUsers,
+  DIRECT_VIEWERS_FRESH_MS,
   estimateConcurrentViewers,
   dynamicMultiplier,
+  resolveConcurrentViewers,
   retentionRate,
   DEFAULT_WINDOW_MS
 } from './concurrentEstimate.js';
@@ -278,5 +281,153 @@ describe('estimateConcurrentViewers', () => {
     });
     expect(r.estimated).toBeGreaterThan(15);
     expect(r.estimated).toBeLessThan(120);
+  });
+});
+
+describe('calcCommentCaptureRatio', () => {
+  it('statistics comments 増分に対する実受信比率を返す', () => {
+    expect(
+      calcCommentCaptureRatio({
+        previousStatisticsComments: 100,
+        currentStatisticsComments: 140,
+        receivedCommentsDelta: 10
+      })
+    ).toBeCloseTo(0.25, 5);
+  });
+
+  it('statistics 増分が 0 以下なら 1 を返す', () => {
+    expect(
+      calcCommentCaptureRatio({
+        previousStatisticsComments: 50,
+        currentStatisticsComments: 50,
+        receivedCommentsDelta: 5
+      })
+    ).toBe(1);
+  });
+
+  it('0..1 にクランプする', () => {
+    expect(
+      calcCommentCaptureRatio({
+        previousStatisticsComments: 0,
+        currentStatisticsComments: 10,
+        receivedCommentsDelta: 50
+      })
+    ).toBe(1);
+    expect(
+      calcCommentCaptureRatio({
+        previousStatisticsComments: 10,
+        currentStatisticsComments: 20,
+        receivedCommentsDelta: -1
+      })
+    ).toBe(0);
+  });
+});
+
+describe('resolveConcurrentViewers', () => {
+  it('fresh な official viewers があれば直値を返す', () => {
+    const now = 1_000_000;
+    const r = resolveConcurrentViewers({
+      nowMs: now,
+      officialViewers: 1234,
+      officialUpdatedAtMs: now - 10_000,
+      recentActiveUsers: 50,
+      totalVisitors: 8000,
+      streamAgeMin: 60
+    });
+    expect(r.method).toBe('official');
+    expect(r.estimated).toBe(1234);
+    expect(r.lower).toBe(1234);
+    expect(r.upper).toBe(1234);
+    expect(r.confidence).toBeGreaterThan(0.95);
+  });
+
+  it('少し古い official viewers は nowcast へ落とす', () => {
+    const now = 1_000_000;
+    const r = resolveConcurrentViewers({
+      nowMs: now,
+      officialViewers: 1000,
+      officialUpdatedAtMs: now - 120_000,
+      previousStatisticsComments: 1000,
+      currentStatisticsComments: 1120,
+      receivedCommentsDelta: 24,
+      recentActiveUsers: 80,
+      totalVisitors: 6000,
+      streamAgeMin: 45
+    });
+    expect(r.method).toBe('nowcast');
+    expect(r.estimated).toBeGreaterThan(900);
+    expect(r.estimated).toBeLessThan(1250);
+    expect(r.lower).toBeLessThan(r.estimated);
+    expect(r.upper).toBeGreaterThan(r.estimated);
+    expect(r.confidence).toBeLessThan(0.95);
+    expect(r.captureRatio).toBeCloseTo(0.2, 5);
+  });
+
+  it('official viewers が無ければ現行推定へフォールバックする', () => {
+    const r = resolveConcurrentViewers({
+      nowMs: 1_000_000,
+      recentActiveUsers: 60,
+      totalVisitors: 8754,
+      streamAgeMin: 173
+    });
+    expect(r.method).toBe('fallback');
+    expect(r.estimated).toBeGreaterThan(800);
+    expect(r.estimated).toBeLessThan(1400);
+    expect(r.base.method).toBe('combined');
+    expect(r.lower).toBeLessThan(r.estimated);
+    expect(r.upper).toBeGreaterThan(r.estimated);
+  });
+
+  it('capture ratio が低いと nowcast の confidence が下がる', () => {
+    const now = 1_000_000;
+    const rich = resolveConcurrentViewers({
+      nowMs: now,
+      officialViewers: 1000,
+      officialUpdatedAtMs: now - 100_000,
+      previousStatisticsComments: 1000,
+      currentStatisticsComments: 1100,
+      receivedCommentsDelta: 90,
+      recentActiveUsers: 70,
+      totalVisitors: 6000,
+      streamAgeMin: 45
+    });
+    const poor = resolveConcurrentViewers({
+      nowMs: now,
+      officialViewers: 1000,
+      officialUpdatedAtMs: now - 100_000,
+      previousStatisticsComments: 1000,
+      currentStatisticsComments: 1100,
+      receivedCommentsDelta: 10,
+      recentActiveUsers: 70,
+      totalVisitors: 6000,
+      streamAgeMin: 45
+    });
+    expect(rich.method).toBe('nowcast');
+    expect(poor.method).toBe('nowcast');
+    expect(poor.confidence).toBeLessThan(rich.confidence);
+  });
+
+  it('official 更新間隔ヒントがあれば freshness を広げられる', () => {
+    const now = 1_000_000;
+    const withoutHint = resolveConcurrentViewers({
+      nowMs: now,
+      officialViewers: 1000,
+      officialUpdatedAtMs: now - (DIRECT_VIEWERS_FRESH_MS + 10_000),
+      recentActiveUsers: 50,
+      totalVisitors: 4000,
+      streamAgeMin: 30
+    });
+    const withHint = resolveConcurrentViewers({
+      nowMs: now,
+      officialViewers: 1000,
+      officialUpdatedAtMs: now - (DIRECT_VIEWERS_FRESH_MS + 10_000),
+      officialViewerIntervalMs: 70_000,
+      recentActiveUsers: 50,
+      totalVisitors: 4000,
+      streamAgeMin: 30
+    });
+    expect(withoutHint.method).toBe('nowcast');
+    expect(withHint.method).toBe('official');
+    expect(withHint.estimated).toBe(1000);
   });
 });

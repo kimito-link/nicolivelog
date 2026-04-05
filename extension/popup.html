@@ -123,6 +123,7 @@
       /* 視聴ページ埋め込み時は「浮いた白箱」枠を付けない（ボーダー・影・大きな角丸を外す） */
       html.nl-inline body .nl-stats,
       html.nl-inline body .nl-record,
+      html.nl-inline body .nl-comment-compose--primary .nl-compose-troubleshoot,
       html.nl-inline body .nl-comment-compose,
       html.nl-inline body #userRoomList,
       html.nl-inline body .nl-watch-meta {
@@ -141,13 +142,6 @@
         border-top: 1px solid color-mix(in srgb, var(--nl-border) 55%, transparent);
         margin-top: 6px;
         padding-top: 6px;
-      }
-
-      html.nl-inline body .nl-voice-os-guide {
-        border: none;
-        background: transparent;
-        padding-left: 0;
-        padding-right: 0;
       }
 
       html.nl-inline body #userRoomList li {
@@ -826,7 +820,8 @@
         flex: 1 1 auto;
         min-height: 0;
         padding: 5px 9px 4px;
-        overflow: hidden;
+        overflow-x: hidden;
+        overflow-y: auto;
       }
 
       .nl-frame-switch {
@@ -838,11 +833,75 @@
         box-shadow: var(--nl-shadow);
       }
 
-      .nl-frame-head {
+      #userRoomList + .nl-frame-switch {
+        margin-top: 10px;
+      }
+
+      .nl-frame-theme-details {
+        margin: 0;
+      }
+
+      .nl-frame-theme-details__summary {
+        cursor: pointer;
+        list-style: none;
         display: flex;
-        justify-content: space-between;
         align-items: center;
-        margin-bottom: 5px;
+        gap: 8px;
+        padding: 6px 4px 8px;
+        min-height: 40px;
+        box-sizing: border-box;
+      }
+
+      .nl-frame-theme-details__summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .nl-frame-theme-details__summary::before {
+        content: '';
+        width: 0.45em;
+        height: 0.45em;
+        border-right: 2px solid var(--nl-accent);
+        border-bottom: 2px solid var(--nl-accent);
+        transform: rotate(-45deg);
+        flex-shrink: 0;
+        margin-top: -0.1em;
+        transition: transform 0.15s ease;
+      }
+
+      .nl-frame-theme-details[open] .nl-frame-theme-details__summary::before {
+        transform: rotate(45deg);
+        margin-top: 0.15em;
+      }
+
+      .nl-frame-theme-details__summary:focus-visible {
+        outline: 2px solid var(--nl-accent);
+        outline-offset: 2px;
+        border-radius: 9px;
+      }
+
+      .nl-frame-theme-details__summary-text {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 6px 10px;
+        min-width: 0;
+      }
+
+      .nl-frame-theme-details__summary-label {
+        font-size: clamp(11px, calc(var(--nl-base-font) * 0.86), 14px);
+        font-weight: 800;
+        color: var(--nl-accent);
+        line-height: 1.2;
+      }
+
+      .nl-frame-theme-details__body {
+        padding-top: 2px;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .nl-frame-theme-details__summary::before {
+          transition: none;
+        }
       }
 
       .nl-frame-current {
@@ -1112,8 +1171,165 @@
         border-color: color-mix(in srgb, #8b5cf6 30%, var(--nl-border) 70%);
       }
 
+      .nl-live-stat-card--support-visual {
+        cursor: default;
+      }
+
       .nl-live-stat-card--concurrent {
         border-color: color-mix(in srgb, #f59e0b 30%, var(--nl-border) 70%);
+      }
+
+      .nl-concurrent-body {
+        width: 100%;
+        min-width: 0;
+        min-height: clamp(48px, 14vw, 58px);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      }
+
+      .nl-concurrent-ready {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        width: 100%;
+        min-width: 0;
+      }
+
+      .nl-concurrent-loading {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 2px;
+        width: 100%;
+        min-width: 0;
+        padding: 1px 2px 0;
+        text-align: center;
+      }
+
+      .nl-concurrent-loading[hidden] {
+        display: none !important;
+      }
+
+      .nl-concurrent-loading__rink {
+        width: clamp(28px, 7.5vw, 36px);
+        height: clamp(28px, 7.5vw, 36px);
+        object-fit: contain;
+        border-radius: 999px;
+        background: rgb(255 255 255 / 60%);
+        border: 1px solid rgb(255 255 255 / 50%);
+        box-shadow: 0 1px 4px rgb(2 17 31 / 14%);
+        flex-shrink: 0;
+        animation: nl-concurrent-loading-bob 0.95s ease-in-out infinite;
+        transform-origin: 50% 85%;
+      }
+
+      @keyframes nl-concurrent-loading-bob {
+        0%,
+        100% {
+          transform: translateY(0) rotate(-2deg) scale(1, 1);
+        }
+
+        22% {
+          transform: translateY(-5px) rotate(1.5deg) scale(1.04, 0.96);
+        }
+
+        48% {
+          transform: translateY(-1px) rotate(-0.5deg) scale(0.98, 1.03);
+        }
+
+        72% {
+          transform: translateY(-3px) rotate(1deg) scale(1.02, 0.99);
+        }
+      }
+
+      .nl-concurrent-loading__title {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 2px;
+        font-size: clamp(11px, 2.8vw, 13px);
+        font-weight: 800;
+        color: var(--nl-text);
+        line-height: 1.2;
+      }
+
+      .nl-concurrent-loading__title-dots {
+        display: inline-flex;
+        align-items: flex-end;
+        gap: 2px;
+        height: 1em;
+        padding-bottom: 0.12em;
+      }
+
+      .nl-concurrent-loading__dot {
+        width: clamp(2px, 0.55vw, 3px);
+        height: clamp(2px, 0.55vw, 3px);
+        border-radius: 999px;
+        background: currentcolor;
+        opacity: 0.4;
+        animation: nl-concurrent-dot-hop 0.65s ease-in-out infinite;
+      }
+
+      .nl-concurrent-loading__dot:nth-child(2) {
+        animation-delay: 0.1s;
+      }
+
+      .nl-concurrent-loading__dot:nth-child(3) {
+        animation-delay: 0.2s;
+      }
+
+      @keyframes nl-concurrent-dot-hop {
+        0%,
+        100% {
+          transform: translateY(0);
+          opacity: 0.35;
+        }
+
+        45% {
+          transform: translateY(-4px);
+          opacity: 1;
+        }
+      }
+
+      .nl-concurrent-loading__hint {
+        font-size: clamp(7.5px, 2vw, 9.5px);
+        font-weight: 600;
+        color: var(--nl-muted);
+        line-height: 1.25;
+        max-width: 100%;
+        padding: 0 1px;
+        animation: nl-concurrent-hint-breathe 2.2s ease-in-out infinite;
+      }
+
+      @keyframes nl-concurrent-hint-breathe {
+        0%,
+        100% {
+          opacity: 0.62;
+        }
+
+        50% {
+          opacity: 1;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .nl-concurrent-loading__rink {
+          animation: none;
+          transform: none;
+        }
+
+        .nl-concurrent-loading__dot {
+          animation: none;
+          opacity: 0.7;
+        }
+
+        .nl-concurrent-loading__hint {
+          animation: none;
+          opacity: 0.85;
+        }
       }
 
       .nl-live-stat-card--visitors {
@@ -1163,6 +1379,82 @@
         max-width: 100%;
       }
 
+      .nl-top-support-rank {
+        width: 100%;
+        margin-top: 5px;
+        padding-top: 5px;
+        border-top: 1px solid color-mix(in srgb, var(--nl-border) 55%, transparent);
+      }
+
+      .nl-top-support-rank__list {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        width: 100%;
+        min-width: 0;
+        text-align: left;
+      }
+
+      .nl-top-support-rank__line {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 4px 6px;
+        font-size: clamp(8px, 2vw, 10px);
+        line-height: 1.25;
+        color: var(--nl-text);
+        min-width: 0;
+      }
+
+      .nl-top-support-rank__place {
+        flex-shrink: 0;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 1.35em;
+        min-height: 1.35em;
+        padding: 0 0.25em;
+        font-size: 0.95em;
+        font-weight: 800;
+        color: #fff;
+        background: linear-gradient(145deg, #64748b, #475569);
+        border-radius: 999px;
+        line-height: 1;
+      }
+
+      .nl-top-support-rank__place--empty {
+        visibility: hidden;
+        min-width: 1.35em;
+        padding: 0 0.25em;
+        background: transparent;
+      }
+
+      .nl-top-support-rank__count {
+        flex-shrink: 0;
+        font-weight: 800;
+        font-variant-numeric: tabular-nums;
+        color: #0f766e;
+      }
+
+      .nl-top-support-rank__who {
+        flex: 1 1 40%;
+        min-width: 0;
+        font-weight: 600;
+        color: var(--nl-muted);
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .nl-top-support-rank__line--unknown .nl-top-support-rank__who {
+        font-weight: 700;
+        color: var(--nl-text);
+      }
+
+      html.nl-inline body .nl-top-support-rank__line {
+        font-size: clamp(9px, 2.3vw, 11px);
+      }
+
       html.nl-inline body .nl-live-stat-icon {
         width: clamp(36px, 10vw, 52px);
         height: clamp(36px, 10vw, 52px);
@@ -1172,13 +1464,13 @@
         font-size: clamp(18px, 5vw, 28px);
       }
 
-      .nl-live-stat-cards + .nl-comment-compose {
+      .nl-live-stat-cards + .nl-comment-compose--primary {
         margin-top: 5px;
         margin-bottom: 5px;
         padding: 6px 8px;
       }
 
-      .nl-live-stat-cards + .nl-comment-compose textarea {
+      .nl-live-stat-cards + .nl-comment-compose--primary textarea {
         min-height: clamp(36px, 2.8em, 52px);
         max-height: clamp(44px, 3.8em, 64px);
       }
@@ -1229,12 +1521,20 @@
         margin-left: 0;
       }
 
+      /* flex+wrap だと狭い幅でティッカーが全幅を取り、応援・件数列が折り返しで見えなくなることがある */
       .nl-stats-bar {
-        display: flex;
-        flex-wrap: wrap;
+        display: grid;
+        grid-template-columns: max-content minmax(0, 1fr);
         align-items: center;
         gap: 8px 10px;
         margin-bottom: 8px;
+        min-width: 0;
+        position: relative;
+        isolation: isolate;
+        overflow-x: auto;
+        overflow-y: visible;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
       }
 
       .nl-stats-bar .nl-count-hero {
@@ -1374,8 +1674,8 @@
       }
 
       .nl-ticker-latest__text {
-        flex: 1 1 auto;
-        min-width: 0;
+        flex: 1 1 0;
+        min-width: 3em;
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
@@ -1427,6 +1727,146 @@
         flex-shrink: 0;
       }
 
+      button.nl-count-hero {
+        appearance: none;
+        -webkit-appearance: none;
+        font: inherit;
+        color: inherit;
+        text-align: left;
+        background: transparent;
+        border: none;
+        padding: 0;
+        margin-bottom: 8px;
+        cursor: pointer;
+        border-radius: 10px;
+        touch-action: manipulation;
+      }
+
+      button.nl-count-hero:focus-visible {
+        outline: 2px solid var(--nl-accent);
+        outline-offset: 3px;
+      }
+
+      .nl-stats-bar button.nl-count-hero {
+        margin-bottom: 0;
+      }
+
+      .nl-stats-bar button.nl-count-hero--toggle {
+        grid-column: 1;
+        position: relative;
+        z-index: 2;
+        flex-shrink: 0;
+        min-width: min-content;
+        white-space: nowrap;
+        justify-self: start;
+        cursor: default;
+      }
+
+      .nl-stats-bar .nl-comment-ticker {
+        grid-column: 2;
+        position: relative;
+        z-index: 0;
+        min-width: 0;
+        width: 100%;
+        max-width: 100%;
+      }
+
+      .nl-support-visual-details {
+        margin: 8px 0 0;
+        border: 1px solid color-mix(in srgb, var(--nl-border) 85%, transparent);
+        border-radius: 10px;
+        background: rgb(255 255 255 / 45%);
+        scroll-margin-block-start: 12px;
+      }
+
+      html.nl-inline body .nl-support-visual-details {
+        background: rgb(255 255 255 / 35%);
+      }
+
+      .nl-support-visual-details[open] {
+        border-color: color-mix(in srgb, var(--nl-accent) 26%, var(--nl-border));
+        box-shadow: 0 6px 22px rgb(0 0 0 / 8%);
+      }
+
+      .nl-support-visual-details[open] .nl-support-visual-details__summary {
+        background: color-mix(in srgb, var(--nl-accent) 7%, transparent);
+        border-radius: 9px 9px 0 0;
+      }
+
+      .nl-support-visual-details__summary {
+        cursor: default;
+        list-style: none;
+        padding: 10px 12px;
+        min-height: 44px;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: clamp(11px, calc(var(--nl-base-font) * 0.86), 14px);
+        font-weight: 700;
+        color: var(--nl-accent);
+        line-height: 1.25;
+      }
+
+      .nl-support-visual-details__summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .nl-support-visual-details__summary::before {
+        content: '';
+        width: 0.45em;
+        height: 0.45em;
+        border-right: 2px solid currentColor;
+        border-bottom: 2px solid currentColor;
+        transform: rotate(-45deg);
+        flex-shrink: 0;
+        margin-top: -0.15em;
+        transition: transform 0.15s ease;
+      }
+
+      .nl-support-visual-details[open] .nl-support-visual-details__summary::before {
+        transform: rotate(45deg);
+        margin-top: 0.1em;
+      }
+
+      .nl-support-visual-details__summary:focus-visible {
+        outline: 2px solid var(--nl-accent);
+        outline-offset: 2px;
+        border-radius: 9px;
+      }
+
+      .nl-support-visual-details__body {
+        padding: 0 10px 10px;
+        border-top: 1px solid color-mix(in srgb, var(--nl-border) 55%, transparent);
+        /* scrollIntoView / プログラムスクロール時にヘッダー直後で本文が隠れにくくする */
+        scroll-margin-block-start: 10px;
+        transform-origin: top center;
+      }
+
+      .nl-support-visual-details[open] > .nl-support-visual-details__body {
+        animation: nl-support-visual-body-open 0.22s ease-out;
+      }
+
+      @keyframes nl-support-visual-body-open {
+        from {
+          opacity: 0.65;
+          transform: translateY(-6px);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .nl-support-visual-details__summary::before {
+          transition: none;
+        }
+        .nl-support-visual-details[open] > .nl-support-visual-details__body {
+          animation: none;
+        }
+      }
+
       .nl-record {
         display: flex;
         align-items: center;
@@ -1448,6 +1888,95 @@
         flex: 1;
         font-size: clamp(12.5px, calc(var(--nl-base-font) * 0.95), 16px);
         font-weight: 600;
+      }
+
+      .nl-watch-quick-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        margin-bottom: 6px;
+      }
+
+      .nl-troubleshoot-lead {
+        margin: 0 0 6px;
+        font-size: clamp(10px, calc(var(--nl-base-font) * 0.78), 12px);
+        line-height: 1.35;
+        color: var(--nl-muted);
+      }
+
+      .nl-watch-settings-details {
+        margin: 0;
+        border: 1px solid color-mix(in srgb, var(--nl-border) 85%, transparent);
+        border-radius: 10px;
+        background: rgb(255 255 255 / 45%);
+      }
+
+      html.nl-inline body .nl-watch-settings-details {
+        background: rgb(255 255 255 / 35%);
+        border: none;
+        border-radius: 0;
+      }
+
+      .nl-watch-settings-summary {
+        cursor: pointer;
+        list-style: none;
+        padding: 10px 12px;
+        min-height: 44px;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        font-size: clamp(11px, calc(var(--nl-base-font) * 0.86), 14px);
+        font-weight: 700;
+        color: var(--nl-accent);
+        line-height: 1.25;
+      }
+
+      .nl-watch-settings-summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .nl-watch-settings-summary::before {
+        content: '';
+        width: 0.45em;
+        height: 0.45em;
+        border-right: 2px solid currentColor;
+        border-bottom: 2px solid currentColor;
+        transform: rotate(-45deg);
+        flex-shrink: 0;
+        margin-top: -0.15em;
+        margin-right: 8px;
+        transition: transform 0.15s ease;
+      }
+
+      .nl-watch-settings-details[open] .nl-watch-settings-summary::before {
+        transform: rotate(45deg);
+        margin-top: 0.1em;
+      }
+
+      .nl-watch-settings-summary:focus-visible {
+        outline: 2px solid var(--nl-accent);
+        outline-offset: 2px;
+        border-radius: 9px;
+      }
+
+      .nl-watch-settings-body {
+        padding: 0 12px 10px;
+        border-top: 1px solid color-mix(in srgb, var(--nl-border) 55%, transparent);
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+
+      html.nl-inline body .nl-watch-settings-summary {
+        display: none;
+      }
+
+      html.nl-inline body .nl-troubleshoot-lead {
+        display: none;
+      }
+
+      .nl-watch-quick-panel .nl-compose-troubleshoot {
+        margin-top: 0;
       }
 
       .nl-panel-width {
@@ -1520,9 +2049,16 @@
       .nl-compose-send-row {
         margin-top: 8px;
         display: flex;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 6px;
+      }
+
+      .nl-compose-send-actions {
+        display: flex;
         flex-wrap: wrap;
         align-items: center;
-        gap: 8px 12px;
+        gap: 8px;
       }
 
       .nl-compose-send-row #postCommentBtn {
@@ -1530,8 +2066,66 @@
       }
 
       .nl-compose-send-row #postStatus {
-        flex: 1 1 140px;
         min-width: 0;
+      }
+
+      .nl-compose-send-actions .nl-compose-quick-toolbar {
+        flex: 1 1 220px;
+        min-width: min(100%, 200px);
+        margin-top: 0;
+      }
+
+      .nl-compose-quick-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: stretch;
+        gap: 8px;
+        margin-top: 6px;
+      }
+
+      .nl-comment-compose--primary .nl-compose-quick-toolbar #exportJson,
+      .nl-comment-compose--primary .nl-compose-quick-toolbar #captureScreenshot,
+      .nl-comment-compose--primary .nl-compose-quick-toolbar #reloadWatchTabBtn {
+        width: auto;
+        flex: 1 1 92px;
+        min-width: min(100%, 84px);
+        max-width: 100%;
+        box-sizing: border-box;
+      }
+
+      .nl-compose-qbtn__row {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 5px;
+        flex-wrap: wrap;
+        text-align: center;
+      }
+
+      .nl-compose-qbtn__emoji {
+        flex-shrink: 0;
+        font-size: 1.15em;
+        line-height: 1;
+      }
+
+      .nl-compose-qbtn__word {
+        font-weight: 700;
+        line-height: 1.2;
+      }
+
+      .nl-compose-toolbar-hint {
+        margin: 4px 0 6px;
+        font-size: clamp(9px, calc(var(--nl-base-font) * 0.76), 11.5px);
+        line-height: 1.3;
+      }
+
+      .nl-compose-primary-more {
+        margin-top: 4px;
+      }
+
+      html.nl-inline body .nl-comment-compose--primary .nl-compose-quick-toolbar {
+        margin-left: 0;
+        margin-right: 0;
       }
 
       .nl-compose-actions {
@@ -1761,28 +2355,107 @@
         padding: 7px 10px;
       }
 
-      .nl-voice-os-guide {
-        margin-top: 8px;
-        border: 1px dashed var(--nl-border);
+      .nl-voice-guide-details {
+        margin: 10px 0 8px;
+        border: 1px solid color-mix(in srgb, var(--nl-border) 85%, transparent);
         border-radius: 10px;
-        padding: 7px 9px;
-        background: rgb(255 255 255 / 72%);
+        background: linear-gradient(
+          145deg,
+          rgb(255 252 248),
+          rgb(255 244 235 / 95%)
+        );
+        max-width: 100%;
+        box-sizing: border-box;
       }
 
-      .nl-voice-os-guide summary {
+      html.nl-inline body .nl-voice-guide-details {
+        background: rgb(255 250 245 / 88%);
+        border-color: color-mix(in srgb, var(--nl-border) 70%, #c9a574 30%);
+      }
+
+      .nl-voice-guide-summary {
         cursor: pointer;
-        font-size: clamp(11px, calc(var(--nl-base-font) * 0.82), 14px);
-        font-weight: 700;
-        color: var(--nl-muted);
-        list-style-position: outside;
+        list-style: none;
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        padding: 10px 12px;
+        min-height: 44px;
+        box-sizing: border-box;
       }
 
-      .nl-voice-os-guide[open] summary {
-        margin-bottom: 6px;
+      .nl-voice-guide-summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .nl-voice-guide-summary::before {
+        content: '';
+        width: 0.45em;
+        height: 0.45em;
+        border-right: 2px solid var(--nl-accent);
+        border-bottom: 2px solid var(--nl-accent);
+        transform: rotate(-45deg);
+        flex-shrink: 0;
+        margin-top: 0.35em;
+        transition: transform 0.15s ease;
+      }
+
+      .nl-voice-guide-details[open] .nl-voice-guide-summary::before {
+        transform: rotate(45deg);
+        margin-top: 0.2em;
+      }
+
+      .nl-voice-guide-summary:focus-visible {
+        outline: 2px solid var(--nl-accent);
+        outline-offset: 2px;
+        border-radius: 9px;
+      }
+
+      .nl-voice-guide-summary__avatar {
+        flex-shrink: 0;
+        filter: drop-shadow(0 1px 3px rgb(0 0 0 / 10%));
+      }
+
+      .nl-voice-guide-summary__img {
+        display: block;
+        width: clamp(32px, 9vw, 44px);
+        height: auto;
+        object-fit: contain;
+      }
+
+      .nl-voice-guide-summary__main {
+        flex: 1 1 min(0, 100%);
+        min-width: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .nl-voice-guide-summary__title {
+        font-size: clamp(11px, calc(var(--nl-base-font) * 0.86), 14px);
+        font-weight: 800;
         color: var(--nl-text);
+        line-height: 1.25;
       }
 
-      .nl-voice-os-guide-body {
+      .nl-voice-guide-summary__context {
+        font-size: clamp(9px, calc(var(--nl-base-font) * 0.74), 11.5px);
+        font-weight: 600;
+        color: var(--nl-muted);
+        line-height: 1.4;
+      }
+
+      html.nl-inline body .nl-voice-guide-summary__context--popup-only {
+        display: none;
+      }
+
+      html:not(.nl-inline) body .nl-voice-guide-summary__context--inline-only {
+        display: none;
+      }
+
+      .nl-voice-guide-details .nl-voice-os-guide-body {
+        padding: 0 12px 12px;
+        border-top: 1px solid color-mix(in srgb, var(--nl-border) 55%, transparent);
         font-size: clamp(10.5px, calc(var(--nl-base-font) * 0.78), 13.5px);
         line-height: 1.45;
         color: var(--nl-text);
@@ -1792,8 +2465,12 @@
         margin: 0 0 6px;
       }
 
+      .nl-voice-os-guide-body p:last-child {
+        margin-bottom: 0;
+      }
+
       .nl-voice-os-guide-body ul {
-        margin: 0;
+        margin: 0 0 8px;
         padding-left: 1.15em;
       }
 
@@ -1801,7 +2478,7 @@
         margin-bottom: 5px;
       }
 
-      .nl-voice-os-guide kbd {
+      .nl-voice-guide-details kbd {
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
         font-size: 0.9em;
         padding: 1px 5px;
@@ -1811,99 +2488,10 @@
         white-space: nowrap;
       }
 
-      .nl-tanuki-voice-hint {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: flex-start;
-        gap: 10px 12px;
-        margin: 10px 0 8px;
-        padding: clamp(8px, 2vw, 11px) clamp(9px, 2.5vw, 12px);
-        border-radius: 12px;
-        background: linear-gradient(
-          145deg,
-          rgb(255 252 248),
-          rgb(255 244 235 / 95%)
-        );
-        border: 1px solid color-mix(in srgb, var(--nl-border) 55%, #c9a574);
-        max-width: 100%;
-        box-sizing: border-box;
-      }
-
-      html.nl-inline body .nl-tanuki-voice-hint {
-        border-style: solid;
-        background: rgb(255 250 245 / 88%);
-      }
-
-      .nl-tanuki-voice-hint-avatar {
-        flex: 0 0 auto;
-        align-self: flex-end;
-        filter: drop-shadow(0 2px 4px rgb(0 0 0 / 10%));
-      }
-
-      .nl-tanuki-voice-hint-img {
-        display: block;
-        width: clamp(52px, 16vw, 72px);
-        height: auto;
-        max-height: 88px;
-        object-fit: contain;
-      }
-
-      .nl-tanuki-voice-hint-bubble {
-        flex: 1 1 min(100%, 11rem);
-        min-width: 0;
-        position: relative;
-        padding: 10px 12px 11px 14px;
-        margin-left: 2px;
-        background: rgb(255 255 255 / 94%);
-        border: 1px solid var(--nl-border);
-        border-radius: 14px;
-        box-shadow: 0 1px 2px rgb(0 0 0 / 5%);
-      }
-
-      .nl-tanuki-voice-hint-bubble::before {
-        content: '';
-        position: absolute;
-        left: -7px;
-        bottom: 16px;
-        width: 12px;
-        height: 12px;
-        background: inherit;
-        border-left: 1px solid var(--nl-border);
-        border-bottom: 1px solid var(--nl-border);
-        transform: rotate(45deg);
-        border-radius: 0 0 0 3px;
-      }
-
-      .nl-tanuki-voice-hint-title {
-        margin: 0 0 6px;
-        font-size: clamp(11px, calc(var(--nl-base-font) * 0.85), 14px);
-        font-weight: 800;
-        color: #6b4a2a;
-        letter-spacing: 0.02em;
-      }
-
-      .nl-tanuki-voice-hint-body {
-        font-size: clamp(10.5px, calc(var(--nl-base-font) * 0.8), 13.5px);
-        line-height: 1.65;
-        color: var(--nl-text);
-      }
-
-      .nl-tanuki-voice-hint-body p {
-        margin: 0 0 8px;
-      }
-
-      .nl-tanuki-voice-hint-body p:last-child {
-        margin-bottom: 0;
-      }
-
-      .nl-tanuki-voice-hint kbd {
-        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        font-size: 0.88em;
-        padding: 1px 5px;
-        border-radius: 4px;
-        border: 1px solid var(--nl-border);
-        background: var(--nl-bg-soft);
-        white-space: nowrap;
+      @media (prefers-reduced-motion: reduce) {
+        .nl-voice-guide-summary::before {
+          transition: none;
+        }
       }
 
       .nl-btn-row {
@@ -1913,49 +2501,175 @@
         margin-bottom: 3px;
       }
 
-      .nl-export-toolbar {
-        background: var(--nl-surface);
-        border: 1px solid var(--nl-border);
-        border-radius: var(--nl-radius);
-        padding: 7px 9px 8px;
+      .nl-export-toolbar__actions {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+        align-items: stretch;
         margin-bottom: 6px;
-        box-shadow: var(--nl-shadow);
       }
 
-      html.nl-inline body .nl-export-toolbar {
-        border: none;
-        border-radius: 0;
-        box-shadow: none;
-        background: transparent;
-        padding-left: 0;
-        padding-right: 0;
-        margin-bottom: 4px;
+      @media (max-width: 320px) {
+        .nl-export-toolbar__actions {
+          grid-template-columns: 1fr;
+        }
       }
 
-      .nl-capture {
-        margin-top: 8px;
+      .nl-export-toolbar__hint {
+        margin: 0 0 6px;
+        font-size: clamp(10px, calc(var(--nl-base-font) * 0.78), 12px);
+        line-height: 1.35;
+        color: var(--nl-muted);
+      }
+
+      .nl-export-toolbar__details {
+        margin: 0 0 8px;
+        border: 1px solid color-mix(in srgb, var(--nl-border) 85%, transparent);
+        border-radius: 10px;
+        background: rgb(255 255 255 / 45%);
+      }
+
+      html.nl-inline body .nl-export-toolbar__details {
+        background: rgb(255 255 255 / 35%);
+      }
+
+      .nl-export-toolbar__summary {
+        cursor: pointer;
+        list-style: none;
+        padding: 10px 12px;
+        min-height: 44px;
+        box-sizing: border-box;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: clamp(11px, calc(var(--nl-base-font) * 0.86), 14px);
+        font-weight: 700;
+        color: var(--nl-accent);
+        line-height: 1.25;
+      }
+
+      .nl-export-toolbar__summary::-webkit-details-marker {
+        display: none;
+      }
+
+      .nl-export-toolbar__summary::before {
+        content: '';
+        width: 0.45em;
+        height: 0.45em;
+        border-right: 2px solid currentColor;
+        border-bottom: 2px solid currentColor;
+        transform: rotate(-45deg);
+        flex-shrink: 0;
+        margin-top: -0.15em;
+        transition: transform 0.15s ease;
+      }
+
+      .nl-export-toolbar__details[open] .nl-export-toolbar__summary::before {
+        transform: rotate(45deg);
+        margin-top: 0.1em;
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .nl-export-toolbar__summary::before {
+          transition: none;
+        }
+      }
+
+      .nl-export-toolbar__summary:focus-visible {
+        outline: 2px solid var(--nl-accent);
+        outline-offset: 2px;
+        border-radius: 9px;
+      }
+
+      .nl-export-toolbar__detail-body {
+        padding: 0 12px 10px;
+        border-top: 1px solid color-mix(in srgb, var(--nl-border) 55%, transparent);
+      }
+
+      .nl-export-toolbar__detail-body .nl-export-note:last-child {
+        margin-bottom: 0;
+      }
+
+      .nl-export-note--sub {
+        font-size: clamp(9px, calc(var(--nl-base-font) * 0.75), 11.5px);
+      }
+
+      .nl-thumb-row {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 12px;
+        margin-top: 0;
         padding-top: 8px;
-        border-top: 1px solid var(--nl-border);
+        border-top: 1px solid color-mix(in srgb, var(--nl-border) 65%, transparent);
+        font-size: clamp(10px, calc(var(--nl-base-font) * 0.82), 13px);
       }
 
-      .nl-export-toolbar .nl-capture {
-        margin-top: 6px;
-        padding-top: 6px;
+      #thumbInterval {
+        font: inherit;
+        font-size: inherit;
+        min-height: 44px;
+        padding: 8px 10px;
+        border-radius: 10px;
+        border: 1px solid var(--nl-border);
+        background: var(--nl-surface);
+        color: var(--nl-text);
+        max-width: 100%;
       }
 
-      .nl-capture .nl-btn-row {
-        margin-bottom: 4px;
+      #thumbInterval:focus-visible {
+        outline: 2px solid var(--nl-accent);
+        outline-offset: 2px;
+      }
+
+      .nl-export-toolbar__status {
+        margin: 6px 0 0;
+        min-height: 1.35em;
+        font-size: clamp(10px, calc(var(--nl-base-font) * 0.8), 12.5px);
+        line-height: 1.4;
+        word-break: break-word;
+      }
+
+      .nl-export-toolbar__status.error {
+        color: #b91c1c;
+      }
+
+      .nl-export-toolbar__status.success {
+        color: #047857;
+      }
+
+      .nl-thumb-count {
+        color: var(--nl-muted);
+        font-size: clamp(9px, calc(var(--nl-base-font) * 0.75), 11px);
+      }
+
+      .nl-export-btn__row {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        flex-wrap: wrap;
+        text-align: center;
+      }
+
+      .nl-export-btn__emoji {
+        flex-shrink: 0;
+        font-size: 1.2em;
+        line-height: 1;
       }
 
       #captureScreenshot {
-        flex: 1;
-        min-width: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        min-height: 44px;
         font: inherit;
-        font-size: 12px;
+        font-size: clamp(12px, calc(var(--nl-base-font) * 0.92), 15px);
         font-weight: 700;
-        padding: 8px 12px;
+        padding: 10px 12px;
         border-radius: 12px;
-        border: 1px solid var(--nl-accent);
+        border: 2px solid var(--nl-accent);
         background: var(--nl-surface);
         color: var(--nl-accent);
         cursor: pointer;
@@ -1972,51 +2686,16 @@
         outline-offset: 2px;
       }
 
-      .nl-thumb-row {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 8px 12px;
-        margin-top: 6px;
-        font-size: 11px;
-      }
-
-      #thumbInterval {
-        font: inherit;
-        font-size: 11px;
-        padding: 4px 8px;
-        border-radius: 8px;
-        border: 1px solid var(--nl-border);
-        background: var(--nl-surface);
-        color: var(--nl-text);
-        max-width: 100%;
-      }
-
-      #captureStatus {
-        margin: 4px 0 0;
-        min-height: 1.2em;
-      }
-
-      #captureStatus.error {
-        color: #b91c1c;
-      }
-
-      #captureStatus.success {
-        color: #047857;
-      }
-
-      .nl-thumb-count {
-        color: var(--nl-muted);
-        font-size: 10px;
-      }
-
       #exportJson {
-        flex: 1;
-        min-width: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        min-height: 44px;
         font: inherit;
-        font-size: 12px;
+        font-size: clamp(12px, calc(var(--nl-base-font) * 0.92), 15px);
         font-weight: 700;
-        padding: 8px 12px;
+        padding: 10px 12px;
         border-radius: 12px;
         border: none;
         background: linear-gradient(124deg, var(--nl-accent), #19a7d8);
@@ -2034,6 +2713,12 @@
         transform: scale(0.98);
       }
 
+      @media (prefers-reduced-motion: reduce) {
+        #exportJson:active:not(:disabled) {
+          transform: none;
+        }
+      }
+
       #exportJson:disabled {
         background: #cbd5e1;
         color: #64748b;
@@ -2042,8 +2727,118 @@
       }
 
       #exportJson:focus-visible {
-        outline: 2px solid var(--nl-accent);
+        outline: 2px solid #fff;
         outline-offset: 2px;
+        box-shadow: 0 0 0 4px rgb(15 143 216 / 45%);
+      }
+
+      body.nl-tight .nl-export-toolbar__summary,
+      body.nl-compact .nl-export-toolbar__summary {
+        min-height: 40px;
+        padding: 8px 10px;
+      }
+
+      body.nl-tight .nl-comment-compose--primary .nl-compose-quick-toolbar #exportJson,
+      body.nl-tight .nl-comment-compose--primary .nl-compose-quick-toolbar #captureScreenshot,
+      body.nl-compact .nl-comment-compose--primary .nl-compose-quick-toolbar #exportJson,
+      body.nl-compact .nl-comment-compose--primary .nl-compose-quick-toolbar #captureScreenshot,
+      body.nl-tight .nl-comment-compose--primary .nl-compose-quick-toolbar #reloadWatchTabBtn,
+      body.nl-compact .nl-comment-compose--primary .nl-compose-quick-toolbar #reloadWatchTabBtn {
+        min-height: 40px;
+        padding: 8px 10px;
+      }
+
+      body.nl-tight
+        .nl-comment-compose--primary
+        .nl-compose-quick-toolbar
+        #exportJson
+        .nl-compose-qbtn__emoji,
+      body.nl-compact
+        .nl-comment-compose--primary
+        .nl-compose-quick-toolbar
+        #exportJson
+        .nl-compose-qbtn__emoji,
+      body.nl-tight
+        .nl-comment-compose--primary
+        .nl-compose-quick-toolbar
+        #captureScreenshot
+        .nl-compose-qbtn__emoji,
+      body.nl-compact
+        .nl-comment-compose--primary
+        .nl-compose-quick-toolbar
+        #captureScreenshot
+        .nl-compose-qbtn__emoji {
+        font-size: 1.35em;
+      }
+
+      body.nl-tight #thumbInterval,
+      body.nl-compact #thumbInterval {
+        min-height: 40px;
+        padding: 6px 8px;
+      }
+
+      .nl-extension-context-banner {
+        display: none;
+        margin: 0 0 8px;
+        padding: 8px 10px;
+        font-size: 12px;
+        line-height: 1.45;
+        color: #1e3a5f;
+        background: #e8f2ff;
+        border: 1px solid #93c5fd;
+        border-radius: var(--nl-radius);
+        word-break: break-word;
+      }
+
+      .nl-extension-context-banner:not([hidden]) {
+        display: block;
+      }
+
+      .nl-extension-context-banner__body {
+        margin: 6px 0 0;
+      }
+
+      .nl-comment-harvest-banner {
+        display: none;
+        margin: 0 0 8px;
+        padding: 6px 8px;
+        font-size: 11px;
+        line-height: 1.45;
+        color: #92400e;
+        background: #fffbeb;
+        border: 1px solid #fcd34d;
+        border-radius: var(--nl-radius);
+        word-break: break-word;
+      }
+
+      .nl-comment-harvest-banner:not([hidden]) {
+        display: block;
+      }
+
+      .nl-comment-harvest-banner__actions {
+        margin-top: 8px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        align-items: center;
+      }
+
+      .nl-comment-harvest-hint {
+        font-size: 11px;
+        color: #b45309;
+        flex: 1;
+        min-width: 0;
+      }
+
+      .nl-comment-harvest-banner button {
+        font: inherit;
+        font-size: 11px;
+        font-weight: 600;
+        padding: 6px 10px;
+        border-radius: 8px;
+        border: 1px solid #fbbf24;
+        background: #fff;
+        cursor: pointer;
       }
 
       #storageErrorBanner {
@@ -2127,31 +2922,22 @@
         background: #eef6ff;
       }
 
-      .room-meta {
-        display: flex;
-        justify-content: space-between;
-        align-items: flex-start;
-        gap: 8px;
-        margin-bottom: 1px;
+      .room-main {
+        width: 100%;
+        min-width: 0;
+      }
+
+      .room-name-row {
+        width: 100%;
       }
 
       .room-name {
         font-weight: 700;
         color: var(--nl-text);
         word-break: break-all;
-        flex: 1;
+        display: block;
         min-width: 0;
         font-size: 10.4px;
-      }
-
-      .room-count {
-        flex-shrink: 0;
-        font-size: 9px;
-        font-weight: 700;
-        color: #fff;
-        background: linear-gradient(120deg, var(--nl-accent), #31a8ec);
-        padding: 1px 5px;
-        border-radius: 999px;
       }
 
       .room-preview {
@@ -2232,10 +3018,6 @@
         color: var(--nl-muted);
       }
 
-      .room-rank {
-        margin-top: 3px;
-      }
-
       .room-bar-row {
         margin-top: 3px;
         display: flex;
@@ -2294,14 +3076,10 @@
       }
 
       .nl-export-note {
-        margin: -1px 2px 6px;
-        font-size: 9px;
+        margin: 0 0 8px;
+        font-size: clamp(9px, calc(var(--nl-base-font) * 0.78), 13px);
         color: var(--nl-muted);
-        line-height: 1.35;
-        display: -webkit-box;
-        -webkit-line-clamp: 1;
-        -webkit-box-orient: vertical;
-        overflow: hidden;
+        line-height: 1.45;
       }
 
       .nl-powered-by {
@@ -2524,8 +3302,26 @@
     </header>
 
     <div class="nl-main">
+      <div
+        id="extensionContextBanner"
+        class="nl-extension-context-banner"
+        role="alert"
+        aria-live="assertive"
+        hidden
+      >
+        <strong>拡張の接続が切れました</strong>
+        <p class="nl-extension-context-banner__body">
+          <code>chrome://extensions</code>
+          を開き、nicolivelog の「更新」で拡張を再読み込みしてください。ページの再読み込みだけでは直らないことがあります。
+        </p>
+      </div>
+
       <div class="nl-live-stat-cards" id="liveStatCards">
-        <div class="nl-live-stat-card nl-live-stat-card--comments">
+        <div
+          class="nl-live-stat-card nl-live-stat-card--comments nl-live-stat-card--support-visual"
+          id="supportVisualLiveCard"
+          title="応援コメント数のサマリー（詳細は下の「アイコン列・グリッド・診断を表示」から）"
+        >
           <img
             class="nl-live-stat-icon"
             src="images/yukkuri-charactore-english/link/link-yukkuri-smile-mouth-open.png"
@@ -2535,8 +3331,18 @@
           <div class="nl-live-stat-label">応援</div>
           <div class="nl-live-stat-value" id="liveStatComments">—</div>
           <div class="nl-live-stat-unit">コメント</div>
+          <div
+            id="topSupportRankStrip"
+            class="nl-top-support-rank"
+            hidden
+            aria-hidden="true"
+          ></div>
         </div>
-        <div class="nl-live-stat-card nl-live-stat-card--concurrent">
+        <div
+          class="nl-live-stat-card nl-live-stat-card--concurrent"
+          id="watchConcurrentCard"
+          aria-live="polite"
+        >
           <img
             class="nl-live-stat-icon"
             src="images/yukkuri-charactore-english/konta/kitsune-yukkuri-smile-mouth-open.png"
@@ -2544,8 +3350,35 @@
             decoding="async"
           />
           <div class="nl-live-stat-label">推定同時接続</div>
-          <div class="nl-live-stat-value" id="watchConcurrentEst">—</div>
-          <div class="nl-live-stat-unit" id="watchConcurrentSub">人</div>
+          <div class="nl-concurrent-body">
+            <div id="watchConcurrentReady" class="nl-concurrent-ready">
+              <div class="nl-live-stat-value" id="watchConcurrentEst">—</div>
+              <div class="nl-live-stat-unit" id="watchConcurrentSub">人</div>
+            </div>
+            <div
+              id="watchConcurrentLoading"
+              class="nl-concurrent-loading"
+              role="status"
+              hidden
+              aria-label="推定同時接続を読み込み中"
+            >
+              <img
+                class="nl-concurrent-loading__rink"
+                src="images/yukkuri-charactore-english/link/link-yukkuri-smile-mouth-open.png"
+                alt=""
+                decoding="async"
+              />
+              <div class="nl-concurrent-loading__title">
+                ローディング
+                <span class="nl-concurrent-loading__title-dots" aria-hidden="true">
+                  <span class="nl-concurrent-loading__dot"></span>
+                  <span class="nl-concurrent-loading__dot"></span>
+                  <span class="nl-concurrent-loading__dot"></span>
+                </span>
+              </div>
+              <div class="nl-concurrent-loading__hint">データがそろうまで待っています</div>
+            </div>
+          </div>
         </div>
         <div class="nl-live-stat-card nl-live-stat-card--visitors">
           <img
@@ -2560,52 +3393,146 @@
         </div>
       </div>
 
-      <section class="nl-comment-compose" aria-label="コメント投稿">
+      <section
+        class="nl-comment-compose nl-comment-compose--primary"
+        aria-label="コメント投稿"
+      >
         <textarea id="commentInput" maxlength="250" placeholder="ここにコメントを書いて送信"></textarea>
         <div class="nl-compose-send-row">
-          <button type="button" id="postCommentBtn" disabled>コメント送信</button>
+          <div class="nl-compose-send-actions">
+            <button type="button" id="postCommentBtn" disabled>コメント送信</button>
+            <div
+              class="nl-compose-quick-toolbar"
+              role="toolbar"
+              aria-label="書き出しと watch の再読み込み"
+              aria-describedby="exportToolbarHint"
+            >
+              <button
+                type="button"
+                id="exportJson"
+                disabled
+                title="HTMLレポートを保存"
+                aria-label="HTMLレポートを保存。メタ情報・保存コメントをまとめた検索用HTMLをダウンロードします。"
+              >
+                <span class="nl-compose-qbtn__row">
+                  <span class="nl-compose-qbtn__emoji" aria-hidden="true">💾</span>
+                  <span class="nl-compose-qbtn__word">HTML</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                id="captureScreenshot"
+                disabled
+                title="画面を1枚保存"
+                aria-label="画面を1枚保存。watch の表示を PNG 画像として保存します。"
+              >
+                <span class="nl-compose-qbtn__row">
+                  <span class="nl-compose-qbtn__emoji" aria-hidden="true">📷</span>
+                  <span class="nl-compose-qbtn__word">スクショ</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                id="reloadWatchTabBtn"
+                disabled
+                title="対象の watch タブを再読み込みします（F5 と同じ）"
+                aria-label="対象の watch タブを再読み込みします（F5 と同じ）"
+              >
+                <span class="nl-compose-qbtn__row">
+                  <span class="nl-compose-qbtn__emoji" aria-hidden="true">↻</span>
+                  <span class="nl-compose-qbtn__word">再読み込み</span>
+                </span>
+              </button>
+            </div>
+          </div>
           <span id="postStatus" aria-live="polite"></span>
         </div>
-      </section>
-
-      <div class="nl-export-toolbar" aria-label="レポートとキャプチャ">
-        <div class="nl-btn-row">
-          <button type="button" id="exportJson" disabled>HTMLレポートを保存</button>
-        </div>
-        <p class="nl-export-note">
-          メタ情報・script・noopenerリンク・保存コメントをまとめて検索できるHTMLを出力します。
+        <p
+          class="nl-export-toolbar__hint nl-compose-toolbar-hint"
+          id="exportToolbarHint"
+        >
+          HTML保存・スクショ・再読み込みは送信の横のボタンから。watch に埋め込むパネルの幅は直下で選べます。定期サムネや書き出しの詳細は、その下の項目を開いてください。
         </p>
-        <section class="nl-capture" aria-label="画面キャプチャと定期サムネ">
-          <div class="nl-btn-row">
-            <button type="button" id="captureScreenshot" disabled>
-              画面を1枚保存
-            </button>
+        <div
+          class="nl-record nl-panel-width nl-compose-panel-width"
+          role="group"
+          aria-labelledby="inlinePanelWidthLegend"
+        >
+          <div id="inlinePanelWidthLegend" class="nl-panel-width-legend">
+            ページ内パネルの幅（watch）
           </div>
-          <p id="captureStatus" class="nl-export-note" aria-live="polite"></p>
-          <div class="nl-thumb-row">
-            <label for="thumbInterval">定期サムネ</label>
-            <select id="thumbInterval" aria-label="定期サムネの間隔">
-              <option value="0">オフ</option>
-              <option value="30000">30秒</option>
-              <option value="60000">1分</option>
-              <option value="300000">5分</option>
-            </select>
-            <span class="nl-thumb-count"
-              >サムネ <span id="thumbCount">-</span> 件（このPC内）</span
-            >
+          <div class="nl-panel-width-radios">
+            <label>
+              <input
+                type="radio"
+                name="inlinePanelWidth"
+                value="player_row"
+                id="inlinePanelWidthPlayerRow"
+              />
+              視聴画面いっぱい（動画＋コメント列の下）
+            </label>
+            <label>
+              <input
+                type="radio"
+                name="inlinePanelWidth"
+                value="video"
+                id="inlinePanelWidthVideo"
+              />
+              動画の幅だけ
+            </label>
           </div>
-        </section>
-      </div>
+        </div>
+        <details class="nl-export-toolbar__details nl-compose-primary-more">
+          <summary class="nl-export-toolbar__summary">
+            書き出しの詳細・定期サムネ・ページ表示
+          </summary>
+          <div class="nl-export-toolbar__detail-body">
+            <p class="nl-export-note">
+              メタ情報・script・noopenerリンク・保存コメントをまとめて検索できるHTMLを出力します。
+            </p>
+            <p class="nl-export-note nl-export-note--sub">
+              定期サムネは watch
+              ページの表示を間隔で保存します（このPCの拡張ストレージ内のみ。閲覧ページの仕様に依存します）。
+            </p>
+            <div class="nl-thumb-row" role="group" aria-label="定期サムネの間隔">
+              <label for="thumbInterval">定期サムネ</label>
+              <select id="thumbInterval" aria-label="定期サムネの間隔">
+                <option value="0">オフ</option>
+                <option value="30000">30秒</option>
+                <option value="60000">1分</option>
+                <option value="300000">5分</option>
+              </select>
+              <span class="nl-thumb-count"
+                >サムネ <span id="thumbCount">-</span> 件（このPC内）</span
+              >
+            </div>
+            <p class="nl-export-toolbar__status" id="captureStatus" aria-live="polite"></p>
+            <div class="nl-compose-troubleshoot" role="note" aria-label="送信トラブル時の案内">
+              <p class="nl-compose-troubleshoot-text">
+                コメントの取得や送信がうまくいかないときは、<strong>watchページを再読み込み</strong>（F5）してください。送信の横の「再読み込み」ボタンでも同じ操作ができます。拡張機能のファイルを差し替えたあとは、Chrome の
+                <strong>chrome://extensions</strong>
+                を開き、nicolivelog の<strong>「更新」</strong>を押してから、必要なら watch ページも再読み込みしてください（拡張は自動では再読み込みされません）。
+              </p>
+            </div>
+          </div>
+        </details>
+      </section>
 
       <section class="nl-stats" aria-label="応援コメント数">
         <span id="liveId" hidden>-</span>
         <div class="nl-count-wrap">
           <div class="nl-stats-bar">
-            <div class="nl-count-hero" role="group" aria-label="応援コメント数">
+            <button
+              type="button"
+              id="supportVisualCountToggle"
+              class="nl-count-hero nl-count-hero--toggle"
+              title="応援コメント数（アイコン列・グリッド・診断は下の「アイコン列・グリッド・診断を表示」から開きます）"
+              aria-label="応援コメント数"
+            >
               <span class="nl-count-hero__label">応援</span>
               <span id="count" class="nl-count-hero__num is-placeholder" aria-live="polite">-</span>
               <span id="countUnit" class="nl-count-unit nl-count-hero__unit">コメント</span>
-            </div>
+            </button>
             <div
               class="nl-comment-ticker"
               role="region"
@@ -2644,46 +3571,56 @@
                 <span id="sceneStoryDelta" class="nl-story-delta" hidden></span>
               </div>
               <div id="sceneStorySub" class="nl-story-sub">応援コメントの増え方をここで見守るよ。</div>
-              <div class="nl-story-meter-wrap">
-                <div class="nl-story-growth-head">
-                  <button
-                    type="button"
-                    id="storyGrowthCollapseBtn"
-                    class="nl-story-growth-collapse-btn"
-                    aria-expanded="true"
-                    aria-controls="storyGrowthCollapsible"
-                  >
-                    アイコン列を隠す
-                  </button>
-                </div>
-                <div id="sceneStoryUserLaneGuide" class="nl-story-userlane-guide" hidden>
-                  <img
-                    class="nl-story-userlane-guide__avatar"
-                    src="images/yukkuri-charactore-english/konta/kitsune-yukkuri-half-eyes-mouth-closed.png"
-                    alt=""
-                    decoding="async"
-                  />
-                  <div
-                    id="sceneStoryUserLaneGuideBubble"
-                    class="nl-story-userlane-guide__bubble"
-                  >こん太: ここは識別できた応援ユーザーの列だよ</div>
-                </div>
-                <div
-                  id="sceneStoryUserLane"
-                  class="nl-story-userlane"
-                  aria-label="最近の応援ユーザーサムネイル"
-                  hidden
-                ></div>
-                <div id="storyAvatarDiag" class="nl-story-avatar-diag" hidden></div>
-                <div id="storyGrowthCollapsible" class="nl-story-growth-collapsible">
-                  <div id="sceneStoryGauge" class="nl-story-meter" aria-label="応援コメントアイコン表示">
-                    <div id="sceneStoryGrowth" class="nl-story-growth" aria-live="polite"></div>
+              <details id="supportVisualDetails" class="nl-support-visual-details">
+                <summary
+                  id="supportVisualDetailsSummary"
+                  class="nl-support-visual-details__summary"
+                >
+                  アイコン列・グリッド・診断を表示
+                </summary>
+                <div class="nl-support-visual-details__body">
+                  <div class="nl-story-meter-wrap">
+                    <div class="nl-story-growth-head">
+                      <button
+                        type="button"
+                        id="storyGrowthCollapseBtn"
+                        class="nl-story-growth-collapse-btn"
+                        aria-expanded="true"
+                        aria-controls="storyGrowthCollapsible"
+                      >
+                        アイコン列を隠す
+                      </button>
+                    </div>
+                    <div id="sceneStoryUserLaneGuide" class="nl-story-userlane-guide" hidden>
+                      <img
+                        class="nl-story-userlane-guide__avatar"
+                        src="images/yukkuri-charactore-english/konta/kitsune-yukkuri-half-eyes-mouth-closed.png"
+                        alt=""
+                        decoding="async"
+                      />
+                      <div
+                        id="sceneStoryUserLaneGuideBubble"
+                        class="nl-story-userlane-guide__bubble"
+                      >こん太: ここは識別できた応援ユーザーの列だよ</div>
+                    </div>
+                    <div
+                      id="sceneStoryUserLane"
+                      class="nl-story-userlane"
+                      aria-label="最近の応援ユーザーサムネイル"
+                      hidden
+                    ></div>
+                    <div id="storyAvatarDiag" class="nl-story-avatar-diag" hidden></div>
+                    <div id="storyGrowthCollapsible" class="nl-story-growth-collapsible">
+                      <div id="sceneStoryGauge" class="nl-story-meter" aria-label="応援コメントアイコン表示">
+                        <div id="sceneStoryGrowth" class="nl-story-growth" aria-live="polite"></div>
+                      </div>
+                      <div id="sceneStoryGaugeLabel" class="nl-story-meter-label">
+                        1コメントごとに、りんくが左→右へ増えるよ
+                      </div>
+                    </div>
                   </div>
-                  <div id="sceneStoryGaugeLabel" class="nl-story-meter-label">
-                    1コメントごとに、りんくが左→右へ増えるよ
-                  </div>
                 </div>
-              </div>
+              </details>
               <div id="sceneStoryDetail" class="nl-story-detail" hidden>
                 <div class="nl-story-detail-head">
                   <img
@@ -2728,120 +3665,87 @@
         </div>
       </section>
 
+      <div
+        id="commentHarvestBanner"
+        class="nl-comment-harvest-banner"
+        role="status"
+        aria-live="polite"
+        hidden
+      >
+        <strong>コメント欄を検出できていません</strong>
+        <span id="commentHarvestBannerDetail"></span>
+        <div class="nl-comment-harvest-banner__actions">
+          <span class="nl-comment-harvest-hint"
+            >ニコ生の画面改修でパネルが見つからない可能性があります。watch を再読み込みするか、しばらくお待ちください。</span
+          >
+          <button type="button" id="dismissCommentHarvestBanner">閉じる</button>
+        </div>
+      </div>
+
       <div class="nl-record">
-        <label>
-          <input type="checkbox" id="recordToggle" checked />
+        <label for="recordToggle">
+          <input
+            type="checkbox"
+            id="recordToggle"
+            checked
+            aria-label="このPCでニコ生の応援コメントを記録する"
+          />
           このPCで記録する
         </label>
       </div>
 
-      <div
-        class="nl-record nl-panel-width"
-        role="group"
-        aria-labelledby="inlinePanelWidthLegend"
-      >
-        <div id="inlinePanelWidthLegend" class="nl-panel-width-legend">
-          ページ内パネルの幅（watch）
-        </div>
-        <div class="nl-panel-width-radios">
-          <label>
-            <input
-              type="radio"
-              name="inlinePanelWidth"
-              value="player_row"
-              id="inlinePanelWidthPlayerRow"
-            />
-            視聴画面いっぱい（動画＋コメント列の下）
-          </label>
-          <label>
-            <input
-              type="radio"
-              name="inlinePanelWidth"
-              value="video"
-              id="inlinePanelWidthVideo"
-            />
-            動画の幅だけ
-          </label>
-        </div>
-      </div>
-
       <section class="nl-comment-compose" aria-label="コメント補助機能">
-        <div class="nl-compose-troubleshoot" role="note" aria-label="送信トラブル時の案内">
-          <p class="nl-compose-troubleshoot-text">
-            コメントの取得や送信がうまくいかないときは、<strong>watchページを再読み込み</strong>（F5）してください。拡張機能のファイルを差し替えたあとは、Chrome の
-            <strong>chrome://extensions</strong>
-            を開き、nicolivelog の<strong>「更新」</strong>を押してから、必要なら watch ページも再読み込みしてください（拡張は自動では再読み込みされません）。
-          </p>
-          <button
-            type="button"
-            id="reloadWatchTabBtn"
-            disabled
-            title="対象の watch タブを再読み込みします（F5 と同じ）"
-          >
-            watch再読み込み
-          </button>
-        </div>
-        <aside
-          class="nl-tanuki-voice-hint"
-          role="note"
-          aria-labelledby="tanukiVoiceHintTitle"
-        >
-          <div class="nl-tanuki-voice-hint-avatar" aria-hidden="true">
-            <img
-              class="nl-tanuki-voice-hint-img"
-              src="images/yukkuri-charactore-english/tanunee/tanuki-yukkuri-half-eyes-mouth-closed.png"
-              alt=""
-              width="72"
-              height="72"
-              decoding="async"
-            />
-          </div>
-          <div class="nl-tanuki-voice-hint-bubble">
-            <p id="tanukiVoiceHintTitle" class="nl-tanuki-voice-hint-title">
-              たぬ姉
-            </p>
-            <div class="nl-tanuki-voice-hint-body">
-              <p>
-                やあ…たぬ姉だよ。下の入力欄をクリックしてフォーカスしてから話すと、OS
-                の音声入力で文字が入ることが多いよ。
-              </p>
-              <p>
-                <strong>Windows</strong> なら…<kbd>Win</kbd> キーと
-                <kbd>H</kbd> を同時に押すと、音声入力のバーが出ることが多いよ（バージョンで違うかも）。
-              </p>
-              <p>
-                <strong>Mac</strong> なら…「システム設定 → キーボード → 音声入力」をオンにしてから、よくあるのは
-                <kbd>Fn</kbd> を2回、か <kbd>Control</kbd>
-                を2回、だよ。実際のショートカットは設定画面で確認してね。
-              </p>
-              <p>
-                拡張の「音声入力」ボタンが見えないレイアウトでも、この方法なら使えることがあるよ。細かい手順は下の「ガイド」を開いてね。
-              </p>
-              <p>
-                音声メインなら「Enter でも送信」にチェックを…キーボードで打つ人は
-                <kbd>Ctrl</kbd>+<kbd>Enter</kbd>（Mac は <kbd>Cmd</kbd>+<kbd>Enter</kbd>）がおすすめだよ。
-              </p>
-            </div>
-          </div>
-        </aside>
-        <details class="nl-voice-os-guide">
-          <summary>PCの音声入力でも入れます（ガイド）</summary>
+        <details class="nl-voice-guide-details" id="voiceOsGuideDetails">
+          <summary class="nl-voice-guide-summary">
+            <span class="nl-voice-guide-summary__avatar" aria-hidden="true">
+              <img
+                class="nl-voice-guide-summary__img"
+                src="images/yukkuri-charactore-english/tanunee/tanuki-yukkuri-half-eyes-mouth-closed.png"
+                alt=""
+                width="44"
+                height="44"
+                decoding="async"
+              />
+            </span>
+            <span class="nl-voice-guide-summary__main">
+              <span class="nl-voice-guide-summary__title"
+                >たぬ姉より：OS の音声入力（Windows / Mac）</span
+              >
+              <span
+                class="nl-voice-guide-summary__context nl-voice-guide-summary__context--popup-only"
+              >
+                ツールバーのポップアップではマイク行は出ません。watch の<strong>ページ内パネル</strong>でマイク設定と「音声入力」が使えます。詳細は開いてね。
+              </span>
+              <span
+                class="nl-voice-guide-summary__context nl-voice-guide-summary__context--inline-only"
+              >
+                下のマイク設定と「音声入力」とあわせて使えます。手順の詳細は開いてね。
+              </span>
+            </span>
+          </summary>
           <div class="nl-voice-os-guide-body">
             <p>
-              下の入力欄をクリックしてフォーカスしたうえで、OS
-              の音声入力を使うと、ブラウザの「音声入力」より安定することがあります。
+              上のコメント欄をクリックしてフォーカスしてから話すと、OS
+              の音声入力で文字が入りやすいです。ブラウザの「音声入力」より安定することがあります。
             </p>
             <ul>
               <li>
                 <strong>Windows</strong>：<kbd>Win</kbd> + <kbd>H</kbd>
-                で音声入力を開き、この欄に向かって話す（バージョンにより名称・設定が異なります）。
+                で音声入力を開き、コメント欄に向かって話す（バージョンにより名称・設定が異なります）。
               </li>
               <li>
-                <strong>Mac</strong>：システム設定のキーボードで<strong>音声入力</strong>をオンにし、この欄にフォーカスした状態で話す。ショートカットは多くの環境で
+                <strong>Mac</strong>：システム設定のキーボードで<strong>音声入力</strong>をオンにし、コメント欄にフォーカスした状態で話す。ショートカットは多くの環境で
                 <kbd>Fn</kbd> を2回、または <kbd>Control</kbd>
                 を2回（設定の「音声入力」パネルで変更・確認できます）。
               </li>
             </ul>
+            <p>
+              拡張の「音声入力」ボタンが画面に無いレイアウトでも、OS の音声入力だけで入力できます。
+            </p>
+            <p>
+              音声で送りたいときは「Enter でも送信」にチェック。キーボード中心なら
+              <kbd>Ctrl</kbd>+<kbd>Enter</kbd>（Mac は <kbd>Cmd</kbd>+<kbd>Enter</kbd>）が便利です。
+            </p>
           </div>
         </details>
         <div class="nl-voice-device-row">
@@ -2910,6 +3814,105 @@
 
       <h2>応援可視化（ユーザー別）</h2>
       <ul id="userRoomList" aria-live="polite"></ul>
+
+      <section class="nl-frame-switch" aria-label="ポップアップの見た目（配色）">
+        <details class="nl-frame-theme-details" id="frameThemeDetails">
+          <summary class="nl-frame-theme-details__summary">
+            <span class="nl-frame-theme-details__summary-text">
+              <span class="nl-frame-theme-details__summary-label">ポップアップの配色</span>
+              <span class="nl-frame-current" aria-live="polite"
+                >現在: <span id="frameCurrentLabel">ライト</span></span
+              >
+            </span>
+          </summary>
+          <div class="nl-frame-theme-details__body">
+            <div class="nl-frame-grid" role="listbox" aria-label="配色プリセット">
+              <button
+                type="button"
+                class="nl-frame-chip"
+                data-frame-id="light"
+                role="option"
+                aria-selected="true"
+              >
+                ライト<small>明るめ</small>
+              </button>
+              <button
+                type="button"
+                class="nl-frame-chip"
+                data-frame-id="dark"
+                role="option"
+                aria-selected="false"
+              >
+                ダーク<small>落ち着いた暗さ</small>
+              </button>
+              <button
+                type="button"
+                class="nl-frame-chip"
+                data-frame-id="midnight"
+                role="option"
+                aria-selected="false"
+              >
+                ミッドナイト<small>夜向け</small>
+              </button>
+              <button
+                type="button"
+                class="nl-frame-chip"
+                data-frame-id="sunset"
+                role="option"
+                aria-selected="false"
+              >
+                サンセット<small>暖色</small>
+              </button>
+              <button
+                type="button"
+                class="nl-frame-chip"
+                data-frame-id="custom"
+                role="option"
+                aria-selected="false"
+              >
+                カスタム<small>色を調整</small>
+              </button>
+            </div>
+            <details class="nl-frame-custom" id="frameCustomEditor">
+              <summary>カスタム色・共有コード</summary>
+              <div class="nl-frame-color-grid">
+                <label class="nl-frame-color">
+                  ヘッダー左（開始色）
+                  <input type="color" id="frameHeaderStart" />
+                </label>
+                <label class="nl-frame-color">
+                  ヘッダー右（終了色）
+                  <input type="color" id="frameHeaderEnd" />
+                </label>
+                <label class="nl-frame-color">
+                  アクセント
+                  <input type="color" id="frameAccent" />
+                </label>
+              </div>
+              <div class="nl-frame-custom-actions">
+                <button type="button" id="saveCustomFrame">カスタムを保存</button>
+                <button type="button" id="resetCustomFrame">色を初期化</button>
+              </div>
+              <div class="nl-frame-share-inline">
+                <button type="button" id="copyFrameCode">配色コードをコピー</button>
+                <button type="button" id="toggleFrameCodeInput">コードを入力</button>
+              </div>
+              <div class="nl-frame-share" id="frameShareBox" hidden>
+                <textarea
+                  id="frameShareCode"
+                  spellcheck="false"
+                  autocomplete="off"
+                  aria-label="配色の共有コード"
+                ></textarea>
+                <div class="nl-frame-share-actions">
+                  <button type="button" id="applyFrameCode">適用</button>
+                </div>
+              </div>
+              <p id="frameShareStatus"></p>
+            </details>
+          </div>
+        </details>
+      </section>
 
       <footer class="nl-powered-by" role="contentinfo" aria-label="ブランド表記">
         <span class="nl-powered-by-label">Powered by</span>

@@ -181,6 +181,38 @@
     return results;
   }
 
+  // src/lib/commentRecord.js
+  function normalizeCommentText(value) {
+    return String(value || "").replace(/\r\n/g, "\n").split("\n").map((l) => l.trim()).join("\n").trim();
+  }
+
+  // src/lib/ndgrChatRows.js
+  function ndgrChatUserId(chat) {
+    if (chat.rawUserId) {
+      const s = String(chat.rawUserId).trim();
+      if (s) return s;
+    }
+    const h = String(chat.hashedUserId || "").trim();
+    return h || null;
+  }
+  function ndgrChatsToMergeRows(chats) {
+    if (!Array.isArray(chats) || !chats.length) return [];
+    const out = [];
+    for (const chat of chats) {
+      if (!chat || chat.no == null) continue;
+      const uid = ndgrChatUserId(chat);
+      if (!uid) continue;
+      const text = normalizeCommentText(chat.content);
+      if (!text) continue;
+      const commentNo = String(chat.no);
+      const row = { commentNo, text, userId: uid };
+      const nick = String(chat.name || "").trim();
+      if (nick) row.nickname = nick;
+      out.push(row);
+    }
+    return out;
+  }
+
   // src/extension/page-intercept-entry.js
   (() => {
     "use strict";
@@ -212,6 +244,23 @@
     const MSG_TYPE = "NLS_INTERCEPT_USERID";
     const MSG_STATISTICS = "NLS_INTERCEPT_STATISTICS";
     const MSG_SCHEDULE = "NLS_INTERCEPT_SCHEDULE";
+    const MSG_CHAT_ROWS = "NLS_INTERCEPT_CHAT_ROWS";
+    let ndgrChatRowsBatch = [];
+    let ndgrChatRowsTimer = null;
+    const NDGR_CHAT_ROWS_BATCH_MS = 150;
+    function scheduleNdgrChatRowsPost(rows) {
+      if (!rows?.length) return;
+      ndgrChatRowsBatch.push(...rows);
+      if (ndgrChatRowsTimer != null) return;
+      ndgrChatRowsTimer = setTimeout(() => {
+        ndgrChatRowsTimer = null;
+        const payload = ndgrChatRowsBatch;
+        ndgrChatRowsBatch = [];
+        if (payload.length) {
+          window.postMessage({ type: MSG_CHAT_ROWS, rows: payload }, "*");
+        }
+      }, NDGR_CHAT_ROWS_BATCH_MS);
+    }
     const batch = /* @__PURE__ */ new Map();
     const dirtyUsers = /* @__PURE__ */ new Map();
     let timer = null;
@@ -460,6 +509,7 @@
           enqueue(String(chat.no), uid, chat.name, "");
         }
       }
+      scheduleNdgrChatRowsPost(ndgrChatsToMergeRows(result.chats));
     }
     function tryProcessBinaryBuffer(u8) {
       if (u8.byteLength < 4 || u8.byteLength > 2e6) return;
@@ -595,7 +645,16 @@
     const origFetch = window.fetch;
     if (typeof origFetch === "function") {
       window.fetch = function(...args) {
-        const p = origFetch.apply(this, args);
+        let p;
+        try {
+          p = origFetch.apply(this, args);
+        } catch (e) {
+          return Promise.reject(e);
+        }
+        if (p != null && typeof p.then === "function") {
+          p.catch(() => {
+          });
+        }
         void (async () => {
           try {
             const res = await p;

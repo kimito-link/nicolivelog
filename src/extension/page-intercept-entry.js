@@ -5,6 +5,7 @@
 import { splitLengthDelimitedMessages } from '../lib/lengthDelimitedStream.js';
 import { extractPairsFromBinaryUtf8 } from '../lib/interceptBinaryTextExtract.js';
 import { decodeChunkedMessage, decodePackedSegment } from '../lib/ndgrDecode.js';
+import { ndgrChatsToMergeRows } from '../lib/ndgrChatRows.js';
 
 (() => {
   'use strict';
@@ -49,6 +50,27 @@ import { decodeChunkedMessage, decodePackedSegment } from '../lib/ndgrDecode.js'
   const MSG_TYPE = 'NLS_INTERCEPT_USERID';
   const MSG_STATISTICS = 'NLS_INTERCEPT_STATISTICS';
   const MSG_SCHEDULE = 'NLS_INTERCEPT_SCHEDULE';
+  const MSG_CHAT_ROWS = 'NLS_INTERCEPT_CHAT_ROWS';
+
+  /** @type {{ commentNo: string, text: string, userId: string, nickname?: string }[]} */
+  let ndgrChatRowsBatch = [];
+  /** @type {ReturnType<typeof setTimeout>|null} */
+  let ndgrChatRowsTimer = null;
+  const NDGR_CHAT_ROWS_BATCH_MS = 150;
+
+  function scheduleNdgrChatRowsPost(rows) {
+    if (!rows?.length) return;
+    ndgrChatRowsBatch.push(...rows);
+    if (ndgrChatRowsTimer != null) return;
+    ndgrChatRowsTimer = setTimeout(() => {
+      ndgrChatRowsTimer = null;
+      const payload = ndgrChatRowsBatch;
+      ndgrChatRowsBatch = [];
+      if (payload.length) {
+        window.postMessage({ type: MSG_CHAT_ROWS, rows: payload }, '*');
+      }
+    }, NDGR_CHAT_ROWS_BATCH_MS);
+  }
 
   /** @type {Map<string, { uid?: string, name?: string, av?: string }>} */
   const batch = new Map();
@@ -328,6 +350,7 @@ import { decodeChunkedMessage, decodePackedSegment } from '../lib/ndgrDecode.js'
         enqueue(String(chat.no), uid, chat.name, '');
       }
     }
+    scheduleNdgrChatRowsPost(ndgrChatsToMergeRows(result.chats));
   }
 
   /** @param {Uint8Array} u8 */
@@ -468,7 +491,19 @@ import { decodeChunkedMessage, decodePackedSegment } from '../lib/ndgrDecode.js'
   const origFetch = window.fetch;
   if (typeof origFetch === 'function') {
     window.fetch = function (...args) {
-      const p = origFetch.apply(this, args);
+      let p;
+      try {
+        p = origFetch.apply(this, args);
+      } catch (e) {
+        return Promise.reject(e);
+      }
+      /* 同一 Promise に同期的に拒否ハンドラを付け、ページ側が catch しない失敗で
+       * 「Uncaught (in promise) TypeError: Failed to fetch」が拡張エラーに出るのを防ぐ */
+      if (p != null && typeof p.then === 'function') {
+        p.catch(() => {
+          /* ネットワーク失敗・CORS 等はページ本来の挙動。インターセプト側では無視 */
+        });
+      }
       void (async () => {
         try {
           const res = await p;

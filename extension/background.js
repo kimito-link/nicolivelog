@@ -5,6 +5,8 @@
  * - 拡張更新時: 既存 watch タブをリロードし、古い extension context を残さない
  */
 
+// @ts-nocheck — service worker; Chrome API と動的インデックスが多く checkJs コストが高い
+
 const MATCH_PATTERNS = [
   'https://*.nicovideo.jp/*',
   'http://127.0.0.1:3456/*',

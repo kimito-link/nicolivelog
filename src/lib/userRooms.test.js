@@ -105,4 +105,43 @@ describe('aggregateCommentsByUser', () => {
     ]);
     expect(rows[0].nickname).toBe('');
   });
+
+  it('avatarUrl は最新 capturedAt のコメントのもの（http/https のみ）', () => {
+    const rows = aggregateCommentsByUser([
+      {
+        userId: 'u1',
+        text: 'old',
+        capturedAt: 100,
+        avatarUrl: 'https://example.com/a.png'
+      },
+      {
+        userId: 'u1',
+        text: 'new',
+        capturedAt: 200,
+        avatarUrl: 'https://example.com/b.png'
+      }
+    ]);
+    expect(rows[0].avatarUrl).toBe('https://example.com/b.png');
+  });
+
+  it('avatarUrl が不正なら空、最新行も不正なら空のまま', () => {
+    const rows = aggregateCommentsByUser([
+      {
+        userId: 'u1',
+        text: 'a',
+        capturedAt: 100,
+        avatarUrl: 'javascript:alert(1)'
+      },
+      { userId: 'u1', text: 'b', capturedAt: 200, avatarUrl: '' }
+    ]);
+    expect(rows[0].avatarUrl).toBe('');
+  });
+
+  it('ID未取得ルームも avatarUrl キーは空文字', () => {
+    const rows = aggregateCommentsByUser([
+      { text: 'x', capturedAt: 10, avatarUrl: 'https://example.com/x.png' }
+    ]);
+    expect(rows[0].userKey).toBe(UNKNOWN_USER_KEY);
+    expect(rows[0].avatarUrl).toBe('');
+  });
 });

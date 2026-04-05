@@ -24,7 +24,8 @@ export function isValidBroadcastPlayerRect(rect, viewport) {
   const left = Number(rect.left) || 0;
   const vw = Number(viewport.innerWidth) || 0;
   const vh = Number(viewport.innerHeight) || 0;
-  if (w < 280 || h < 150) return false;
+  /** content-entry のインライン表示閾値（260×140）と揃え、ギリギリのプレイヤーでも選べるようにする */
+  if (w < 260 || h < 140) return false;
   if (top > vh - 80 || left > vw - 80) return false;
   const aspect = w / Math.max(h, 1);
   if (aspect < 1.02 || aspect > 3.2) return false;

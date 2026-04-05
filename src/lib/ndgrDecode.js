@@ -104,6 +104,7 @@ export function decodeStatistics(buf, start, end) {
  */
 
 const _dec = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8', { fatal: false }) : null;
+/** @param {Uint8Array} buf @param {number} s @param {number} e */
 function decodeStr(buf, s, e) {
   if (!_dec) return '';
   try { return _dec.decode(buf.subarray(s, e)); } catch { return ''; }

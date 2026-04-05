@@ -11,11 +11,13 @@ import {
   KEY_LAST_WATCH_URL,
   KEY_RECORDING,
   KEY_SELF_POSTED_RECENTS,
+  KEY_COMMENT_PANEL_STATUS,
   KEY_STORAGE_WRITE_ERROR,
   KEY_THUMB_AUTO,
   KEY_THUMB_INTERVAL_MS,
   KEY_COMMENT_ENTER_SEND,
   KEY_STORY_GROWTH_COLLAPSED,
+  KEY_SUPPORT_VISUAL_EXPANDED,
   KEY_VOICE_AUTOSEND,
   KEY_VOICE_INPUT_DEVICE,
   INLINE_PANEL_WIDTH_PLAYER_ROW,
@@ -25,6 +27,8 @@ import {
   isRecordingEnabled,
   normalizeInlinePanelWidthMode
 } from '../lib/storageKeys.js';
+import { normalizeSupportVisualExpanded } from '../lib/supportVisualExpanded.js';
+import { computeScrollDeltaToRevealInParent } from '../lib/nlMainScrollReveal.js';
 import { commentComposeKeyAction } from '../lib/commentComposeShortcuts.js';
 import {
   audioConstraintsForDevice,
@@ -37,7 +41,7 @@ import {
   normalizeCommentText
 } from '../lib/commentRecord.js';
 import { summarizeRecordedCommenters } from '../lib/liveCommenterStats.js';
-import { estimateConcurrentViewers } from '../lib/concurrentEstimate.js';
+import { resolveConcurrentViewers } from '../lib/concurrentEstimate.js';
 import { parseViewerCountFromLooseText } from '../lib/liveAudienceDom.js';
 import { pickLatestCommentEntry } from '../lib/pickLatestComment.js';
 import {
@@ -51,6 +55,11 @@ import {
 } from '../lib/supportGrowthTileSrc.js';
 import { entriesRelatedForStoryDetail } from '../lib/storyDetailRelatedEntries.js';
 import { storageErrorRelevantToLiveId } from '../lib/storageErrorState.js';
+import {
+  commentPanelStatusRelevantToLiveId,
+  parseCommentPanelStatusPayload
+} from '../lib/commentPanelStatus.js';
+import { escapeHtml, escapeAttr } from '../lib/htmlEscape.js';
 import { buildWatchAudienceNote } from '../lib/watchAudienceCopy.js';
 
 /**
@@ -85,7 +94,20 @@ import { buildWatchAudienceNote } from '../lib/watchAudienceCopy.js';
  *   viewerNickname?: string,
  *   viewerUserId?: string,
  *   broadcasterUserId?: string,
- *   viewerCountFromDom?: number|null
+ *   viewerCountFromDom?: number|null,
+ *   viewerCountSource?: 'ws'|'embedded'|'dom'|'none',
+ *   officialViewerCount?: number|null,
+ *   officialCommentCount?: number|null,
+ *   officialStatsUpdatedAt?: number|null,
+ *   officialStatsFreshnessMs?: number|null,
+ *   officialViewerIntervalMs?: number|null,
+ *   officialStatisticsCommentsDelta?: number|null,
+ *   officialReceivedCommentsDelta?: number|null,
+ *   officialCommentSampleWindowMs?: number|null,
+ *   officialCaptureRatio?: number|null,
+ *   totalComments?: number|null,
+ *   streamAgeMin?: number|null,
+ *   recentActiveUsers?: number
  * }} WatchPageSnapshot
  */
 
@@ -245,9 +267,12 @@ function renderCommentTicker(comments) {
   const label = commentTickerDisplayLabel(latest, liveId, list);
   const avatarSrc = storyGrowthTileSrcForEntry(latest, liveId, list);
   const rawText = String(latest.text || '').trim();
-  const textShown = truncateText(rawText, 72);
   const noStr = String(latest.commentNo || '').trim();
   const noPrefix = /^\d+$/.test(noStr) ? `No.${noStr} ` : '';
+  const textFallback =
+    rawText ||
+    (noStr ? `（本文なし・${noPrefix.trim()}）` : '（本文なし）');
+  const textShown = truncateText(rawText || textFallback, 72);
   const tip = label
     ? `${noPrefix}${label}：${rawText || '（コメント本文なし）'}`
     : `${noPrefix}${rawText || '（コメント本文なし）'}`;
@@ -290,6 +315,10 @@ const COMMENT_POST_UI_STATE = {
   submitting: false
 };
 
+/** 拡張コンテキスト無効化・更新手順の共通文案（UI とヒントで揃える） */
+const EXTENSION_RELOAD_USER_GUIDE_JA =
+  'chrome://extensions を開き、nicolivelog の「更新」で拡張を再読み込みしてください。';
+
 /** コメント送信まわりのエラーに、再読み込み案内を1回だけ足す */
 function withCommentSendTroubleshootHint(message) {
   const s = String(message || '').trim();
@@ -299,7 +328,7 @@ function withCommentSendTroubleshootHint(message) {
   ) {
     return s;
   }
-  return `${s}\n※うまくいかないとき：watchページを再読み込み（F5）。拡張を直したあとは chrome://extensions で nicolivelog を「更新」。`;
+  return `${s}\n※うまくいかないとき：watchページを再読み込み（F5）。${EXTENSION_RELOAD_USER_GUIDE_JA}`;
 }
 
 /** @param {unknown} err */
@@ -379,18 +408,11 @@ async function storageGetSafe(key, fallback) {
   }
 }
 
-/** @param {unknown} s */
-function escapeHtml(s) {
-  return String(s || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-/** @param {unknown} s */
-function escapeAttr(s) {
-  return escapeHtml(s);
+function renderExtensionContextBanner(visible) {
+  const el = $('extensionContextBanner');
+  if (!el) return;
+  if (visible) el.removeAttribute('hidden');
+  else el.setAttribute('hidden', '');
 }
 
 /** @type {{ key: string, snapshot: WatchPageSnapshot|null }} */
@@ -619,6 +641,12 @@ function applyPopupFrame(frameId, custom) {
   syncFrameShareInput();
 }
 
+/** 配色プリセットが外側の details 内にあるため、カスタム編集時は開いておく */
+function openFrameThemeSectionIfPresent() {
+  const theme = /** @type {HTMLDetailsElement|null} */ ($('frameThemeDetails'));
+  if (theme) theme.open = true;
+}
+
 async function loadPopupFrameSettings() {
   const bag = await chrome.storage.local.get([
     KEY_POPUP_FRAME,
@@ -633,6 +661,7 @@ async function loadPopupFrameSettings() {
   popupFrameState.id = frameId;
   popupFrameState.custom = custom;
   applyPopupFrame(frameId, custom);
+  if (frameId === 'custom') openFrameThemeSectionIfPresent();
 }
 
 async function savePopupFrameSettings() {
@@ -2518,10 +2547,16 @@ function clearWatchMetaCard() {
   const viewerDomEl = $('watchViewerDom');
   const concurrentEstEl = $('watchConcurrentEst');
   const concurrentSubEl = $('watchConcurrentSub');
+  const concurrentLoadingEl = $('watchConcurrentLoading');
+  const concurrentReadyEl = $('watchConcurrentReady');
+  const concurrentCard = /** @type {HTMLElement|null} */ ($('watchConcurrentCard'));
   const uniqueEl = $('watchUniqueUsers');
   const noIdEl = $('watchCommentsNoId');
   const noteEl = $('watchAudienceNote');
   if (!wrap || !title || !broadcaster || !thumb || !tags) return;
+  if (concurrentLoadingEl) concurrentLoadingEl.hidden = true;
+  if (concurrentReadyEl) concurrentReadyEl.hidden = false;
+  if (concurrentCard) concurrentCard.removeAttribute('aria-busy');
   wrap.hidden = true;
   title.textContent = '-';
   broadcaster.textContent = '-';
@@ -2560,6 +2595,9 @@ function renderWatchMetaCard(snapshot, commentEntries = []) {
   const viewerDomEl = $('watchViewerDom');
   const concurrentEstEl = $('watchConcurrentEst');
   const concurrentSubEl = $('watchConcurrentSub');
+  const concurrentLoadingEl = $('watchConcurrentLoading');
+  const concurrentReadyEl = $('watchConcurrentReady');
+  const concurrentCard = /** @type {HTMLElement|null} */ ($('watchConcurrentCard'));
   const uniqueEl = $('watchUniqueUsers');
   const noIdEl = $('watchCommentsNoId');
   const noteEl = $('watchAudienceNote');
@@ -2605,29 +2643,119 @@ function renderWatchMetaCard(snapshot, commentEntries = []) {
     ? snapshot.recentActiveUsers
     : 0;
   if (concurrentEstEl) {
-    if (recentActive > 0) {
+    const nowMs = Date.now();
+    if (
+      recentActive > 0 ||
+      (typeof snapshot.officialViewerCount === 'number' &&
+        Number.isFinite(snapshot.officialViewerCount))
+    ) {
+      if (concurrentLoadingEl) concurrentLoadingEl.hidden = true;
+      if (concurrentReadyEl) concurrentReadyEl.hidden = false;
+      if (concurrentCard) concurrentCard.removeAttribute('aria-busy');
       const streamAge = typeof snapshot.streamAgeMin === 'number' && snapshot.streamAgeMin >= 0
         ? snapshot.streamAgeMin : undefined;
-      const est = estimateConcurrentViewers({
+      const resolved = resolveConcurrentViewers({
+        nowMs,
+        officialViewers:
+          typeof snapshot.officialViewerCount === 'number' &&
+          Number.isFinite(snapshot.officialViewerCount)
+            ? snapshot.officialViewerCount
+            : undefined,
+        officialUpdatedAtMs:
+          typeof snapshot.officialStatsUpdatedAt === 'number' &&
+          Number.isFinite(snapshot.officialStatsUpdatedAt)
+            ? snapshot.officialStatsUpdatedAt
+            : undefined,
+        officialViewerIntervalMs:
+          typeof snapshot.officialViewerIntervalMs === 'number' &&
+          Number.isFinite(snapshot.officialViewerIntervalMs) &&
+          snapshot.officialViewerIntervalMs > 0
+            ? snapshot.officialViewerIntervalMs
+            : undefined,
+        previousStatisticsComments:
+          typeof snapshot.officialCommentCount === 'number' &&
+          Number.isFinite(snapshot.officialCommentCount) &&
+          typeof snapshot.officialStatisticsCommentsDelta === 'number' &&
+          Number.isFinite(snapshot.officialStatisticsCommentsDelta)
+            ? Math.max(0, snapshot.officialCommentCount - snapshot.officialStatisticsCommentsDelta)
+            : undefined,
+        currentStatisticsComments:
+          typeof snapshot.officialCommentCount === 'number' &&
+          Number.isFinite(snapshot.officialCommentCount)
+            ? snapshot.officialCommentCount
+            : undefined,
+        receivedCommentsDelta:
+          typeof snapshot.officialReceivedCommentsDelta === 'number' &&
+          Number.isFinite(snapshot.officialReceivedCommentsDelta)
+            ? snapshot.officialReceivedCommentsDelta
+            : undefined,
         recentActiveUsers: recentActive,
         totalVisitors: typeof vc === 'number' && vc > 0 ? vc : undefined,
         streamAgeMin: streamAge
       });
-      concurrentEstEl.textContent = `~${est.estimated}`;
-      const methodLabel = est.method === 'combined' ? '複合' : est.method === 'retention_only' ? '滞留' : 'コメ率';
-      const parts = [`${est.activeCommenters}人×${est.multiplier}≈${est.signalA}`];
-      if (est.signalB > 0) parts.push(`滞留${est.retentionPct}%≈${est.signalB}`);
-      parts.push(methodLabel);
+      const directLike = resolved.method === 'official';
+      concurrentEstEl.textContent = `${directLike ? '' : '~'}${resolved.estimated}`;
+
+      /** @type {string[]} */
+      const parts = [];
+      if (resolved.method === 'official') {
+        parts.push('watch WebSocket 由来の直接値');
+      } else if (resolved.method === 'nowcast') {
+        parts.push('watch WebSocket の最終値から短期補間');
+      } else {
+        parts.push('コメント/来場者ベースの推定');
+      }
+      if (resolved.freshnessMs != null) {
+        parts.push(`更新 ${Math.round(resolved.freshnessMs / 1000)} 秒前`);
+      }
+      if (resolved.captureRatio != null) {
+        parts.push(`コメント捕捉率 ${Math.round(resolved.captureRatio * 100)}%`);
+      }
+      if (
+        typeof snapshot.officialCommentSampleWindowMs === 'number' &&
+        Number.isFinite(snapshot.officialCommentSampleWindowMs) &&
+        snapshot.officialCommentSampleWindowMs > 0
+      ) {
+        parts.push(`窓 ${Math.round(snapshot.officialCommentSampleWindowMs / 1000)} 秒`);
+      }
+      const base = resolved.base;
+      if (resolved.method !== 'official') {
+        const baseMethod =
+          base.method === 'combined'
+            ? '複合'
+            : base.method === 'retention_only'
+              ? '滞留'
+              : base.method === 'active_only'
+                ? 'コメ率'
+                : '欠測';
+        parts.push(`${base.activeCommenters}人×${base.multiplier}≈${base.signalA}`);
+        if (base.signalB > 0) parts.push(`滞留${base.retentionPct}%≈${base.signalB}`);
+        parts.push(`base:${baseMethod}`);
+      }
+      parts.push(`信頼度 ${Math.round(resolved.confidence * 100)}%`);
       concurrentEstEl.title = parts.join(' | ');
       if (concurrentSubEl) {
-        concurrentSubEl.textContent = est.method === 'combined'
-          ? `${est.activeCommenters}人×${est.multiplier} + 滞留${est.retentionPct}%`
-          : `5分内 ${est.activeCommenters}人×${est.multiplier}`;
+        if (resolved.method === 'official') {
+          concurrentSubEl.textContent = '直接値';
+        } else if (resolved.method === 'nowcast') {
+          concurrentSubEl.textContent =
+            resolved.freshnessMs != null
+              ? `${Math.round(resolved.freshnessMs / 1000)}秒前から補間`
+              : '補間';
+        } else if (base.method === 'combined') {
+          concurrentSubEl.textContent =
+            `${base.activeCommenters}人×${base.multiplier} + 滞留${base.retentionPct}%`;
+        } else {
+          concurrentSubEl.textContent = `5分内 ${base.activeCommenters}人×${base.multiplier}`;
+        }
       }
     } else {
-      concurrentEstEl.textContent = '—';
-      concurrentEstEl.title = 'コメンターのデータがまだありません';
-      if (concurrentSubEl) concurrentSubEl.textContent = '人';
+      if (concurrentLoadingEl) concurrentLoadingEl.hidden = false;
+      if (concurrentReadyEl) concurrentReadyEl.hidden = true;
+      if (concurrentCard) concurrentCard.setAttribute('aria-busy', 'true');
+      concurrentEstEl.textContent = '';
+      concurrentEstEl.removeAttribute('title');
+      if (concurrentSubEl) concurrentSubEl.textContent = '';
     }
   }
   const st = summarizeRecordedCommenters(
@@ -2689,6 +2817,29 @@ async function renderStorageErrorBanner(viewerLiveId = '') {
   }
 }
 
+/** @param {string} viewerLiveId */
+async function renderCommentHarvestBanner(viewerLiveId = '') {
+  const banner = $('commentHarvestBanner');
+  const detail = $('commentHarvestBannerDetail');
+  if (!banner || !detail) return;
+
+  const bag = await chrome.storage.local.get(KEY_COMMENT_PANEL_STATUS);
+  const payload = parseCommentPanelStatusPayload(bag[KEY_COMMENT_PANEL_STATUS]);
+  if (
+    payload &&
+    commentPanelStatusRelevantToLiveId(payload, viewerLiveId)
+  ) {
+    banner.removeAttribute('hidden');
+    const parts = [];
+    if (payload.liveId) parts.push(`放送: ${String(payload.liveId)}`);
+    if (payload.code) parts.push(String(payload.code));
+    detail.textContent = parts.length ? `（${parts.join(' / ')}）` : '';
+  } else {
+    banner.setAttribute('hidden', '');
+    detail.textContent = '';
+  }
+}
+
 /**
  * @param {number} totalRecent
  * @param {number} activeUsers
@@ -2705,6 +2856,50 @@ function renderRoomHeatSummary(totalRecent, activeUsers, heatPercent, heatText) 
   meta.textContent = `+${totalRecent}件 / ${activeUsers}人`;
   fill.style.width = `${Math.max(0, Math.min(100, Number(heatPercent) || 0)).toFixed(2)}%`;
   note.textContent = `${heatText}（この5分で増えた件数）`;
+}
+
+/** @param {string} label @param {number} [max] */
+function shortLabelForStrip(label, max = 16) {
+  const s = String(label || '');
+  if (s.length <= max) return s;
+  return `${s.slice(0, Math.max(1, max - 1))}…`;
+}
+
+/**
+ * 応援カード直下に、上位ユーザーの順位・件数・短い表示名を出す（サムネイルは使わない）。
+ * @param {{ userKey: string, nickname: string, count: number }[]} stripRooms
+ */
+function renderTopSupportRankStrip(stripRooms) {
+  const strip = /** @type {HTMLElement|null} */ ($('topSupportRankStrip'));
+  if (!strip) return;
+  if (!stripRooms.length) {
+    strip.hidden = true;
+    strip.innerHTML = '';
+    strip.setAttribute('aria-hidden', 'true');
+    return;
+  }
+  strip.hidden = false;
+  strip.removeAttribute('aria-hidden');
+  strip.setAttribute('aria-label', '応援件数の上位（推定）');
+  let knownRank = 0;
+  const html = stripRooms
+    .map((r) => {
+      const label = displayUserLabel(r.userKey, r.nickname);
+      const isUnknown = r.userKey === UNKNOWN_USER_KEY;
+      if (!isUnknown) knownRank += 1;
+      const placeHtml = !isUnknown
+        ? `<span class="nl-top-support-rank__place" aria-hidden="true">${knownRank}</span>`
+        : `<span class="nl-top-support-rank__place nl-top-support-rank__place--empty" aria-hidden="true"></span>`;
+      const short = escapeHtml(shortLabelForStrip(label, 18));
+      const full = escapeAttr(label);
+      return `<div class="nl-top-support-rank__line ${isUnknown ? 'nl-top-support-rank__line--unknown' : ''}" role="listitem" title="${full}">
+        ${placeHtml}
+        <span class="nl-top-support-rank__count">${r.count}件</span>
+        <span class="nl-top-support-rank__who">${short}</span>
+      </div>`;
+    })
+    .join('');
+  strip.innerHTML = `<div class="nl-top-support-rank__list" role="list">${html}</div>`;
 }
 
 /** @param {PopupCommentEntry[]} entries */
@@ -2746,6 +2941,7 @@ function renderUserRooms(entries) {
   ul.innerHTML = '';
 
   if (!rooms.length) {
+    renderTopSupportRankStrip([]);
     const li = document.createElement('li');
     li.className = 'empty-hint';
     li.textContent = 'まだコメントがありません';
@@ -2769,6 +2965,8 @@ function renderUserRooms(entries) {
     document.body?.classList.contains('nl-compact');
   const compactRooms = !INLINE_MODE;
   const MAX_VISIBLE_ROOMS = compactRooms ? 1 : denseLayout ? 2 : 3;
+  const stripMax = denseLayout ? 2 : 3;
+  renderTopSupportRankStrip(rankedRooms.slice(0, stripMax));
   const visibleRooms = rankedRooms.slice(0, MAX_VISIBLE_ROOMS);
   const maxTotal = Math.max(1, ...visibleRooms.map((v) => v.count));
   const maxRecent = Math.max(1, ...visibleRooms.map((v) => v.recentCount));
@@ -2787,30 +2985,33 @@ function renderUserRooms(entries) {
       : '';
     li.innerHTML = compactRooms
       ? `
-      <div class="room-meta">
-        <span class="room-name" title="${escapeHtml(r.userKey)}">${escapeHtml(label)}</span>
-        <span class="room-count">${r.count}件</span>
+      <div class="room-main">
+        <div class="room-name-row">
+          <span class="room-name" title="${escapeHtml(r.userKey)}">${escapeHtml(label)}</span>
+        </div>
+        ${r.lastText ? `<div class="room-preview">${escapeHtml(r.lastText)}</div>` : ''}
+        ${hint}
       </div>
-      ${r.lastText ? `<div class="room-preview">${escapeHtml(r.lastText)}</div>` : ''}
     `
       : `
-      <div class="room-meta">
-        <span class="room-name" title="${escapeHtml(r.userKey)}">${escapeHtml(label)}</span>
-        <span class="room-count">${r.count}件</span>
-      </div>
-      <div class="room-bar-row">
-        <div class="room-bar-track">
-          <div class="room-bar-total" style="width:${totalPercent.toFixed(2)}%"></div>
-          <div class="room-bar-recent" style="width:${recentPercent.toFixed(2)}%"></div>
+      <div class="room-main">
+        <div class="room-name-row">
+          <span class="room-name" title="${escapeHtml(r.userKey)}">${escapeHtml(label)}</span>
         </div>
-        <span class="room-delta ${r.recentCount > 0 ? 'up' : ''}">${deltaLabel}</span>
+        <div class="room-bar-row">
+          <div class="room-bar-track">
+            <div class="room-bar-total" style="width:${totalPercent.toFixed(2)}%"></div>
+            <div class="room-bar-recent" style="width:${recentPercent.toFixed(2)}%"></div>
+          </div>
+          <span class="room-delta ${r.recentCount > 0 ? 'up' : ''}">${deltaLabel}</span>
+        </div>
+        ${
+          r.lastText
+            ? `<div class="room-preview">${escapeHtml(r.lastText)}</div>`
+            : ''
+        }
+        ${hint}
       </div>
-      ${
-        r.lastText
-          ? `<div class="room-preview">${escapeHtml(r.lastText)}</div>`
-          : ''
-      }
-      ${hint}
     `;
     ul.appendChild(li);
   }
@@ -3154,6 +3355,115 @@ async function applyCommentEnterSendFromStorage() {
   cb.checked = isCommentEnterSendEnabled(bag[KEY_COMMENT_ENTER_SEND]);
 }
 
+/** storage 反映中は details の toggle で永続化しない */
+let suppressSupportVisualTogglePersist = false;
+
+/** toggle handler 自身が persist 中 → onChanged の safeRefresh を抑制 */
+let ownSupportVisualPersistInFlight = false;
+
+/** loadPopupFrameSettings.finally が複数回走る／同一ページで init が重なるとリスナーが二重になり、1クリックで2回トグルして見た目が変わらない */
+let supportVisualUiWired = false;
+
+/**
+ * 拡張ポップアップは `.nl-main` が overflow:auto のため、scrollIntoView だけだと飛び先がずれることがある。
+ * メイン領域の scrollTop を直接調整する。
+ * @param {HTMLElement} el
+ */
+function scrollNlMainToRevealElement(el) {
+  const main = /** @type {HTMLElement|null} */ (document.querySelector('.nl-main'));
+  if (!main || !el) return;
+  const pad = 12;
+  const parentRect = main.getBoundingClientRect();
+  const elRect = el.getBoundingClientRect();
+  const delta = computeScrollDeltaToRevealInParent(
+    { top: parentRect.top, bottom: parentRect.bottom },
+    { top: elRect.top, bottom: elRect.bottom },
+    pad
+  );
+  if (delta !== 0) main.scrollTop += delta;
+}
+
+/** 開いた直後のレイアウト確定後にコールバック（1フレームでは高さ未反映のことがある） */
+function afterNextLayout(cb) {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      cb();
+    });
+  });
+}
+
+/** @type {ResizeObserver|null} */
+let supportVisualScrollObserver = null;
+
+/**
+ * details 展開後、コンテンツ body の高さ変化に追従してスクロール補正する。
+ * runStoryGrowthTick によるアイコン追加など連続的な高さ変化にも対応できるよう
+ * ResizeObserver で監視し、一定時間後に自動 disconnect する。
+ * @param {HTMLDetailsElement|null} details
+ */
+function scheduleScrollOpenSupportVisualDetails(details) {
+  if (!details) return;
+  cleanupSupportVisualScrollObserver();
+  const body = details.querySelector('.nl-support-visual-details__body');
+  const target = /** @type {HTMLElement} */ (body || details);
+
+  const runScroll = () => {
+    if (!details.open) return;
+    const detailsEl = /** @type {HTMLElement} */ (details);
+    scrollNlMainToRevealElement(detailsEl);
+    scrollNlMainToRevealElement(target);
+  };
+
+  supportVisualScrollObserver = new ResizeObserver(() => runScroll());
+  supportVisualScrollObserver.observe(target);
+
+  afterNextLayout(runScroll);
+
+  globalThis.setTimeout(() => {
+    cleanupSupportVisualScrollObserver();
+  }, 800);
+}
+
+function cleanupSupportVisualScrollObserver() {
+  if (supportVisualScrollObserver) {
+    supportVisualScrollObserver.disconnect();
+    supportVisualScrollObserver = null;
+  }
+}
+
+/**
+ * refresh / applyResponsivePopupLayout 完了後に呼ぶ軽量補正。
+ * details が開いているときだけ 1 回スクロール位置を確認・補正する。
+ */
+function correctSupportVisualScrollIfOpen() {
+  const details = /** @type {HTMLDetailsElement|null} */ (
+    document.getElementById('supportVisualDetails')
+  );
+  if (!details?.open) return;
+  const body = details.querySelector('.nl-support-visual-details__body');
+  const target = /** @type {HTMLElement} */ (body || details);
+  scrollNlMainToRevealElement(/** @type {HTMLElement} */ (details));
+  scrollNlMainToRevealElement(target);
+}
+
+async function applySupportVisualExpandedFromStorage() {
+  const details = /** @type {HTMLDetailsElement|null} */ ($('supportVisualDetails'));
+  if (!details) return;
+  const bag = await storageGetSafe(KEY_SUPPORT_VISUAL_EXPANDED, {});
+  const raw = bag[KEY_SUPPORT_VISUAL_EXPANDED];
+  const open = normalizeSupportVisualExpanded(raw, { inlineMode: INLINE_MODE });
+  /* 同じ値への再代入でも toggle が飛ぶ環境があり、永続化ハンドラが二重に走る */
+  if (details.open === open) {
+    return;
+  }
+  suppressSupportVisualTogglePersist = true;
+  try {
+    details.open = open;
+  } finally {
+    suppressSupportVisualTogglePersist = false;
+  }
+}
+
 async function applyStoryGrowthCollapsedFromStorage() {
   const btn = /** @type {HTMLButtonElement|null} */ ($('storyGrowthCollapseBtn'));
   const bag = await chrome.storage.local.get(KEY_STORY_GROWTH_COLLAPSED);
@@ -3238,6 +3548,12 @@ async function resolveWatchContextUrl() {
 }
 
 async function refresh() {
+  if (!hasExtensionContext()) {
+    renderExtensionContextBanner(true);
+    return;
+  }
+  renderExtensionContextBanner(false);
+
   const liveEl = $('liveId');
   const toggle = /** @type {HTMLInputElement} */ ($('recordToggle'));
   const exportBtn = /** @type {HTMLButtonElement} */ ($('exportJson'));
@@ -3247,6 +3563,7 @@ async function refresh() {
   const postBtn = /** @type {HTMLButtonElement} */ ($('postCommentBtn'));
   const reloadWatchBtn = /** @type {HTMLButtonElement|null} */ ($('reloadWatchTabBtn'));
 
+  try {
   await loadSelfPostedRecentsIntoCache();
 
   const { url, fromActiveTab } = await resolveWatchContextUrl();
@@ -3254,6 +3571,7 @@ async function refresh() {
   const viewerLvForError =
     isNicoLiveWatchUrl(url) && resolvedLv ? resolvedLv : '';
   await renderStorageErrorBanner(viewerLvForError);
+  await renderCommentHarvestBanner(viewerLvForError);
 
   const bagRec = await chrome.storage.local.get([
     KEY_RECORDING,
@@ -3507,6 +3825,13 @@ async function refresh() {
   });
   const growthEl = /** @type {HTMLElement|null} */ ($('sceneStoryGrowth'));
   if (growthEl) patchStoryGrowthIconsFromSource(growthEl);
+  } catch (e) {
+    if (isExtensionContextInvalidatedError(e)) {
+      renderExtensionContextBanner(true);
+      return;
+    }
+    throw e;
+  }
 }
 
 /** @param {number|string} value */
@@ -4529,6 +4854,16 @@ async function downloadCommentsHtml(liveId, storageKey, watchUrl) {
 function initPopup() {
   installExtensionContextErrorGuard();
   applyResponsivePopupLayout();
+  if (INLINE_MODE) {
+    const watchDetails = /** @type {HTMLDetailsElement|null} */ (
+      document.querySelector('.nl-watch-settings-details')
+    );
+    if (watchDetails) watchDetails.open = true;
+    const frameThemeDetails = /** @type {HTMLDetailsElement|null} */ (
+      $('frameThemeDetails')
+    );
+    if (frameThemeDetails) frameThemeDetails.open = true;
+  }
   window.addEventListener('resize', applyResponsivePopupLayout);
 
   const toggle = /** @type {HTMLInputElement} */ ($('recordToggle'));
@@ -4571,6 +4906,7 @@ function initPopup() {
       .finally(() => {
         requestAnimationFrame(() => {
           applyResponsivePopupLayout();
+          correctSupportVisualScrollIfOpen();
         });
       });
   };
@@ -4590,6 +4926,7 @@ function initPopup() {
     popupFrameState.id = normalized;
     if (normalized === 'custom') {
       popupFrameState.custom = readCustomFrameInputs();
+      openFrameThemeSectionIfPresent();
       if (frameEditor) frameEditor.open = true;
     }
     applyPopupFrame(popupFrameState.id, popupFrameState.custom);
@@ -4600,6 +4937,16 @@ function initPopup() {
   dismissErr?.addEventListener('click', async () => {
     try {
       const ok = await storageRemoveSafe(KEY_STORAGE_WRITE_ERROR);
+      if (!ok) return;
+      safeRefresh();
+    } catch {
+      //
+    }
+  });
+
+  $('dismissCommentHarvestBanner')?.addEventListener('click', async () => {
+    try {
+      const ok = await storageRemoveSafe(KEY_COMMENT_PANEL_STATUS);
       if (!ok) return;
       safeRefresh();
     } catch {
@@ -4703,7 +5050,10 @@ function initPopup() {
       popupFrameState.id = parsed.frameId;
       popupFrameState.custom = parsed.custom;
       applyPopupFrame(popupFrameState.id, popupFrameState.custom);
-      if (popupFrameState.id === 'custom' && frameEditor) frameEditor.open = true;
+      if (popupFrameState.id === 'custom') {
+        openFrameThemeSectionIfPresent();
+        if (frameEditor) frameEditor.open = true;
+      }
       savePopupFrameSettings().catch(() => {});
       setFrameShareStatus('共有コードを適用しました。', 'success');
     } catch {
@@ -4903,6 +5253,64 @@ function initPopup() {
     })();
   });
 
+  /**
+   * 応援ビジュアルの storage 永続化・スクロール補正は details の toggle に結線する。
+   * applySupportVisualExpandedFromStorage の await 後に一度だけ実行（loadPopupFrameSettings.finally 内）。
+   */
+  const wireSupportVisualUi = () => {
+    if (supportVisualUiWired) return;
+    supportVisualUiWired = true;
+
+    const supportVisualDetails = /** @type {HTMLDetailsElement|null} */ (
+      $('supportVisualDetails')
+    );
+
+    /* 開閉は <summary> のネイティブ挙動のみ（件数ボタン・ライブカードからの JS トグルは一旦やめる） */
+    if (supportVisualDetails) {
+      supportVisualDetails.ontoggle = () => {
+      if (suppressSupportVisualTogglePersist) return;
+      const open = Boolean(supportVisualDetails?.open);
+      if (open) {
+        scheduleScrollOpenSupportVisualDetails(supportVisualDetails);
+      } else {
+        cleanupSupportVisualScrollObserver();
+      }
+      void (async () => {
+        const prev = !open;
+        ownSupportVisualPersistInFlight = true;
+        try {
+          const bag = await storageGetSafe(KEY_SUPPORT_VISUAL_EXPANDED, {});
+          const rawStored = bag[KEY_SUPPORT_VISUAL_EXPANDED];
+          /* undefined は「未設定」とみなし必ず set。boolean が既に同値なら他フレームが先に書いたエコーで二重 set しない */
+          if (
+            (rawStored === true || rawStored === false) &&
+            rawStored === open
+          ) {
+            return;
+          }
+          const ok = await storageSetSafe({
+            [KEY_SUPPORT_VISUAL_EXPANDED]: open
+          });
+          if (!ok) {
+            suppressSupportVisualTogglePersist = true;
+            try {
+              if (supportVisualDetails) supportVisualDetails.open = prev;
+            } finally {
+              suppressSupportVisualTogglePersist = false;
+            }
+          }
+        } finally {
+          /* onChanged は set の解決後に届くことがあり、直後に false にすると競合する */
+          globalThis.setTimeout(() => {
+            ownSupportVisualPersistInFlight = false;
+          }, 0);
+        }
+      })();
+    };
+    }
+
+  };
+
   voiceDeviceSel?.addEventListener('change', async () => {
     try {
       await storageSetSafe({
@@ -5009,41 +5417,49 @@ function initPopup() {
     })();
   });
 
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (!msg || msg.type !== 'NLS_VOICE_TO_POPUP') return;
-    if (typeof msg.level === 'number') {
-      setVoiceLevelMeter(msg.level);
-      return;
+  /** 埋め込み iframe 等で runtime が無いとここで落ち、以降の loadPopupFrameSettings / safeRefresh が一切走らない */
+  try {
+    const onMsg = chrome?.runtime?.onMessage;
+    if (onMsg && typeof onMsg.addListener === 'function') {
+      onMsg.addListener((msg) => {
+        if (!msg || msg.type !== 'NLS_VOICE_TO_POPUP') return;
+        if (typeof msg.level === 'number') {
+          setVoiceLevelMeter(msg.level);
+          return;
+        }
+        if ('partial' in msg && commentInput) {
+          commentInput.value = String(msg.partial || '').slice(0, 250);
+          return;
+        }
+        if (msg.error === true) {
+          setVoiceListeningUi(false);
+          setPostStatus(String(msg.message || '音声入力に失敗しました。'), 'error');
+          return;
+        }
+        if (msg.done === true) {
+          setVoiceListeningUi(false);
+          const text = String(msg.text || '').trim();
+          if (commentInput) commentInput.value = text.slice(0, 250);
+          if (!text) {
+            setPostStatus('', 'idle');
+            return;
+          }
+          if (voiceAutoSend?.checked) {
+            submitComment().catch(() => {
+              setPostStatus(
+                withCommentSendTroubleshootHint('送信に失敗しました。'),
+                'error'
+              );
+            });
+          } else {
+            setPostStatus('内容を確認して「コメント送信」を押してください。', 'success');
+          }
+        }
+      });
     }
-    if ('partial' in msg && commentInput) {
-      commentInput.value = String(msg.partial || '').slice(0, 250);
-      return;
-    }
-    if (msg.error === true) {
-      setVoiceListeningUi(false);
-      setPostStatus(String(msg.message || '音声入力に失敗しました。'), 'error');
-      return;
-    }
-    if (msg.done === true) {
-      setVoiceListeningUi(false);
-      const text = String(msg.text || '').trim();
-      if (commentInput) commentInput.value = text.slice(0, 250);
-      if (!text) {
-        setPostStatus('', 'idle');
-        return;
-      }
-      if (voiceAutoSend?.checked) {
-        submitComment().catch(() => {
-          setPostStatus(
-            withCommentSendTroubleshootHint('送信に失敗しました。'),
-            'error'
-          );
-        });
-      } else {
-        setPostStatus('内容を確認して「コメント送信」を押してください。', 'success');
-      }
-    }
-  });
+  } catch {
+    // no-op
+  }
 
   voiceBtn?.addEventListener('click', () => {
     void (async () => {
@@ -5162,36 +5578,59 @@ function initPopup() {
       applyPopupFrame(popupFrameState.id, popupFrameState.custom);
     })
     .finally(() => {
-      applyThumbSelectFromStorage().catch(() => {});
-      applyVoiceAutosendFromStorage().catch(() => {});
-      applyCommentEnterSendFromStorage().catch(() => {});
-      applyStoryGrowthCollapsedFromStorage().catch(() => {});
-      refreshVoiceInputDeviceList().catch(() => {});
-      safeRefresh();
+      void (async () => {
+        await applySupportVisualExpandedFromStorage().catch(() => {});
+        wireSupportVisualUi();
+        document.documentElement.setAttribute('data-nl-support-wired', '');
+        applyThumbSelectFromStorage().catch(() => {});
+        applyVoiceAutosendFromStorage().catch(() => {});
+        applyCommentEnterSendFromStorage().catch(() => {});
+        applyStoryGrowthCollapsedFromStorage().catch(() => {});
+        refreshVoiceInputDeviceList().catch(() => {});
+        safeRefresh();
+      })();
     });
 
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== 'local') return;
-    if (changes[KEY_POPUP_FRAME] || changes[KEY_POPUP_FRAME_CUSTOM]) {
-      loadPopupFrameSettings().catch(() => {});
+  try {
+    const stCh = chrome?.storage?.onChanged;
+    if (stCh && typeof stCh.addListener === 'function') {
+      stCh.addListener((changes, area) => {
+        if (area !== 'local') return;
+        if (changes[KEY_POPUP_FRAME] || changes[KEY_POPUP_FRAME_CUSTOM]) {
+          loadPopupFrameSettings().catch(() => {});
+        }
+        if (changes[KEY_THUMB_AUTO] || changes[KEY_THUMB_INTERVAL_MS]) {
+          applyThumbSelectFromStorage().catch(() => {});
+        }
+        if (changes[KEY_VOICE_AUTOSEND]) {
+          applyVoiceAutosendFromStorage().catch(() => {});
+        }
+        if (changes[KEY_COMMENT_ENTER_SEND]) {
+          applyCommentEnterSendFromStorage().catch(() => {});
+        }
+        if (changes[KEY_STORY_GROWTH_COLLAPSED]) {
+          applyStoryGrowthCollapsedFromStorage().catch(() => {});
+        }
+        const skipVisualExternalSync =
+          changes[KEY_SUPPORT_VISUAL_EXPANDED] && ownSupportVisualPersistInFlight;
+        /*
+         * onChanged から apply すると、インライン iframe とツールバーポップアップが同一 storage を共有する際に
+         * 他文脈の変更で余分な details.open 代入 → toggle → 二重 persist / 見た目が元に戻る原因になる。
+         * 開閉状態は各ドキュメントのユーザー操作と、loadPopupFrameSettings.finally の初回 apply のみで同期する。
+         */
+        const changedKeys = Object.keys(changes);
+        const onlyVisualExpanded =
+          changedKeys.length === 1 && changedKeys[0] === KEY_SUPPORT_VISUAL_EXPANDED;
+        if (!skipVisualExternalSync || !onlyVisualExpanded) safeRefresh();
+      });
     }
-    if (changes[KEY_THUMB_AUTO] || changes[KEY_THUMB_INTERVAL_MS]) {
-      applyThumbSelectFromStorage().catch(() => {});
-    }
-    if (changes[KEY_VOICE_AUTOSEND]) {
-      applyVoiceAutosendFromStorage().catch(() => {});
-    }
-    if (changes[KEY_COMMENT_ENTER_SEND]) {
-      applyCommentEnterSendFromStorage().catch(() => {});
-    }
-    if (changes[KEY_STORY_GROWTH_COLLAPSED]) {
-      applyStoryGrowthCollapsedFromStorage().catch(() => {});
-    }
-    safeRefresh();
-  });
+  } catch {
+    // no-op
+  }
 
   setInterval(() => {
     if (!hasExtensionContext()) return;
+    if (typeof document !== 'undefined' && document.hidden) return;
     watchMetaCache.key = '';
     watchMetaCache.snapshot = null;
     safeRefresh();

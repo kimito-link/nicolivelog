@@ -27,6 +27,15 @@ describe('isValidBroadcastPlayerRect', () => {
     ).toBe(false);
   });
 
+  it('260×140 以上なら狭いプレイヤーでも true（インライン埋め込み閾値と一致）', () => {
+    expect(
+      isValidBroadcastPlayerRect(
+        { width: 270, height: 152, top: 100, left: 40 },
+        VP
+      )
+    ).toBe(true);
+  });
+
   it('極端なアスペクトは false', () => {
     expect(
       isValidBroadcastPlayerRect(

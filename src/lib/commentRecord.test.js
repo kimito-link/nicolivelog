@@ -152,6 +152,20 @@ describe('mergeNewComments', () => {
     expect(storageTouched).toBe(true);
   });
 
+  it('同一 liveId・commentNo・本文は NDGR 行と DOM 行で二重でも 1 件（2 回目は追加なし）', () => {
+    const afterDom = mergeNewComments('lv1', [], [
+      { commentNo: '42', text: 'hello', userId: '86255751', nickname: 'Dom' }
+    ]);
+    expect(afterDom.added).toHaveLength(1);
+    expect(afterDom.next).toHaveLength(1);
+    const afterNdgr = mergeNewComments('lv1', afterDom.next, [
+      { commentNo: '42', text: 'hello', userId: '86255751' }
+    ]);
+    expect(afterNdgr.next).toHaveLength(1);
+    expect(afterNdgr.added).toHaveLength(0);
+    expect(afterNdgr.storageTouched).toBe(false);
+  });
+
   it('existing が欠損フィールドでも落ちない', () => {
     const existing = /** @type {any[]} */ ([{ commentNo: '1', text: 'old' }]);
     const { next, added, storageTouched } = mergeNewComments('lv1', existing, [

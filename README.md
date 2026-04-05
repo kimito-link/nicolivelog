@@ -85,8 +85,9 @@ npm run test:e2e             # ビルド後、headed Chromium で実行（画面
 
 ### 権限（セキュリティメモ）
 
-- マニフェストの `permissions` は **`storage` のみ**（`tabs` は付与していない）。ポップアップが `chrome.tabs.query` でアクティブタブの URL を読むときは、**`host_permissions` に一致するオリジン**（例: `https://live.nicovideo.jp/*`）上のタブであれば URL を取得できる。一致しないタブでは URL が空になることがあり、その場合はコンテンツスクリプトが保存する **`nls_last_watch_url`** で件数・エクスポート対象を補います。
-- `chrome.storage.local` の容量を超えたなどで保存に失敗すると **`nls_storage_write_error`** が立ち、ポップアップに警告が出ます。成功した書き込みのあとに自動で消えます。
+- マニフェストの `permissions` は **`storage`・`scripting`・`downloads`・`alarms`**（`tabs` は付与していない）。`scripting` はページ側フックやタブ操作に、`downloads` は JSON エクスポートに、`alarms` はバックグラウンドの定期処理に使います。
+- ポップアップが `chrome.tabs.query` でアクティブタブの URL を読むときは、**`host_permissions` に一致するオリジン**（例: `https://live.nicovideo.jp/*` および E2E 用 `http://127.0.0.1:3456/*`）上のタブであれば URL を取得できます。一致しないタブでは URL が空になることがあり、その場合はコンテンツスクリプトが保存する **`nls_last_watch_url`** で件数・エクスポート対象を補います。
+- `chrome.storage.local` の容量を超えたなどで保存に失敗すると **`nls_storage_write_error`** が立ち、ポップアップに警告が出ます。成功した書き込みのあとに自動で消えます。記録中にコメントパネル DOM が見つからない場合は **`nls_comment_panel_status`** で警告できます（サイト改修の検知用）。
 
 ## Codex / Claude 向けの質問集
 

@@ -53,6 +53,7 @@
   var KEY_RECORDING = "nls_recording_enabled";
   var KEY_LAST_WATCH_URL = "nls_last_watch_url";
   var KEY_STORAGE_WRITE_ERROR = "nls_storage_write_error";
+  var KEY_COMMENT_PANEL_STATUS = "nls_comment_panel_status";
   var KEY_POPUP_FRAME = "nls_popup_frame";
   var KEY_POPUP_FRAME_CUSTOM = "nls_popup_frame_custom";
   var KEY_THUMB_AUTO = "nls_thumb_auto_enabled";
@@ -60,6 +61,7 @@
   var KEY_VOICE_AUTOSEND = "nls_voice_autosend";
   var KEY_COMMENT_ENTER_SEND = "nls_comment_enter_send";
   var KEY_STORY_GROWTH_COLLAPSED = "nls_story_growth_collapsed";
+  var KEY_SUPPORT_VISUAL_EXPANDED = "nls_support_visual_expanded";
   var KEY_VOICE_INPUT_DEVICE = "nls_voice_input_device";
   var KEY_SELF_POSTED_RECENTS = "nls_self_posted_recents";
   var KEY_INLINE_PANEL_WIDTH_MODE = "nls_inline_panel_width_mode";
@@ -79,6 +81,27 @@
   function commentsStorageKey(liveId) {
     const id = String(liveId || "").trim().toLowerCase();
     return `nls_comments_${id}`;
+  }
+
+  // src/lib/supportVisualExpanded.js
+  function normalizeSupportVisualExpanded(raw, opts = {}) {
+    const inlineMode = opts.inlineMode === true;
+    if (raw === true) return true;
+    if (raw === false) return false;
+    return inlineMode;
+  }
+
+  // src/lib/nlMainScrollReveal.js
+  function computeScrollDeltaToRevealInParent(parentRect, elRect, pad = 12) {
+    const deltaTop = elRect.top - parentRect.top;
+    const deltaBottom = elRect.bottom - parentRect.bottom;
+    if (deltaTop < pad) {
+      return deltaTop - pad;
+    }
+    if (deltaBottom > -pad) {
+      return deltaBottom + pad;
+    }
+    return 0;
   }
 
   // src/lib/commentComposeShortcuts.js
@@ -252,6 +275,8 @@
 
   // src/lib/concurrentEstimate.js
   var DEFAULT_WINDOW_MS = 5 * 60 * 1e3;
+  var DIRECT_VIEWERS_FRESH_MS = 75 * 1e3;
+  var DIRECT_VIEWERS_NOWCAST_MAX_MS = 180 * 1e3;
   var MULTIPLIER_TABLE = (
     /** @type {const} */
     [
@@ -266,6 +291,25 @@
     ]
   );
   var VISITOR_SOFT_CAP_RATIO = 0.35;
+  function clamp(value, min, max) {
+    return Math.max(min, Math.min(max, value));
+  }
+  function resolveDirectViewersThresholds(officialViewerIntervalMs) {
+    const hinted = typeof officialViewerIntervalMs === "number" && Number.isFinite(officialViewerIntervalMs) && officialViewerIntervalMs > 0 ? officialViewerIntervalMs : null;
+    if (hinted == null) {
+      return {
+        freshMs: DIRECT_VIEWERS_FRESH_MS,
+        nowcastMaxMs: DIRECT_VIEWERS_NOWCAST_MAX_MS
+      };
+    }
+    const freshMs = clamp(Math.round(hinted * 1.6), 45e3, 12e4);
+    const nowcastMaxMs = clamp(
+      Math.round(hinted * 4),
+      freshMs + 45e3,
+      5 * 60 * 1e3
+    );
+    return { freshMs, nowcastMaxMs };
+  }
   function dynamicMultiplier(totalVisitors) {
     if (typeof totalVisitors !== "number" || !Number.isFinite(totalVisitors) || totalVisitors <= 0) {
       return 7;
@@ -359,6 +403,106 @@
       ) : null
     };
   }
+  function calcCommentCaptureRatio({
+    previousStatisticsComments,
+    currentStatisticsComments,
+    receivedCommentsDelta
+  }) {
+    const prev = Number(previousStatisticsComments);
+    const curr = Number(currentStatisticsComments);
+    const received = Number(receivedCommentsDelta);
+    if (!Number.isFinite(prev) || !Number.isFinite(curr)) return 1;
+    const statsDelta = curr - prev;
+    if (!(statsDelta > 0)) return 1;
+    if (!Number.isFinite(received)) return 0;
+    return clamp(received / statsDelta, 0, 1);
+  }
+  function resolveConcurrentViewers({
+    nowMs,
+    officialViewers,
+    officialUpdatedAtMs,
+    officialViewerIntervalMs,
+    previousStatisticsComments,
+    currentStatisticsComments,
+    receivedCommentsDelta,
+    recentActiveUsers,
+    totalVisitors,
+    streamAgeMin,
+    multiplier
+  }) {
+    const base = estimateConcurrentViewers({
+      recentActiveUsers,
+      totalVisitors,
+      streamAgeMin,
+      multiplier
+    });
+    const now = typeof nowMs === "number" && Number.isFinite(nowMs) ? nowMs : Date.now();
+    const official = typeof officialViewers === "number" && Number.isFinite(officialViewers) && officialViewers >= 0 ? Math.round(officialViewers) : null;
+    const updatedAt = typeof officialUpdatedAtMs === "number" && Number.isFinite(officialUpdatedAtMs) ? officialUpdatedAtMs : null;
+    const freshnessMs = official != null && updatedAt != null ? Math.max(0, now - updatedAt) : null;
+    const thresholds = resolveDirectViewersThresholds(officialViewerIntervalMs);
+    const captureRatio = previousStatisticsComments != null || currentStatisticsComments != null || receivedCommentsDelta != null ? calcCommentCaptureRatio({
+      previousStatisticsComments,
+      currentStatisticsComments,
+      receivedCommentsDelta
+    }) : null;
+    const capture = captureRatio == null ? 1 : captureRatio;
+    if (official != null && freshnessMs != null && freshnessMs <= thresholds.freshMs) {
+      return {
+        estimated: official,
+        lower: official,
+        upper: official,
+        confidence: 0.98,
+        method: "official",
+        capped: false,
+        freshnessMs,
+        captureRatio,
+        base
+      };
+    }
+    if (official != null && freshnessMs != null && freshnessMs <= thresholds.nowcastMaxMs) {
+      const freshnessRatio = (freshnessMs - thresholds.freshMs) / Math.max(1, thresholds.nowcastMaxMs - thresholds.freshMs);
+      const driftWeight = clamp(freshnessRatio * (0.35 + capture * 0.65), 0, 0.65);
+      const target = base.estimated > 0 ? base.estimated : official;
+      const rawEstimate = official + (target - official) * driftWeight;
+      const bandRatio = clamp(0.1 + freshnessRatio * 0.08 + (1 - capture) * 0.1, 0.08, 0.3);
+      const estimated = clamp(
+        Math.round(rawEstimate),
+        Math.max(0, Math.round(official * (1 - bandRatio))),
+        Math.round(official * (1 + bandRatio))
+      );
+      const confidence = clamp(
+        0.88 - freshnessRatio * 0.18 - (1 - capture) * 0.18,
+        0.45,
+        0.9
+      );
+      const rangeRatio = clamp(0.08 + freshnessRatio * 0.1 + (1 - capture) * 0.1, 0.08, 0.32);
+      return {
+        estimated,
+        lower: Math.max(0, Math.round(estimated * (1 - rangeRatio))),
+        upper: Math.round(estimated * (1 + rangeRatio)),
+        confidence,
+        method: "nowcast",
+        capped: base.capped,
+        freshnessMs,
+        captureRatio,
+        base
+      };
+    }
+    const fallbackRangeRatio = base.method === "combined" ? 0.2 : base.method === "active_only" ? 0.28 : base.method === "retention_only" ? 0.32 : 0.5;
+    const fallbackConfidence = base.method === "combined" ? 0.62 : base.method === "active_only" ? 0.52 : base.method === "retention_only" ? 0.45 : 0.2;
+    return {
+      estimated: base.estimated,
+      lower: Math.max(0, Math.round(base.estimated * (1 - fallbackRangeRatio))),
+      upper: Math.round(base.estimated * (1 + fallbackRangeRatio)),
+      confidence: fallbackConfidence,
+      method: "fallback",
+      capped: base.capped,
+      freshnessMs,
+      captureRatio,
+      base
+    };
+  }
 
   // src/lib/liveAudienceDom.js
   var MAX_REASONABLE_VIEWERS = 12e6;
@@ -449,13 +593,16 @@
       const capturedAt = Number(e?.capturedAt || 0);
       const text = String(e?.text || "").trim();
       const nickname = String(e?.nickname || "").trim();
+      const rawAv = String(e?.avatarUrl || "").trim();
+      const avatarCandidate = isHttpOrHttpsUrl(rawAv) ? rawAv : "";
       if (!map.has(userKey)) {
         map.set(userKey, {
           userKey,
           nickname: "",
           count: 0,
           lastAt: 0,
-          lastText: ""
+          lastText: "",
+          avatarUrl: ""
         });
       }
       const row = map.get(userKey);
@@ -464,6 +611,7 @@
       if (capturedAt >= row.lastAt) {
         row.lastAt = capturedAt;
         row.lastText = text.length > 60 ? `${text.slice(0, 60)}\u2026` : text;
+        row.avatarUrl = userKey === UNKNOWN_USER_KEY ? "" : avatarCandidate;
       }
     }
     return [...map.values()].sort((a, b) => b.lastAt - a.lastAt);
@@ -489,6 +637,51 @@
     const v = String(viewerLiveId || "").trim().toLowerCase();
     if (!v) return true;
     return errLid === v;
+  }
+
+  // src/lib/commentPanelStatus.js
+  function parseCommentPanelStatusPayload(raw) {
+    if (!raw || typeof raw !== "object") return null;
+    const o = (
+      /** @type {{ ok?: unknown; updatedAt?: unknown }} */
+      raw
+    );
+    if (o.ok !== false) return null;
+    const updatedAt = Number(o.updatedAt);
+    if (!Number.isFinite(updatedAt)) return null;
+    const liveId = "liveId" in o && o.liveId != null ? String(
+      /** @type {{ liveId?: unknown }} */
+      o.liveId
+    ).trim() : "";
+    const code = "code" in o && o.code != null ? String(
+      /** @type {{ code?: unknown }} */
+      o.code
+    ).trim() : "";
+    return {
+      ok: false,
+      updatedAt,
+      ...liveId ? { liveId } : {},
+      ...code ? { code } : {}
+    };
+  }
+  function commentPanelStatusRelevantToLiveId(payload, viewerLiveId) {
+    if (!payload || typeof payload !== "object") return false;
+    const errLid = String(
+      /** @type {{ liveId?: unknown }} */
+      payload.liveId || ""
+    ).trim().toLowerCase();
+    if (!errLid) return true;
+    const v = String(viewerLiveId || "").trim().toLowerCase();
+    if (!v) return true;
+    return errLid === v;
+  }
+
+  // src/lib/htmlEscape.js
+  function escapeHtml(s) {
+    return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function escapeAttr(s) {
+    return escapeHtml(s);
   }
 
   // src/lib/watchAudienceCopy.js
@@ -638,9 +831,10 @@
     const label = commentTickerDisplayLabel(latest, liveId, list);
     const avatarSrc = storyGrowthTileSrcForEntry(latest, liveId, list);
     const rawText = String(latest.text || "").trim();
-    const textShown = truncateText(rawText, 72);
     const noStr = String(latest.commentNo || "").trim();
     const noPrefix = /^\d+$/.test(noStr) ? `No.${noStr} ` : "";
+    const textFallback = rawText || (noStr ? `\uFF08\u672C\u6587\u306A\u3057\u30FB${noPrefix.trim()}\uFF09` : "\uFF08\u672C\u6587\u306A\u3057\uFF09");
+    const textShown = truncateText(rawText || textFallback, 72);
     const tip = label ? `${noPrefix}${label}\uFF1A${rawText || "\uFF08\u30B3\u30E1\u30F3\u30C8\u672C\u6587\u306A\u3057\uFF09"}` : `${noPrefix}${rawText || "\uFF08\u30B3\u30E1\u30F3\u30C8\u672C\u6587\u306A\u3057\uFF09"}`;
     const labelHtml = label ? `<span class="nl-ticker-latest__name">${escapeHtml(label)}</span><span class="nl-ticker-latest__colon">\uFF1A</span>` : "";
     segA.innerHTML = `<span class="nl-ticker-item nl-ticker-latest" aria-live="polite"><span class="nl-ticker-latest__row"><img class="nl-ticker-latest__avatar" alt="" src="${escapeHtml(avatarSrc)}">` + labelHtml + `<span class="nl-ticker-latest__text">${escapeHtml(textShown)}</span></span></span>`;
@@ -668,6 +862,7 @@
   var COMMENT_POST_UI_STATE = {
     submitting: false
   };
+  var EXTENSION_RELOAD_USER_GUIDE_JA = "chrome://extensions \u3092\u958B\u304D\u3001nicolivelog \u306E\u300C\u66F4\u65B0\u300D\u3067\u62E1\u5F35\u3092\u518D\u8AAD\u307F\u8FBC\u307F\u3057\u3066\u304F\u3060\u3055\u3044\u3002";
   function withCommentSendTroubleshootHint(message) {
     const s = String(message || "").trim();
     if (!s) return "";
@@ -675,7 +870,7 @@
       return s;
     }
     return `${s}
-\u203B\u3046\u307E\u304F\u3044\u304B\u306A\u3044\u3068\u304D\uFF1Awatch\u30DA\u30FC\u30B8\u3092\u518D\u8AAD\u307F\u8FBC\u307F\uFF08F5\uFF09\u3002\u62E1\u5F35\u3092\u76F4\u3057\u305F\u3042\u3068\u306F chrome://extensions \u3067 nicolivelog \u3092\u300C\u66F4\u65B0\u300D\u3002`;
+\u203B\u3046\u307E\u304F\u3044\u304B\u306A\u3044\u3068\u304D\uFF1Awatch\u30DA\u30FC\u30B8\u3092\u518D\u8AAD\u307F\u8FBC\u307F\uFF08F5\uFF09\u3002${EXTENSION_RELOAD_USER_GUIDE_JA}`;
   }
   function isExtensionContextInvalidatedError(err) {
     const msg = err && typeof err === "object" && "message" in err ? String(
@@ -736,11 +931,11 @@
       throw e;
     }
   }
-  function escapeHtml(s) {
-    return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  }
-  function escapeAttr(s) {
-    return escapeHtml(s);
+  function renderExtensionContextBanner(visible) {
+    const el = $("extensionContextBanner");
+    if (!el) return;
+    if (visible) el.removeAttribute("hidden");
+    else el.setAttribute("hidden", "");
   }
   var watchMetaCache = {
     key: "",
@@ -855,10 +1050,10 @@
   }
   function darkenHexColor(hex, ratio) {
     const source = normalizeHexColor(hex, "#0f8fd8").slice(1);
-    const clamp = (v) => Math.max(0, Math.min(255, Math.round(v)));
-    const r = clamp(parseInt(source.slice(0, 2), 16) * (1 - ratio));
-    const g = clamp(parseInt(source.slice(2, 4), 16) * (1 - ratio));
-    const b = clamp(parseInt(source.slice(4, 6), 16) * (1 - ratio));
+    const clamp2 = (v) => Math.max(0, Math.min(255, Math.round(v)));
+    const r = clamp2(parseInt(source.slice(0, 2), 16) * (1 - ratio));
+    const g = clamp2(parseInt(source.slice(2, 4), 16) * (1 - ratio));
+    const b = clamp2(parseInt(source.slice(4, 6), 16) * (1 - ratio));
     return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
   }
   function sanitizeCustomFrame(raw) {
@@ -944,6 +1139,13 @@
     renderCustomFrameEditor(custom);
     syncFrameShareInput();
   }
+  function openFrameThemeSectionIfPresent() {
+    const theme = (
+      /** @type {HTMLDetailsElement|null} */
+      $("frameThemeDetails")
+    );
+    if (theme) theme.open = true;
+  }
   async function loadPopupFrameSettings() {
     const bag = await chrome.storage.local.get([
       KEY_POPUP_FRAME,
@@ -955,6 +1157,7 @@
     popupFrameState.id = frameId;
     popupFrameState.custom = custom;
     applyPopupFrame(frameId, custom);
+    if (frameId === "custom") openFrameThemeSectionIfPresent();
   }
   async function savePopupFrameSettings() {
     await chrome.storage.local.set({
@@ -2453,10 +2656,19 @@
     const viewerDomEl = $("watchViewerDom");
     const concurrentEstEl = $("watchConcurrentEst");
     const concurrentSubEl = $("watchConcurrentSub");
+    const concurrentLoadingEl = $("watchConcurrentLoading");
+    const concurrentReadyEl = $("watchConcurrentReady");
+    const concurrentCard = (
+      /** @type {HTMLElement|null} */
+      $("watchConcurrentCard")
+    );
     const uniqueEl = $("watchUniqueUsers");
     const noIdEl = $("watchCommentsNoId");
     const noteEl = $("watchAudienceNote");
     if (!wrap || !title || !broadcaster || !thumb || !tags) return;
+    if (concurrentLoadingEl) concurrentLoadingEl.hidden = true;
+    if (concurrentReadyEl) concurrentReadyEl.hidden = false;
+    if (concurrentCard) concurrentCard.removeAttribute("aria-busy");
     wrap.hidden = true;
     title.textContent = "-";
     broadcaster.textContent = "-";
@@ -2493,6 +2705,12 @@
     const viewerDomEl = $("watchViewerDom");
     const concurrentEstEl = $("watchConcurrentEst");
     const concurrentSubEl = $("watchConcurrentSub");
+    const concurrentLoadingEl = $("watchConcurrentLoading");
+    const concurrentReadyEl = $("watchConcurrentReady");
+    const concurrentCard = (
+      /** @type {HTMLElement|null} */
+      $("watchConcurrentCard")
+    );
     const uniqueEl = $("watchUniqueUsers");
     const noIdEl = $("watchCommentsNoId");
     const noteEl = $("watchAudienceNote");
@@ -2527,26 +2745,70 @@
     }
     const recentActive = typeof snapshot.recentActiveUsers === "number" ? snapshot.recentActiveUsers : 0;
     if (concurrentEstEl) {
-      if (recentActive > 0) {
+      const nowMs = Date.now();
+      if (recentActive > 0 || typeof snapshot.officialViewerCount === "number" && Number.isFinite(snapshot.officialViewerCount)) {
+        if (concurrentLoadingEl) concurrentLoadingEl.hidden = true;
+        if (concurrentReadyEl) concurrentReadyEl.hidden = false;
+        if (concurrentCard) concurrentCard.removeAttribute("aria-busy");
         const streamAge = typeof snapshot.streamAgeMin === "number" && snapshot.streamAgeMin >= 0 ? snapshot.streamAgeMin : void 0;
-        const est = estimateConcurrentViewers({
+        const resolved = resolveConcurrentViewers({
+          nowMs,
+          officialViewers: typeof snapshot.officialViewerCount === "number" && Number.isFinite(snapshot.officialViewerCount) ? snapshot.officialViewerCount : void 0,
+          officialUpdatedAtMs: typeof snapshot.officialStatsUpdatedAt === "number" && Number.isFinite(snapshot.officialStatsUpdatedAt) ? snapshot.officialStatsUpdatedAt : void 0,
+          officialViewerIntervalMs: typeof snapshot.officialViewerIntervalMs === "number" && Number.isFinite(snapshot.officialViewerIntervalMs) && snapshot.officialViewerIntervalMs > 0 ? snapshot.officialViewerIntervalMs : void 0,
+          previousStatisticsComments: typeof snapshot.officialCommentCount === "number" && Number.isFinite(snapshot.officialCommentCount) && typeof snapshot.officialStatisticsCommentsDelta === "number" && Number.isFinite(snapshot.officialStatisticsCommentsDelta) ? Math.max(0, snapshot.officialCommentCount - snapshot.officialStatisticsCommentsDelta) : void 0,
+          currentStatisticsComments: typeof snapshot.officialCommentCount === "number" && Number.isFinite(snapshot.officialCommentCount) ? snapshot.officialCommentCount : void 0,
+          receivedCommentsDelta: typeof snapshot.officialReceivedCommentsDelta === "number" && Number.isFinite(snapshot.officialReceivedCommentsDelta) ? snapshot.officialReceivedCommentsDelta : void 0,
           recentActiveUsers: recentActive,
           totalVisitors: typeof vc === "number" && vc > 0 ? vc : void 0,
           streamAgeMin: streamAge
         });
-        concurrentEstEl.textContent = `~${est.estimated}`;
-        const methodLabel = est.method === "combined" ? "\u8907\u5408" : est.method === "retention_only" ? "\u6EDE\u7559" : "\u30B3\u30E1\u7387";
-        const parts = [`${est.activeCommenters}\u4EBA\xD7${est.multiplier}\u2248${est.signalA}`];
-        if (est.signalB > 0) parts.push(`\u6EDE\u7559${est.retentionPct}%\u2248${est.signalB}`);
-        parts.push(methodLabel);
+        const directLike = resolved.method === "official";
+        concurrentEstEl.textContent = `${directLike ? "" : "~"}${resolved.estimated}`;
+        const parts = [];
+        if (resolved.method === "official") {
+          parts.push("watch WebSocket \u7531\u6765\u306E\u76F4\u63A5\u5024");
+        } else if (resolved.method === "nowcast") {
+          parts.push("watch WebSocket \u306E\u6700\u7D42\u5024\u304B\u3089\u77ED\u671F\u88DC\u9593");
+        } else {
+          parts.push("\u30B3\u30E1\u30F3\u30C8/\u6765\u5834\u8005\u30D9\u30FC\u30B9\u306E\u63A8\u5B9A");
+        }
+        if (resolved.freshnessMs != null) {
+          parts.push(`\u66F4\u65B0 ${Math.round(resolved.freshnessMs / 1e3)} \u79D2\u524D`);
+        }
+        if (resolved.captureRatio != null) {
+          parts.push(`\u30B3\u30E1\u30F3\u30C8\u6355\u6349\u7387 ${Math.round(resolved.captureRatio * 100)}%`);
+        }
+        if (typeof snapshot.officialCommentSampleWindowMs === "number" && Number.isFinite(snapshot.officialCommentSampleWindowMs) && snapshot.officialCommentSampleWindowMs > 0) {
+          parts.push(`\u7A93 ${Math.round(snapshot.officialCommentSampleWindowMs / 1e3)} \u79D2`);
+        }
+        const base = resolved.base;
+        if (resolved.method !== "official") {
+          const baseMethod = base.method === "combined" ? "\u8907\u5408" : base.method === "retention_only" ? "\u6EDE\u7559" : base.method === "active_only" ? "\u30B3\u30E1\u7387" : "\u6B20\u6E2C";
+          parts.push(`${base.activeCommenters}\u4EBA\xD7${base.multiplier}\u2248${base.signalA}`);
+          if (base.signalB > 0) parts.push(`\u6EDE\u7559${base.retentionPct}%\u2248${base.signalB}`);
+          parts.push(`base:${baseMethod}`);
+        }
+        parts.push(`\u4FE1\u983C\u5EA6 ${Math.round(resolved.confidence * 100)}%`);
         concurrentEstEl.title = parts.join(" | ");
         if (concurrentSubEl) {
-          concurrentSubEl.textContent = est.method === "combined" ? `${est.activeCommenters}\u4EBA\xD7${est.multiplier} + \u6EDE\u7559${est.retentionPct}%` : `5\u5206\u5185 ${est.activeCommenters}\u4EBA\xD7${est.multiplier}`;
+          if (resolved.method === "official") {
+            concurrentSubEl.textContent = "\u76F4\u63A5\u5024";
+          } else if (resolved.method === "nowcast") {
+            concurrentSubEl.textContent = resolved.freshnessMs != null ? `${Math.round(resolved.freshnessMs / 1e3)}\u79D2\u524D\u304B\u3089\u88DC\u9593` : "\u88DC\u9593";
+          } else if (base.method === "combined") {
+            concurrentSubEl.textContent = `${base.activeCommenters}\u4EBA\xD7${base.multiplier} + \u6EDE\u7559${base.retentionPct}%`;
+          } else {
+            concurrentSubEl.textContent = `5\u5206\u5185 ${base.activeCommenters}\u4EBA\xD7${base.multiplier}`;
+          }
         }
       } else {
-        concurrentEstEl.textContent = "\u2014";
-        concurrentEstEl.title = "\u30B3\u30E1\u30F3\u30BF\u30FC\u306E\u30C7\u30FC\u30BF\u304C\u307E\u3060\u3042\u308A\u307E\u305B\u3093";
-        if (concurrentSubEl) concurrentSubEl.textContent = "\u4EBA";
+        if (concurrentLoadingEl) concurrentLoadingEl.hidden = false;
+        if (concurrentReadyEl) concurrentReadyEl.hidden = true;
+        if (concurrentCard) concurrentCard.setAttribute("aria-busy", "true");
+        concurrentEstEl.textContent = "";
+        concurrentEstEl.removeAttribute("title");
+        if (concurrentSubEl) concurrentSubEl.textContent = "";
       }
     }
     const st = summarizeRecordedCommenters(
@@ -2600,6 +2862,23 @@
       detail.textContent = "";
     }
   }
+  async function renderCommentHarvestBanner(viewerLiveId = "") {
+    const banner = $("commentHarvestBanner");
+    const detail = $("commentHarvestBannerDetail");
+    if (!banner || !detail) return;
+    const bag = await chrome.storage.local.get(KEY_COMMENT_PANEL_STATUS);
+    const payload = parseCommentPanelStatusPayload(bag[KEY_COMMENT_PANEL_STATUS]);
+    if (payload && commentPanelStatusRelevantToLiveId(payload, viewerLiveId)) {
+      banner.removeAttribute("hidden");
+      const parts = [];
+      if (payload.liveId) parts.push(`\u653E\u9001: ${String(payload.liveId)}`);
+      if (payload.code) parts.push(String(payload.code));
+      detail.textContent = parts.length ? `\uFF08${parts.join(" / ")}\uFF09` : "";
+    } else {
+      banner.setAttribute("hidden", "");
+      detail.textContent = "";
+    }
+  }
   function renderRoomHeatSummary(totalRecent, activeUsers, heatPercent, heatText) {
     const summary = (
       /** @type {HTMLElement|null} */
@@ -2616,6 +2895,42 @@
     meta.textContent = `+${totalRecent}\u4EF6 / ${activeUsers}\u4EBA`;
     fill.style.width = `${Math.max(0, Math.min(100, Number(heatPercent) || 0)).toFixed(2)}%`;
     note.textContent = `${heatText}\uFF08\u3053\u306E5\u5206\u3067\u5897\u3048\u305F\u4EF6\u6570\uFF09`;
+  }
+  function shortLabelForStrip(label, max = 16) {
+    const s = String(label || "");
+    if (s.length <= max) return s;
+    return `${s.slice(0, Math.max(1, max - 1))}\u2026`;
+  }
+  function renderTopSupportRankStrip(stripRooms) {
+    const strip = (
+      /** @type {HTMLElement|null} */
+      $("topSupportRankStrip")
+    );
+    if (!strip) return;
+    if (!stripRooms.length) {
+      strip.hidden = true;
+      strip.innerHTML = "";
+      strip.setAttribute("aria-hidden", "true");
+      return;
+    }
+    strip.hidden = false;
+    strip.removeAttribute("aria-hidden");
+    strip.setAttribute("aria-label", "\u5FDC\u63F4\u4EF6\u6570\u306E\u4E0A\u4F4D\uFF08\u63A8\u5B9A\uFF09");
+    let knownRank = 0;
+    const html = stripRooms.map((r) => {
+      const label = displayUserLabel(r.userKey, r.nickname);
+      const isUnknown = r.userKey === UNKNOWN_USER_KEY;
+      if (!isUnknown) knownRank += 1;
+      const placeHtml = !isUnknown ? `<span class="nl-top-support-rank__place" aria-hidden="true">${knownRank}</span>` : `<span class="nl-top-support-rank__place nl-top-support-rank__place--empty" aria-hidden="true"></span>`;
+      const short = escapeHtml(shortLabelForStrip(label, 18));
+      const full = escapeAttr(label);
+      return `<div class="nl-top-support-rank__line ${isUnknown ? "nl-top-support-rank__line--unknown" : ""}" role="listitem" title="${full}">
+        ${placeHtml}
+        <span class="nl-top-support-rank__count">${r.count}\u4EF6</span>
+        <span class="nl-top-support-rank__who">${short}</span>
+      </div>`;
+    }).join("");
+    strip.innerHTML = `<div class="nl-top-support-rank__list" role="list">${html}</div>`;
   }
   function renderUserRooms(entries) {
     const ul = (
@@ -2647,6 +2962,7 @@
     const rooms = aggregateCommentsByUser(list);
     ul.innerHTML = "";
     if (!rooms.length) {
+      renderTopSupportRankStrip([]);
       const li = document.createElement("li");
       li.className = "empty-hint";
       li.textContent = "\u307E\u3060\u30B3\u30E1\u30F3\u30C8\u304C\u3042\u308A\u307E\u305B\u3093";
@@ -2664,6 +2980,8 @@
     const denseLayout = document.body?.classList.contains("nl-tight") || document.body?.classList.contains("nl-compact");
     const compactRooms = !INLINE_MODE;
     const MAX_VISIBLE_ROOMS = compactRooms ? 1 : denseLayout ? 2 : 3;
+    const stripMax = denseLayout ? 2 : 3;
+    renderTopSupportRankStrip(rankedRooms.slice(0, stripMax));
     const visibleRooms = rankedRooms.slice(0, MAX_VISIBLE_ROOMS);
     const maxTotal = Math.max(1, ...visibleRooms.map((v) => v.count));
     const maxRecent = Math.max(1, ...visibleRooms.map((v) => v.recentCount));
@@ -2677,25 +2995,28 @@
       const deltaLabel = r.recentCount > 0 ? `+${r.recentCount} / 5\u5206` : "\xB10 / 5\u5206";
       const hint = isUnknown ? '<div class="room-hint">\u6295\u7A3F\u8005ID\u672A\u53D6\u5F97\u306E\u30B3\u30E1\u30F3\u30C8\u3092\u3053\u3053\u306B\u307E\u3068\u3081\u3066\u3044\u307E\u3059\u3002</div>' : "";
       li.innerHTML = compactRooms ? `
-      <div class="room-meta">
-        <span class="room-name" title="${escapeHtml(r.userKey)}">${escapeHtml(label)}</span>
-        <span class="room-count">${r.count}\u4EF6</span>
-      </div>
-      ${r.lastText ? `<div class="room-preview">${escapeHtml(r.lastText)}</div>` : ""}
-    ` : `
-      <div class="room-meta">
-        <span class="room-name" title="${escapeHtml(r.userKey)}">${escapeHtml(label)}</span>
-        <span class="room-count">${r.count}\u4EF6</span>
-      </div>
-      <div class="room-bar-row">
-        <div class="room-bar-track">
-          <div class="room-bar-total" style="width:${totalPercent.toFixed(2)}%"></div>
-          <div class="room-bar-recent" style="width:${recentPercent.toFixed(2)}%"></div>
+      <div class="room-main">
+        <div class="room-name-row">
+          <span class="room-name" title="${escapeHtml(r.userKey)}">${escapeHtml(label)}</span>
         </div>
-        <span class="room-delta ${r.recentCount > 0 ? "up" : ""}">${deltaLabel}</span>
+        ${r.lastText ? `<div class="room-preview">${escapeHtml(r.lastText)}</div>` : ""}
+        ${hint}
       </div>
-      ${r.lastText ? `<div class="room-preview">${escapeHtml(r.lastText)}</div>` : ""}
-      ${hint}
+    ` : `
+      <div class="room-main">
+        <div class="room-name-row">
+          <span class="room-name" title="${escapeHtml(r.userKey)}">${escapeHtml(label)}</span>
+        </div>
+        <div class="room-bar-row">
+          <div class="room-bar-track">
+            <div class="room-bar-total" style="width:${totalPercent.toFixed(2)}%"></div>
+            <div class="room-bar-recent" style="width:${recentPercent.toFixed(2)}%"></div>
+          </div>
+          <span class="room-delta ${r.recentCount > 0 ? "up" : ""}">${deltaLabel}</span>
+        </div>
+        ${r.lastText ? `<div class="room-preview">${escapeHtml(r.lastText)}</div>` : ""}
+        ${hint}
+      </div>
     `;
       ul.appendChild(li);
     }
@@ -2971,6 +3292,99 @@
     const bag = await chrome.storage.local.get(KEY_COMMENT_ENTER_SEND);
     cb.checked = isCommentEnterSendEnabled(bag[KEY_COMMENT_ENTER_SEND]);
   }
+  var suppressSupportVisualTogglePersist = false;
+  var ownSupportVisualPersistInFlight = false;
+  var supportVisualUiWired = false;
+  function scrollNlMainToRevealElement(el) {
+    const main = (
+      /** @type {HTMLElement|null} */
+      document.querySelector(".nl-main")
+    );
+    if (!main || !el) return;
+    const pad = 12;
+    const parentRect = main.getBoundingClientRect();
+    const elRect = el.getBoundingClientRect();
+    const delta = computeScrollDeltaToRevealInParent(
+      { top: parentRect.top, bottom: parentRect.bottom },
+      { top: elRect.top, bottom: elRect.bottom },
+      pad
+    );
+    if (delta !== 0) main.scrollTop += delta;
+  }
+  function afterNextLayout(cb) {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        cb();
+      });
+    });
+  }
+  var supportVisualScrollObserver = null;
+  function scheduleScrollOpenSupportVisualDetails(details) {
+    if (!details) return;
+    cleanupSupportVisualScrollObserver();
+    const body = details.querySelector(".nl-support-visual-details__body");
+    const target = (
+      /** @type {HTMLElement} */
+      body || details
+    );
+    const runScroll = () => {
+      if (!details.open) return;
+      const detailsEl = (
+        /** @type {HTMLElement} */
+        details
+      );
+      scrollNlMainToRevealElement(detailsEl);
+      scrollNlMainToRevealElement(target);
+    };
+    supportVisualScrollObserver = new ResizeObserver(() => runScroll());
+    supportVisualScrollObserver.observe(target);
+    afterNextLayout(runScroll);
+    globalThis.setTimeout(() => {
+      cleanupSupportVisualScrollObserver();
+    }, 800);
+  }
+  function cleanupSupportVisualScrollObserver() {
+    if (supportVisualScrollObserver) {
+      supportVisualScrollObserver.disconnect();
+      supportVisualScrollObserver = null;
+    }
+  }
+  function correctSupportVisualScrollIfOpen() {
+    const details = (
+      /** @type {HTMLDetailsElement|null} */
+      document.getElementById("supportVisualDetails")
+    );
+    if (!details?.open) return;
+    const body = details.querySelector(".nl-support-visual-details__body");
+    const target = (
+      /** @type {HTMLElement} */
+      body || details
+    );
+    scrollNlMainToRevealElement(
+      /** @type {HTMLElement} */
+      details
+    );
+    scrollNlMainToRevealElement(target);
+  }
+  async function applySupportVisualExpandedFromStorage() {
+    const details = (
+      /** @type {HTMLDetailsElement|null} */
+      $("supportVisualDetails")
+    );
+    if (!details) return;
+    const bag = await storageGetSafe(KEY_SUPPORT_VISUAL_EXPANDED, {});
+    const raw = bag[KEY_SUPPORT_VISUAL_EXPANDED];
+    const open = normalizeSupportVisualExpanded(raw, { inlineMode: INLINE_MODE });
+    if (details.open === open) {
+      return;
+    }
+    suppressSupportVisualTogglePersist = true;
+    try {
+      details.open = open;
+    } finally {
+      suppressSupportVisualTogglePersist = false;
+    }
+  }
   async function applyStoryGrowthCollapsedFromStorage() {
     const btn = (
       /** @type {HTMLButtonElement|null} */
@@ -3050,6 +3464,11 @@
     return { url: "", fromActiveTab: true };
   }
   async function refresh() {
+    if (!hasExtensionContext()) {
+      renderExtensionContextBanner(true);
+      return;
+    }
+    renderExtensionContextBanner(false);
     const liveEl = $("liveId");
     const toggle = (
       /** @type {HTMLInputElement} */
@@ -3076,261 +3495,270 @@
       /** @type {HTMLButtonElement|null} */
       $("reloadWatchTabBtn")
     );
-    await loadSelfPostedRecentsIntoCache();
-    const { url, fromActiveTab } = await resolveWatchContextUrl();
-    const resolvedLv = extractLiveIdFromUrl(url);
-    const viewerLvForError = isNicoLiveWatchUrl(url) && resolvedLv ? resolvedLv : "";
-    await renderStorageErrorBanner(viewerLvForError);
-    const bagRec = await chrome.storage.local.get([
-      KEY_RECORDING,
-      KEY_INLINE_PANEL_WIDTH_MODE
-    ]);
-    toggle.checked = isRecordingEnabled(bagRec[KEY_RECORDING]);
-    toggle.disabled = false;
-    const panelMode = normalizeInlinePanelWidthMode(
-      bagRec[KEY_INLINE_PANEL_WIDTH_MODE]
-    );
-    const radioPlayerRow = (
-      /** @type {HTMLInputElement|null} */
-      $("inlinePanelWidthPlayerRow")
-    );
-    const radioVideoOnly = (
-      /** @type {HTMLInputElement|null} */
-      $("inlinePanelWidthVideo")
-    );
-    if (radioPlayerRow && radioVideoOnly) {
-      radioPlayerRow.checked = panelMode === INLINE_PANEL_WIDTH_PLAYER_ROW;
-      radioVideoOnly.checked = panelMode === INLINE_PANEL_WIDTH_VIDEO;
-    }
-    syncVoiceCommentButton();
-    if (!isNicoLiveWatchUrl(url)) {
-      if (liveEl) liveEl.textContent = "\uFF08\u30CB\u30B3\u751Fwatch\u3092\u958B\u3044\u3066\u304F\u3060\u3055\u3044\uFF09";
-      setCountDisplay("-");
-      renderCommentTicker([]);
-      exportBtn.disabled = true;
-      exportBtn.dataset.watchUrl = "";
-      if (captureBtn) {
-        captureBtn.disabled = true;
-        captureBtn.dataset.watchUrl = "";
+    try {
+      await loadSelfPostedRecentsIntoCache();
+      const { url, fromActiveTab } = await resolveWatchContextUrl();
+      const resolvedLv = extractLiveIdFromUrl(url);
+      const viewerLvForError = isNicoLiveWatchUrl(url) && resolvedLv ? resolvedLv : "";
+      await renderStorageErrorBanner(viewerLvForError);
+      await renderCommentHarvestBanner(viewerLvForError);
+      const bagRec = await chrome.storage.local.get([
+        KEY_RECORDING,
+        KEY_INLINE_PANEL_WIDTH_MODE
+      ]);
+      toggle.checked = isRecordingEnabled(bagRec[KEY_RECORDING]);
+      toggle.disabled = false;
+      const panelMode = normalizeInlinePanelWidthMode(
+        bagRec[KEY_INLINE_PANEL_WIDTH_MODE]
+      );
+      const radioPlayerRow = (
+        /** @type {HTMLInputElement|null} */
+        $("inlinePanelWidthPlayerRow")
+      );
+      const radioVideoOnly = (
+        /** @type {HTMLInputElement|null} */
+        $("inlinePanelWidthVideo")
+      );
+      if (radioPlayerRow && radioVideoOnly) {
+        radioPlayerRow.checked = panelMode === INLINE_PANEL_WIDTH_PLAYER_ROW;
+        radioVideoOnly.checked = panelMode === INLINE_PANEL_WIDTH_VIDEO;
       }
-      if (thumbCountEl) thumbCountEl.textContent = "-";
-      watchMetaCache.key = "";
-      watchMetaCache.snapshot = null;
-      clearWatchMetaCard();
-      syncStorySourceEntries("", []);
-      resetStoryAvatarDiagState();
-      renderCharacterScene({
-        hasWatch: false,
-        recording: toggle.checked,
-        commentCount: 0,
-        liveId: "",
-        snapshot: null
-      });
-      if (postBtn) postBtn.disabled = true;
-      if (reloadWatchBtn) reloadWatchBtn.disabled = true;
       syncVoiceCommentButton();
-      if (commentInput) {
-        commentInput.placeholder = "watch\u30DA\u30FC\u30B8\u3092\u958B\u304F\u3068\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1\u3067\u304D\u307E\u3059";
+      if (!isNicoLiveWatchUrl(url)) {
+        if (liveEl) liveEl.textContent = "\uFF08\u30CB\u30B3\u751Fwatch\u3092\u958B\u3044\u3066\u304F\u3060\u3055\u3044\uFF09";
+        setCountDisplay("-");
+        renderCommentTicker([]);
+        exportBtn.disabled = true;
+        exportBtn.dataset.watchUrl = "";
+        if (captureBtn) {
+          captureBtn.disabled = true;
+          captureBtn.dataset.watchUrl = "";
+        }
+        if (thumbCountEl) thumbCountEl.textContent = "-";
+        watchMetaCache.key = "";
+        watchMetaCache.snapshot = null;
+        clearWatchMetaCard();
+        syncStorySourceEntries("", []);
+        resetStoryAvatarDiagState();
+        renderCharacterScene({
+          hasWatch: false,
+          recording: toggle.checked,
+          commentCount: 0,
+          liveId: "",
+          snapshot: null
+        });
+        if (postBtn) postBtn.disabled = true;
+        if (reloadWatchBtn) reloadWatchBtn.disabled = true;
+        syncVoiceCommentButton();
+        if (commentInput) {
+          commentInput.placeholder = "watch\u30DA\u30FC\u30B8\u3092\u958B\u304F\u3068\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1\u3067\u304D\u307E\u3059";
+        }
+        renderUserRooms([]);
+        return;
       }
-      renderUserRooms([]);
-      return;
-    }
-    const lv = extractLiveIdFromUrl(url);
-    if (liveEl) {
-      liveEl.textContent = lv && !fromActiveTab ? `${lv}\uFF08\u76F4\u8FD1\u306E\u8996\u8074\u30DA\u30FC\u30B8\uFF09` : lv || "-";
-    }
-    if (!lv) {
-      setCountDisplay("-");
-      renderCommentTicker([]);
-      exportBtn.disabled = true;
-      exportBtn.dataset.watchUrl = "";
-      if (captureBtn) {
-        captureBtn.disabled = true;
-        captureBtn.dataset.watchUrl = "";
+      const lv = extractLiveIdFromUrl(url);
+      if (liveEl) {
+        liveEl.textContent = lv && !fromActiveTab ? `${lv}\uFF08\u76F4\u8FD1\u306E\u8996\u8074\u30DA\u30FC\u30B8\uFF09` : lv || "-";
       }
-      if (thumbCountEl) thumbCountEl.textContent = "-";
-      watchMetaCache.key = "";
-      watchMetaCache.snapshot = null;
-      clearWatchMetaCard();
-      syncStorySourceEntries("", []);
-      resetStoryAvatarDiagState();
-      renderCharacterScene({
-        hasWatch: true,
-        recording: toggle.checked,
-        commentCount: 0,
-        liveId: "",
-        snapshot: null
+      if (!lv) {
+        setCountDisplay("-");
+        renderCommentTicker([]);
+        exportBtn.disabled = true;
+        exportBtn.dataset.watchUrl = "";
+        if (captureBtn) {
+          captureBtn.disabled = true;
+          captureBtn.dataset.watchUrl = "";
+        }
+        if (thumbCountEl) thumbCountEl.textContent = "-";
+        watchMetaCache.key = "";
+        watchMetaCache.snapshot = null;
+        clearWatchMetaCard();
+        syncStorySourceEntries("", []);
+        resetStoryAvatarDiagState();
+        renderCharacterScene({
+          hasWatch: true,
+          recording: toggle.checked,
+          commentCount: 0,
+          liveId: "",
+          snapshot: null
+        });
+        if (postBtn) postBtn.disabled = true;
+        if (reloadWatchBtn) reloadWatchBtn.disabled = true;
+        syncVoiceCommentButton();
+        if (commentInput) {
+          commentInput.placeholder = "\u30B3\u30E1\u30F3\u30C8\u3092\u5165\u529B\u3057\u3066\u9001\u4FE1";
+        }
+        renderUserRooms([]);
+        return;
+      }
+      const snapshotKey = `${lv}|${url}|s17`;
+      if (watchMetaCache.key !== snapshotKey || !watchMetaCache.snapshot) {
+        watchMetaCache.key = snapshotKey;
+        const { snapshot } = await requestWatchPageSnapshotFromOpenTab(url);
+        watchMetaCache.snapshot = snapshot;
+      }
+      const watchSnapshot = watchMetaCache.snapshot;
+      const key = commentsStorageKey(lv);
+      const data = await chrome.storage.local.get(key);
+      let arr = Array.isArray(data[key]) ? data[key] : [];
+      const normalizedStored = normalizeStoredCommentEntries(
+        /** @type {PopupCommentEntry[]} */
+        arr
+      );
+      if (normalizedStored.changed) {
+        arr = normalizedStored.next;
+        await storageSetSafe({ [key]: arr });
+      }
+      STORY_AVATAR_DIAG_STATE.total = arr.length;
+      STORY_AVATAR_DIAG_STATE.withUid = countEntriesWithUserId(arr);
+      STORY_AVATAR_DIAG_STATE.withAvatar = countEntriesWithAvatar(arr);
+      STORY_AVATAR_DIAG_STATE.uniqueAvatar = countUniqueAvatarEntries(arr);
+      {
+        const resolvedAvatar = countResolvedAvatarEntries(arr, lv);
+        STORY_AVATAR_DIAG_STATE.resolvedAvatar = resolvedAvatar.total;
+        STORY_AVATAR_DIAG_STATE.resolvedUniqueAvatar = resolvedAvatar.unique;
+      }
+      STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(arr, lv);
+      STORY_AVATAR_DIAG_STATE.selfSaved = countSavedOwnPostedEntries(arr);
+      STORY_AVATAR_DIAG_STATE.selfPending = countPendingSelfPostedRecentsForLive(lv);
+      STORY_AVATAR_DIAG_STATE.selfPendingMatched = getOwnPostedMatchedIdSet(arr, lv).size;
+      STORY_AVATAR_DIAG_STATE.interceptItems = 0;
+      STORY_AVATAR_DIAG_STATE.interceptWithUid = 0;
+      STORY_AVATAR_DIAG_STATE.interceptWithAvatar = 0;
+      STORY_AVATAR_DIAG_STATE.mergedPatched = 0;
+      STORY_AVATAR_DIAG_STATE.mergedUidReplaced = 0;
+      STORY_AVATAR_DIAG_STATE.stripped = 0;
+      const strippedViewerAvatar = stripViewerAvatarContamination(
+        arr,
+        lv,
+        watchSnapshot
+      );
+      if (strippedViewerAvatar.patched > 0) {
+        arr = strippedViewerAvatar.next;
+        await storageSetSafe({ [key]: arr });
+      }
+      STORY_AVATAR_DIAG_STATE.stripped = strippedViewerAvatar.patched;
+      if (INTERCEPT_BACKFILL_STATE.liveId !== lv) {
+        INTERCEPT_BACKFILL_STATE.liveId = lv;
+        INTERCEPT_BACKFILL_STATE.deepTried = false;
+      }
+      const missingIdCount = arr.reduce(
+        (sum, e) => String(e?.userId || "").trim() ? sum : sum + 1,
+        0
+      );
+      const shouldDeep = !INTERCEPT_BACKFILL_STATE.deepTried && arr.length >= 30 && missingIdCount >= Math.ceil(arr.length * 0.4);
+      const interceptItems = await requestInterceptCacheFromOpenTab(url, {
+        deep: shouldDeep
       });
-      if (postBtn) postBtn.disabled = true;
-      if (reloadWatchBtn) reloadWatchBtn.disabled = true;
+      if (shouldDeep) {
+        INTERCEPT_BACKFILL_STATE.deepTried = true;
+      }
+      if (interceptItems.length > 0) {
+        STORY_AVATAR_DIAG_STATE.interceptItems = interceptItems.length;
+        STORY_AVATAR_DIAG_STATE.interceptWithUid = interceptItems.reduce(
+          (sum, it) => it.uid ? sum + 1 : sum,
+          0
+        );
+        STORY_AVATAR_DIAG_STATE.interceptWithAvatar = interceptItems.reduce(
+          (sum, it) => it.av ? sum + 1 : sum,
+          0
+        );
+        const suspectUidSet = new Set(
+          [
+            String(watchSnapshot?.viewerUserId || "").trim(),
+            String(watchSnapshot?.broadcasterUserId || "").trim()
+          ].filter(Boolean)
+        );
+        const merged = mergeCommentsWithInterceptCache(arr, interceptItems, {
+          preferInterceptUidSet: suspectUidSet
+        });
+        STORY_AVATAR_DIAG_STATE.mergedPatched = merged.patched;
+        STORY_AVATAR_DIAG_STATE.mergedUidReplaced = merged.uidReplaced;
+        if (merged.patched > 0) {
+          arr = merged.next;
+          await storageSetSafe({ [key]: arr });
+        }
+      }
+      const reconciledOwnPosted = reconcileStoredOwnPostedEntries(arr, lv);
+      if (reconciledOwnPosted.changed || reconciledOwnPosted.pendingChanged) {
+        arr = reconciledOwnPosted.next;
+        selfPostedRecentsCache = reconciledOwnPosted.remaining;
+        await storageSetSafe({
+          [key]: arr,
+          [KEY_SELF_POSTED_RECENTS]: { items: selfPostedRecentsCache }
+        });
+      }
+      STORY_AVATAR_DIAG_STATE.total = arr.length;
+      STORY_AVATAR_DIAG_STATE.withUid = countEntriesWithUserId(arr);
+      STORY_AVATAR_DIAG_STATE.withAvatar = countEntriesWithAvatar(arr);
+      STORY_AVATAR_DIAG_STATE.uniqueAvatar = countUniqueAvatarEntries(arr);
+      {
+        const resolvedAvatar = countResolvedAvatarEntries(arr, lv);
+        STORY_AVATAR_DIAG_STATE.resolvedAvatar = resolvedAvatar.total;
+        STORY_AVATAR_DIAG_STATE.resolvedUniqueAvatar = resolvedAvatar.unique;
+      }
+      STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(arr, lv);
+      STORY_AVATAR_DIAG_STATE.selfSaved = countSavedOwnPostedEntries(arr);
+      STORY_AVATAR_DIAG_STATE.selfPending = countPendingSelfPostedRecentsForLive(lv);
+      STORY_AVATAR_DIAG_STATE.selfPendingMatched = getOwnPostedMatchedIdSet(arr, lv).size;
+      const displayEntries = buildDisplayCommentEntries(arr, lv);
+      STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(displayEntries, lv);
+      setCountDisplay(String(displayEntries.length));
+      renderCommentTicker(
+        /** @type {PopupCommentEntry[]} */
+        displayEntries
+      );
+      exportBtn.disabled = false;
+      exportBtn.dataset.liveId = lv;
+      exportBtn.dataset.storageKey = key;
+      exportBtn.dataset.watchUrl = url;
+      if (captureBtn) {
+        captureBtn.disabled = false;
+        captureBtn.dataset.watchUrl = url;
+      }
+      const stats = (
+        /** @type {{ ok?: boolean, count?: number }|null} */
+        await sendMessageToWatchTabs(url, { type: "NLS_THUMB_STATS" })
+      );
+      if (thumbCountEl) {
+        thumbCountEl.textContent = stats && stats.ok === true && typeof stats.count === "number" ? String(stats.count) : "0";
+      }
+      if (postBtn) postBtn.disabled = COMMENT_POST_UI_STATE.submitting;
+      if (reloadWatchBtn) reloadWatchBtn.disabled = false;
       syncVoiceCommentButton();
       if (commentInput) {
         commentInput.placeholder = "\u30B3\u30E1\u30F3\u30C8\u3092\u5165\u529B\u3057\u3066\u9001\u4FE1";
       }
-      renderUserRooms([]);
-      return;
-    }
-    const snapshotKey = `${lv}|${url}|s17`;
-    if (watchMetaCache.key !== snapshotKey || !watchMetaCache.snapshot) {
-      watchMetaCache.key = snapshotKey;
-      const { snapshot } = await requestWatchPageSnapshotFromOpenTab(url);
-      watchMetaCache.snapshot = snapshot;
-    }
-    const watchSnapshot = watchMetaCache.snapshot;
-    const key = commentsStorageKey(lv);
-    const data = await chrome.storage.local.get(key);
-    let arr = Array.isArray(data[key]) ? data[key] : [];
-    const normalizedStored = normalizeStoredCommentEntries(
-      /** @type {PopupCommentEntry[]} */
-      arr
-    );
-    if (normalizedStored.changed) {
-      arr = normalizedStored.next;
-      await storageSetSafe({ [key]: arr });
-    }
-    STORY_AVATAR_DIAG_STATE.total = arr.length;
-    STORY_AVATAR_DIAG_STATE.withUid = countEntriesWithUserId(arr);
-    STORY_AVATAR_DIAG_STATE.withAvatar = countEntriesWithAvatar(arr);
-    STORY_AVATAR_DIAG_STATE.uniqueAvatar = countUniqueAvatarEntries(arr);
-    {
-      const resolvedAvatar = countResolvedAvatarEntries(arr, lv);
-      STORY_AVATAR_DIAG_STATE.resolvedAvatar = resolvedAvatar.total;
-      STORY_AVATAR_DIAG_STATE.resolvedUniqueAvatar = resolvedAvatar.unique;
-    }
-    STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(arr, lv);
-    STORY_AVATAR_DIAG_STATE.selfSaved = countSavedOwnPostedEntries(arr);
-    STORY_AVATAR_DIAG_STATE.selfPending = countPendingSelfPostedRecentsForLive(lv);
-    STORY_AVATAR_DIAG_STATE.selfPendingMatched = getOwnPostedMatchedIdSet(arr, lv).size;
-    STORY_AVATAR_DIAG_STATE.interceptItems = 0;
-    STORY_AVATAR_DIAG_STATE.interceptWithUid = 0;
-    STORY_AVATAR_DIAG_STATE.interceptWithAvatar = 0;
-    STORY_AVATAR_DIAG_STATE.mergedPatched = 0;
-    STORY_AVATAR_DIAG_STATE.mergedUidReplaced = 0;
-    STORY_AVATAR_DIAG_STATE.stripped = 0;
-    const strippedViewerAvatar = stripViewerAvatarContamination(
-      arr,
-      lv,
-      watchSnapshot
-    );
-    if (strippedViewerAvatar.patched > 0) {
-      arr = strippedViewerAvatar.next;
-      await storageSetSafe({ [key]: arr });
-    }
-    STORY_AVATAR_DIAG_STATE.stripped = strippedViewerAvatar.patched;
-    if (INTERCEPT_BACKFILL_STATE.liveId !== lv) {
-      INTERCEPT_BACKFILL_STATE.liveId = lv;
-      INTERCEPT_BACKFILL_STATE.deepTried = false;
-    }
-    const missingIdCount = arr.reduce(
-      (sum, e) => String(e?.userId || "").trim() ? sum : sum + 1,
-      0
-    );
-    const shouldDeep = !INTERCEPT_BACKFILL_STATE.deepTried && arr.length >= 30 && missingIdCount >= Math.ceil(arr.length * 0.4);
-    const interceptItems = await requestInterceptCacheFromOpenTab(url, {
-      deep: shouldDeep
-    });
-    if (shouldDeep) {
-      INTERCEPT_BACKFILL_STATE.deepTried = true;
-    }
-    if (interceptItems.length > 0) {
-      STORY_AVATAR_DIAG_STATE.interceptItems = interceptItems.length;
-      STORY_AVATAR_DIAG_STATE.interceptWithUid = interceptItems.reduce(
-        (sum, it) => it.uid ? sum + 1 : sum,
-        0
-      );
-      STORY_AVATAR_DIAG_STATE.interceptWithAvatar = interceptItems.reduce(
-        (sum, it) => it.av ? sum + 1 : sum,
-        0
-      );
-      const suspectUidSet = new Set(
-        [
-          String(watchSnapshot?.viewerUserId || "").trim(),
-          String(watchSnapshot?.broadcasterUserId || "").trim()
-        ].filter(Boolean)
-      );
-      const merged = mergeCommentsWithInterceptCache(arr, interceptItems, {
-        preferInterceptUidSet: suspectUidSet
+      syncStorySourceEntries(lv, displayEntries);
+      renderUserRooms(arr);
+      renderCharacterScene({
+        hasWatch: true,
+        recording: toggle.checked,
+        commentCount: displayEntries.length,
+        liveId: lv,
+        snapshot: watchSnapshot
       });
-      STORY_AVATAR_DIAG_STATE.mergedPatched = merged.patched;
-      STORY_AVATAR_DIAG_STATE.mergedUidReplaced = merged.uidReplaced;
-      if (merged.patched > 0) {
-        arr = merged.next;
-        await storageSetSafe({ [key]: arr });
+      renderWatchMetaCard(watchSnapshot, arr);
+      renderStoryUserLane();
+      renderCharacterScene({
+        hasWatch: true,
+        recording: toggle.checked,
+        commentCount: displayEntries.length,
+        liveId: lv,
+        snapshot: watchSnapshot
+      });
+      const growthEl = (
+        /** @type {HTMLElement|null} */
+        $("sceneStoryGrowth")
+      );
+      if (growthEl) patchStoryGrowthIconsFromSource(growthEl);
+    } catch (e) {
+      if (isExtensionContextInvalidatedError(e)) {
+        renderExtensionContextBanner(true);
+        return;
       }
+      throw e;
     }
-    const reconciledOwnPosted = reconcileStoredOwnPostedEntries(arr, lv);
-    if (reconciledOwnPosted.changed || reconciledOwnPosted.pendingChanged) {
-      arr = reconciledOwnPosted.next;
-      selfPostedRecentsCache = reconciledOwnPosted.remaining;
-      await storageSetSafe({
-        [key]: arr,
-        [KEY_SELF_POSTED_RECENTS]: { items: selfPostedRecentsCache }
-      });
-    }
-    STORY_AVATAR_DIAG_STATE.total = arr.length;
-    STORY_AVATAR_DIAG_STATE.withUid = countEntriesWithUserId(arr);
-    STORY_AVATAR_DIAG_STATE.withAvatar = countEntriesWithAvatar(arr);
-    STORY_AVATAR_DIAG_STATE.uniqueAvatar = countUniqueAvatarEntries(arr);
-    {
-      const resolvedAvatar = countResolvedAvatarEntries(arr, lv);
-      STORY_AVATAR_DIAG_STATE.resolvedAvatar = resolvedAvatar.total;
-      STORY_AVATAR_DIAG_STATE.resolvedUniqueAvatar = resolvedAvatar.unique;
-    }
-    STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(arr, lv);
-    STORY_AVATAR_DIAG_STATE.selfSaved = countSavedOwnPostedEntries(arr);
-    STORY_AVATAR_DIAG_STATE.selfPending = countPendingSelfPostedRecentsForLive(lv);
-    STORY_AVATAR_DIAG_STATE.selfPendingMatched = getOwnPostedMatchedIdSet(arr, lv).size;
-    const displayEntries = buildDisplayCommentEntries(arr, lv);
-    STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(displayEntries, lv);
-    setCountDisplay(String(displayEntries.length));
-    renderCommentTicker(
-      /** @type {PopupCommentEntry[]} */
-      displayEntries
-    );
-    exportBtn.disabled = false;
-    exportBtn.dataset.liveId = lv;
-    exportBtn.dataset.storageKey = key;
-    exportBtn.dataset.watchUrl = url;
-    if (captureBtn) {
-      captureBtn.disabled = false;
-      captureBtn.dataset.watchUrl = url;
-    }
-    const stats = (
-      /** @type {{ ok?: boolean, count?: number }|null} */
-      await sendMessageToWatchTabs(url, { type: "NLS_THUMB_STATS" })
-    );
-    if (thumbCountEl) {
-      thumbCountEl.textContent = stats && stats.ok === true && typeof stats.count === "number" ? String(stats.count) : "0";
-    }
-    if (postBtn) postBtn.disabled = COMMENT_POST_UI_STATE.submitting;
-    if (reloadWatchBtn) reloadWatchBtn.disabled = false;
-    syncVoiceCommentButton();
-    if (commentInput) {
-      commentInput.placeholder = "\u30B3\u30E1\u30F3\u30C8\u3092\u5165\u529B\u3057\u3066\u9001\u4FE1";
-    }
-    syncStorySourceEntries(lv, displayEntries);
-    renderUserRooms(arr);
-    renderCharacterScene({
-      hasWatch: true,
-      recording: toggle.checked,
-      commentCount: displayEntries.length,
-      liveId: lv,
-      snapshot: watchSnapshot
-    });
-    renderWatchMetaCard(watchSnapshot, arr);
-    renderStoryUserLane();
-    renderCharacterScene({
-      hasWatch: true,
-      recording: toggle.checked,
-      commentCount: displayEntries.length,
-      liveId: lv,
-      snapshot: watchSnapshot
-    });
-    const growthEl = (
-      /** @type {HTMLElement|null} */
-      $("sceneStoryGrowth")
-    );
-    if (growthEl) patchStoryGrowthIconsFromSource(growthEl);
   }
   function formatDateTime(value) {
     const n = Number(value);
@@ -4173,6 +4601,18 @@
   function initPopup() {
     installExtensionContextErrorGuard();
     applyResponsivePopupLayout();
+    if (INLINE_MODE) {
+      const watchDetails = (
+        /** @type {HTMLDetailsElement|null} */
+        document.querySelector(".nl-watch-settings-details")
+      );
+      if (watchDetails) watchDetails.open = true;
+      const frameThemeDetails = (
+        /** @type {HTMLDetailsElement|null} */
+        $("frameThemeDetails")
+      );
+      if (frameThemeDetails) frameThemeDetails.open = true;
+    }
     window.addEventListener("resize", applyResponsivePopupLayout);
     const toggle = (
       /** @type {HTMLInputElement} */
@@ -4264,6 +4704,7 @@
       }).finally(() => {
         requestAnimationFrame(() => {
           applyResponsivePopupLayout();
+          correctSupportVisualScrollIfOpen();
         });
       });
     };
@@ -4286,6 +4727,7 @@
       popupFrameState.id = normalized;
       if (normalized === "custom") {
         popupFrameState.custom = readCustomFrameInputs();
+        openFrameThemeSectionIfPresent();
         if (frameEditor) frameEditor.open = true;
       }
       applyPopupFrame(popupFrameState.id, popupFrameState.custom);
@@ -4295,6 +4737,14 @@
     dismissErr?.addEventListener("click", async () => {
       try {
         const ok = await storageRemoveSafe(KEY_STORAGE_WRITE_ERROR);
+        if (!ok) return;
+        safeRefresh();
+      } catch {
+      }
+    });
+    $("dismissCommentHarvestBanner")?.addEventListener("click", async () => {
+      try {
+        const ok = await storageRemoveSafe(KEY_COMMENT_PANEL_STATUS);
         if (!ok) return;
         safeRefresh();
       } catch {
@@ -4383,7 +4833,10 @@
         popupFrameState.id = parsed.frameId;
         popupFrameState.custom = parsed.custom;
         applyPopupFrame(popupFrameState.id, popupFrameState.custom);
-        if (popupFrameState.id === "custom" && frameEditor) frameEditor.open = true;
+        if (popupFrameState.id === "custom") {
+          openFrameThemeSectionIfPresent();
+          if (frameEditor) frameEditor.open = true;
+        }
         savePopupFrameSettings().catch(() => {
         });
         setFrameShareStatus("\u5171\u6709\u30B3\u30FC\u30C9\u3092\u9069\u7528\u3057\u307E\u3057\u305F\u3002", "success");
@@ -4568,6 +5021,51 @@
         await applyStoryGrowthCollapsedFromStorage();
       })();
     });
+    const wireSupportVisualUi = () => {
+      if (supportVisualUiWired) return;
+      supportVisualUiWired = true;
+      const supportVisualDetails = (
+        /** @type {HTMLDetailsElement|null} */
+        $("supportVisualDetails")
+      );
+      if (supportVisualDetails) {
+        supportVisualDetails.ontoggle = () => {
+          if (suppressSupportVisualTogglePersist) return;
+          const open = Boolean(supportVisualDetails?.open);
+          if (open) {
+            scheduleScrollOpenSupportVisualDetails(supportVisualDetails);
+          } else {
+            cleanupSupportVisualScrollObserver();
+          }
+          void (async () => {
+            const prev = !open;
+            ownSupportVisualPersistInFlight = true;
+            try {
+              const bag = await storageGetSafe(KEY_SUPPORT_VISUAL_EXPANDED, {});
+              const rawStored = bag[KEY_SUPPORT_VISUAL_EXPANDED];
+              if ((rawStored === true || rawStored === false) && rawStored === open) {
+                return;
+              }
+              const ok = await storageSetSafe({
+                [KEY_SUPPORT_VISUAL_EXPANDED]: open
+              });
+              if (!ok) {
+                suppressSupportVisualTogglePersist = true;
+                try {
+                  if (supportVisualDetails) supportVisualDetails.open = prev;
+                } finally {
+                  suppressSupportVisualTogglePersist = false;
+                }
+              }
+            } finally {
+              globalThis.setTimeout(() => {
+                ownSupportVisualPersistInFlight = false;
+              }, 0);
+            }
+          })();
+        };
+      }
+    };
     voiceDeviceSel?.addEventListener("change", async () => {
       try {
         await storageSetSafe({
@@ -4671,41 +5169,47 @@
         }
       })();
     });
-    chrome.runtime.onMessage.addListener((msg) => {
-      if (!msg || msg.type !== "NLS_VOICE_TO_POPUP") return;
-      if (typeof msg.level === "number") {
-        setVoiceLevelMeter(msg.level);
-        return;
+    try {
+      const onMsg = chrome?.runtime?.onMessage;
+      if (onMsg && typeof onMsg.addListener === "function") {
+        onMsg.addListener((msg) => {
+          if (!msg || msg.type !== "NLS_VOICE_TO_POPUP") return;
+          if (typeof msg.level === "number") {
+            setVoiceLevelMeter(msg.level);
+            return;
+          }
+          if ("partial" in msg && commentInput) {
+            commentInput.value = String(msg.partial || "").slice(0, 250);
+            return;
+          }
+          if (msg.error === true) {
+            setVoiceListeningUi(false);
+            setPostStatus(String(msg.message || "\u97F3\u58F0\u5165\u529B\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002"), "error");
+            return;
+          }
+          if (msg.done === true) {
+            setVoiceListeningUi(false);
+            const text = String(msg.text || "").trim();
+            if (commentInput) commentInput.value = text.slice(0, 250);
+            if (!text) {
+              setPostStatus("", "idle");
+              return;
+            }
+            if (voiceAutoSend?.checked) {
+              submitComment().catch(() => {
+                setPostStatus(
+                  withCommentSendTroubleshootHint("\u9001\u4FE1\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002"),
+                  "error"
+                );
+              });
+            } else {
+              setPostStatus("\u5185\u5BB9\u3092\u78BA\u8A8D\u3057\u3066\u300C\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1\u300D\u3092\u62BC\u3057\u3066\u304F\u3060\u3055\u3044\u3002", "success");
+            }
+          }
+        });
       }
-      if ("partial" in msg && commentInput) {
-        commentInput.value = String(msg.partial || "").slice(0, 250);
-        return;
-      }
-      if (msg.error === true) {
-        setVoiceListeningUi(false);
-        setPostStatus(String(msg.message || "\u97F3\u58F0\u5165\u529B\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002"), "error");
-        return;
-      }
-      if (msg.done === true) {
-        setVoiceListeningUi(false);
-        const text = String(msg.text || "").trim();
-        if (commentInput) commentInput.value = text.slice(0, 250);
-        if (!text) {
-          setPostStatus("", "idle");
-          return;
-        }
-        if (voiceAutoSend?.checked) {
-          submitComment().catch(() => {
-            setPostStatus(
-              withCommentSendTroubleshootHint("\u9001\u4FE1\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002"),
-              "error"
-            );
-          });
-        } else {
-          setPostStatus("\u5185\u5BB9\u3092\u78BA\u8A8D\u3057\u3066\u300C\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1\u300D\u3092\u62BC\u3057\u3066\u304F\u3060\u3055\u3044\u3002", "success");
-        }
-      }
-    });
+    } catch {
+    }
     voiceBtn?.addEventListener("click", () => {
       void (async () => {
         if (!commentInput || !voiceBtn || voiceBtn.disabled) return;
@@ -4816,44 +5320,60 @@
     loadPopupFrameSettings().catch(() => {
       applyPopupFrame(popupFrameState.id, popupFrameState.custom);
     }).finally(() => {
-      applyThumbSelectFromStorage().catch(() => {
-      });
-      applyVoiceAutosendFromStorage().catch(() => {
-      });
-      applyCommentEnterSendFromStorage().catch(() => {
-      });
-      applyStoryGrowthCollapsedFromStorage().catch(() => {
-      });
-      refreshVoiceInputDeviceList().catch(() => {
-      });
-      safeRefresh();
-    });
-    chrome.storage.onChanged.addListener((changes, area) => {
-      if (area !== "local") return;
-      if (changes[KEY_POPUP_FRAME] || changes[KEY_POPUP_FRAME_CUSTOM]) {
-        loadPopupFrameSettings().catch(() => {
+      void (async () => {
+        await applySupportVisualExpandedFromStorage().catch(() => {
         });
-      }
-      if (changes[KEY_THUMB_AUTO] || changes[KEY_THUMB_INTERVAL_MS]) {
+        wireSupportVisualUi();
+        document.documentElement.setAttribute("data-nl-support-wired", "");
         applyThumbSelectFromStorage().catch(() => {
         });
-      }
-      if (changes[KEY_VOICE_AUTOSEND]) {
         applyVoiceAutosendFromStorage().catch(() => {
         });
-      }
-      if (changes[KEY_COMMENT_ENTER_SEND]) {
         applyCommentEnterSendFromStorage().catch(() => {
         });
-      }
-      if (changes[KEY_STORY_GROWTH_COLLAPSED]) {
         applyStoryGrowthCollapsedFromStorage().catch(() => {
         });
-      }
-      safeRefresh();
+        refreshVoiceInputDeviceList().catch(() => {
+        });
+        safeRefresh();
+      })();
     });
+    try {
+      const stCh = chrome?.storage?.onChanged;
+      if (stCh && typeof stCh.addListener === "function") {
+        stCh.addListener((changes, area) => {
+          if (area !== "local") return;
+          if (changes[KEY_POPUP_FRAME] || changes[KEY_POPUP_FRAME_CUSTOM]) {
+            loadPopupFrameSettings().catch(() => {
+            });
+          }
+          if (changes[KEY_THUMB_AUTO] || changes[KEY_THUMB_INTERVAL_MS]) {
+            applyThumbSelectFromStorage().catch(() => {
+            });
+          }
+          if (changes[KEY_VOICE_AUTOSEND]) {
+            applyVoiceAutosendFromStorage().catch(() => {
+            });
+          }
+          if (changes[KEY_COMMENT_ENTER_SEND]) {
+            applyCommentEnterSendFromStorage().catch(() => {
+            });
+          }
+          if (changes[KEY_STORY_GROWTH_COLLAPSED]) {
+            applyStoryGrowthCollapsedFromStorage().catch(() => {
+            });
+          }
+          const skipVisualExternalSync = changes[KEY_SUPPORT_VISUAL_EXPANDED] && ownSupportVisualPersistInFlight;
+          const changedKeys = Object.keys(changes);
+          const onlyVisualExpanded = changedKeys.length === 1 && changedKeys[0] === KEY_SUPPORT_VISUAL_EXPANDED;
+          if (!skipVisualExternalSync || !onlyVisualExpanded) safeRefresh();
+        });
+      }
+    } catch {
+    }
     setInterval(() => {
       if (!hasExtensionContext()) return;
+      if (typeof document !== "undefined" && document.hidden) return;
       watchMetaCache.key = "";
       watchMetaCache.snapshot = null;
       safeRefresh();

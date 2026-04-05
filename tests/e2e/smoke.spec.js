@@ -31,7 +31,9 @@ test.describe('smoke', () => {
       waitUntil: 'domcontentloaded',
       timeout: 60_000
     });
-    await popup.waitForTimeout(400);
+    await expect(popup.locator('html[data-nl-support-wired]')).toBeAttached({
+      timeout: 15_000
+    });
 
     await expect(popup.locator('.nl-main')).toBeVisible();
     await expect(popup.locator('.nl-stats')).toBeVisible();
