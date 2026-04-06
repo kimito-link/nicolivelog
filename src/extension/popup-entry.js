@@ -219,6 +219,72 @@ function applyResponsivePopupLayout() {
   body.classList.toggle('nl-compact', compact);
 }
 
+// ---------------------------------------------------------------------------
+// キャラクター表情リアクション共通
+// ---------------------------------------------------------------------------
+const CHARA_BOUNCE_CLASSES = ['nl-chara-bounce-small', 'nl-chara-bounce-medium', 'nl-chara-bounce-big'];
+
+const CHARA_IMG_BASE = 'images/yukkuri-charactore-english';
+
+const RINKU_IMGS = /** @type {const} */ ({
+  default: `${CHARA_IMG_BASE}/link/link-yukkuri-smile-mouth-open.png`,
+  small:   `${CHARA_IMG_BASE}/link/link-yukkuri-smile-mouth-closed.png`,
+  medium:  `${CHARA_IMG_BASE}/link/link-yukkuri-smile-mouth-open.png`,
+  big:     `${CHARA_IMG_BASE}/link/link-yukkuri-blink-mouth-open.png`,
+});
+
+const KONTA_IMGS = /** @type {const} */ ({
+  default: `${CHARA_IMG_BASE}/konta/kitsune-yukkuri-smile-mouth-open.png`,
+  small:   `${CHARA_IMG_BASE}/konta/kitsune-yukkuri-smile-mouth-closed.png`,
+  medium:  `${CHARA_IMG_BASE}/konta/kitsune-yukkuri-smile-mouth-open.png`,
+  big:     `${CHARA_IMG_BASE}/konta/kitsune-yukkuri-blink-mouth-open.png`,
+});
+
+const TANUNEE_IMGS = /** @type {const} */ ({
+  default: `${CHARA_IMG_BASE}/tanunee/tanuki-yukkuri-smile-mouth-open.png`,
+  small:   `${CHARA_IMG_BASE}/tanunee/tanuki-yukkuri-normal-mouth-open.png`,
+  medium:  `${CHARA_IMG_BASE}/tanunee/tanuki-yukkuri-smile-mouth-open.png`,
+  big:     `${CHARA_IMG_BASE}/tanunee/tanuki-yukkuri-blink-mouth-open.png`,
+});
+
+/** @type {Map<Element, number>} */
+const _charaRevertTimers = new Map();
+
+/**
+ * @param {Element|null} iconEl
+ * @param {{
+ *   delta: number,
+ *   thresholds: [number, number, number],
+ *   images: { default: string, small: string, medium: string, big: string },
+ * }} opts
+ */
+function triggerCharaReaction(iconEl, { delta, thresholds, images }) {
+  if (!iconEl || delta <= 0) return;
+  const [t1, t2, t3] = thresholds;
+  /** @type {'small'|'medium'|'big'} */
+  let rank;
+  if (delta >= t3) rank = 'big';
+  else if (delta >= t2) rank = 'medium';
+  else if (delta >= t1) rank = 'small';
+  else return;
+
+  const bounceClass = `nl-chara-bounce-${rank}`;
+
+  /** @type {HTMLImageElement} */ (iconEl).src = images[rank];
+  for (const c of CHARA_BOUNCE_CLASSES) iconEl.classList.remove(c);
+  void /** @type {HTMLElement} */ (iconEl).offsetWidth;
+  iconEl.classList.add(bounceClass);
+
+  const prev = _charaRevertTimers.get(iconEl);
+  if (prev) clearTimeout(prev);
+  _charaRevertTimers.set(iconEl, window.setTimeout(() => {
+    /** @type {HTMLImageElement} */ (iconEl).src = images.default;
+    _charaRevertTimers.delete(iconEl);
+  }, 600));
+}
+
+let _prevSupportCount = /** @type {number|null} */ (null);
+
 /** @param {string} value */
 function setCountDisplay(value) {
   const countEl = $('count');
@@ -227,6 +293,18 @@ function setCountDisplay(value) {
   countEl.classList.toggle('is-placeholder', value === '-' || value === '');
   const liveStatEl = $('liveStatComments');
   if (liveStatEl) liveStatEl.textContent = value;
+
+  const num = parseInt(value, 10);
+  if (!Number.isNaN(num) && _prevSupportCount != null && num > _prevSupportCount) {
+    const card = document.getElementById('supportVisualLiveCard');
+    const icon = card?.querySelector('.nl-live-stat-icon');
+    triggerCharaReaction(icon ?? null, {
+      delta: num - _prevSupportCount,
+      thresholds: [1, 3, 10],
+      images: RINKU_IMGS,
+    });
+  }
+  if (!Number.isNaN(num)) _prevSupportCount = num;
 }
 
 /**
@@ -2646,6 +2724,7 @@ function clearWatchMetaCard() {
 }
 
 let _prevConcurrentEstimated = /** @type {number|null} */ (null);
+let _prevViewerCount = /** @type {number|null} */ (null);
 
 /**
  * @param {WatchPageSnapshot|null} snapshot
@@ -2704,6 +2783,18 @@ function renderWatchMetaCard(snapshot, commentEntries = []) {
       typeof vc === 'number' && Number.isFinite(vc) && vc >= 0
         ? String(vc)
         : '—';
+  }
+  if (typeof vc === 'number' && Number.isFinite(vc) && vc >= 0) {
+    if (_prevViewerCount != null && vc > _prevViewerCount) {
+      const visitorsCard = viewerDomEl?.closest('.nl-live-stat-card');
+      const icon = visitorsCard?.querySelector('.nl-live-stat-icon');
+      triggerCharaReaction(icon ?? null, {
+        delta: vc - _prevViewerCount,
+        thresholds: [1, 10, 50],
+        images: TANUNEE_IMGS,
+      });
+    }
+    _prevViewerCount = vc;
   }
   const recentActive = typeof snapshot.recentActiveUsers === 'number'
     ? snapshot.recentActiveUsers
@@ -2768,11 +2859,11 @@ function renderWatchMetaCard(snapshot, commentEntries = []) {
         concurrentCard
       ) {
         const icon = concurrentCard.querySelector('.nl-live-stat-icon');
-        if (icon) {
-          icon.classList.remove('nl-konta-bounce');
-          void /** @type {HTMLElement} */ (icon).offsetWidth;
-          icon.classList.add('nl-konta-bounce');
-        }
+        triggerCharaReaction(icon, {
+          delta: Math.abs(resolved.estimated - _prevConcurrentEstimated),
+          thresholds: [1, 20, 100],
+          images: KONTA_IMGS,
+        });
       }
       _prevConcurrentEstimated = resolved.estimated;
 

@@ -1380,17 +1380,38 @@
         border-color: color-mix(in srgb, #f59e0b 30%, var(--nl-border) 70%);
       }
 
-      .nl-live-stat-card--concurrent .nl-live-stat-icon.nl-konta-bounce {
-        animation: nl-konta-bounce 0.45s cubic-bezier(.34,1.56,.64,1) 1;
+      .nl-live-stat-icon.nl-chara-bounce-small {
+        animation: nl-chara-bounce-small 0.35s cubic-bezier(.34,1.56,.64,1) 1;
+      }
+      .nl-live-stat-icon.nl-chara-bounce-medium {
+        animation: nl-chara-bounce-medium 0.45s cubic-bezier(.34,1.56,.64,1) 1;
+      }
+      .nl-live-stat-icon.nl-chara-bounce-big {
+        animation: nl-chara-bounce-big 0.55s cubic-bezier(.34,1.56,.64,1) 1;
       }
 
-      @keyframes nl-konta-bounce {
+      @keyframes nl-chara-bounce-small {
+        0%   { transform: translateY(0); }
+        40%  { transform: translateY(-4px); }
+        70%  { transform: translateY(-1px); }
+        100% { transform: translateY(0); }
+      }
+      @keyframes nl-chara-bounce-medium {
         0%   { transform: translateY(0) rotate(0); }
         20%  { transform: translateY(-6px) rotate(-4deg); }
         40%  { transform: translateY(-2px) rotate(3deg); }
         60%  { transform: translateY(-4px) rotate(-2deg); }
         80%  { transform: translateY(-1px) rotate(1deg); }
         100% { transform: translateY(0) rotate(0); }
+      }
+      @keyframes nl-chara-bounce-big {
+        0%   { transform: translateY(0) rotate(0) scale(1); }
+        15%  { transform: translateY(-8px) rotate(-6deg) scale(1.08); }
+        30%  { transform: translateY(-3px) rotate(4deg) scale(1.04); }
+        50%  { transform: translateY(-6px) rotate(-3deg) scale(1.06); }
+        70%  { transform: translateY(-2px) rotate(2deg) scale(1.02); }
+        85%  { transform: translateY(-1px) rotate(-1deg) scale(1); }
+        100% { transform: translateY(0) rotate(0) scale(1); }
       }
 
       .nl-concurrent-body {
