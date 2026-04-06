@@ -2,8 +2,24 @@ import { describe, it, expect } from 'vitest';
 import {
   UNKNOWN_USER_KEY,
   displayUserLabel,
+  shortUserKeyDisplay,
   aggregateCommentsByUser
 } from './userRooms.js';
+
+describe('shortUserKeyDisplay', () => {
+  it('未取得・空は空', () => {
+    expect(shortUserKeyDisplay('')).toBe('');
+    expect(shortUserKeyDisplay(UNKNOWN_USER_KEY)).toBe('');
+  });
+
+  it('短いIDはそのまま', () => {
+    expect(shortUserKeyDisplay('user12')).toBe('user12');
+  });
+
+  it('長いIDは省略', () => {
+    expect(shortUserKeyDisplay('12345678901234567890')).toMatch(/…/);
+  });
+});
 
 describe('displayUserLabel', () => {
   it('未取得キー', () => {

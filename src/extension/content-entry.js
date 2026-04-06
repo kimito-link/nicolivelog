@@ -67,6 +67,7 @@ import {
 } from '../lib/embeddedDataExtract.js';
 import { countRecentActiveUsers } from '../lib/concurrentEstimate.js';
 import { summarizeOfficialCommentHistory } from '../lib/officialStatsWindow.js';
+import { niconicoDefaultUserIconUrl } from '../lib/supportGrowthTileSrc.js';
 
 /**
  * @typedef {{ commentNo: string, text: string, userId: string|null, avatarUrl?: string }} ParsedCommentRow
@@ -2556,13 +2557,17 @@ function enrichRowsWithInterceptedUserIds(rows) {
       (userId ? interceptedNicknames.get(String(userId)) : '') ||
       '';
     const rowAv = String(r.avatarUrl || '').trim();
-    const av =
+    let av =
       rowAv ||
       (canUseInterceptMeta && isHttpAvatarUrl(entry?.av)
         ? String(entry?.av || '').trim()
         : userId && isHttpAvatarUrl(interceptedAvatars.get(String(userId)))
           ? String(interceptedAvatars.get(String(userId)) || '').trim()
         : '');
+    if (!av && userId) {
+      const derivedIcon = niconicoDefaultUserIconUrl(String(userId));
+      if (derivedIcon) av = derivedIcon;
+    }
     return {
       ...r,
       userId,

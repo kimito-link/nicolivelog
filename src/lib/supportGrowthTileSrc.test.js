@@ -2,7 +2,9 @@ import { describe, it, expect } from 'vitest';
 import {
   isHttpOrHttpsUrl,
   niconicoDefaultUserIconUrl,
-  resolveSupportGrowthTileSrc
+  resolveSupportGrowthTileSrc,
+  pickUserLaneDisplayTileSrc,
+  userLaneDedupeKey
 } from './supportGrowthTileSrc.js';
 
 describe('isHttpOrHttpsUrl', () => {
@@ -112,5 +114,81 @@ describe('resolveSupportGrowthTileSrc', () => {
         defaultSrc: rink
       })
     ).toBe(rink);
+  });
+});
+
+describe('pickUserLaneDisplayTileSrc', () => {
+  const def = 'images/yukkuri-link.png';
+
+  it('https 候補ならその URL', () => {
+    expect(pickUserLaneDisplayTileSrc('https://cdn.example/a.jpg', def)).toBe(
+      'https://cdn.example/a.jpg'
+    );
+  });
+
+  it('http 候補も採用', () => {
+    expect(pickUserLaneDisplayTileSrc('http://x.test/b.png', def)).toBe('http://x.test/b.png');
+  });
+
+  it('空・相対のみなら既定タイル', () => {
+    expect(pickUserLaneDisplayTileSrc('', def)).toBe(def);
+    expect(pickUserLaneDisplayTileSrc('images/x.png', def)).toBe(def);
+    expect(pickUserLaneDisplayTileSrc('/abs/x.png', def)).toBe(def);
+  });
+
+  it('候補が http でなく default も空なら空', () => {
+    expect(pickUserLaneDisplayTileSrc('', '')).toBe('');
+    expect(pickUserLaneDisplayTileSrc('rel.png', '')).toBe('');
+  });
+});
+
+describe('userLaneDedupeKey', () => {
+  it('userId が最優先', () => {
+    expect(
+      userLaneDedupeKey({
+        userId: 'a:foo',
+        avatarHttpCandidate: 'https://x/a.jpg',
+        stableId: 'id-1'
+      })
+    ).toBe('u:a:foo');
+  });
+
+  it('userId なしで http サムネがあればそれでキー', () => {
+    expect(
+      userLaneDedupeKey({
+        userId: '',
+        avatarHttpCandidate: 'https://cdn.example/u.png',
+        stableId: 's1'
+      })
+    ).toBe('t:https://cdn.example/u.png');
+  });
+
+  it('userId も http も無ければ stableId', () => {
+    expect(
+      userLaneDedupeKey({
+        userId: '  ',
+        avatarHttpCandidate: '',
+        stableId: 'legacy:abc'
+      })
+    ).toBe('s:legacy:abc');
+  });
+
+  it('http でない候補は stableId へフォールバック', () => {
+    expect(
+      userLaneDedupeKey({
+        userId: '',
+        avatarHttpCandidate: 'images/x.png',
+        stableId: 'st99'
+      })
+    ).toBe('s:st99');
+  });
+
+  it('すべて空なら空（レーン除外）', () => {
+    expect(
+      userLaneDedupeKey({ userId: '', avatarHttpCandidate: '', stableId: '' })
+    ).toBe('');
+    expect(
+      userLaneDedupeKey({ userId: '', avatarHttpCandidate: '  ', stableId: '' })
+    ).toBe('');
   });
 });

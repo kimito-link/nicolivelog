@@ -234,6 +234,20 @@
     }
     return def;
   }
+  function pickUserLaneDisplayTileSrc(httpCandidate, defaultTileSrc) {
+    if (isHttpOrHttpsUrl(httpCandidate)) return String(httpCandidate).trim();
+    return String(defaultTileSrc || "").trim();
+  }
+  function userLaneDedupeKey(p) {
+    const u = String(p?.userId || "").trim();
+    if (u) return `u:${u}`;
+    if (isHttpOrHttpsUrl(p?.avatarHttpCandidate)) {
+      return `t:${String(p.avatarHttpCandidate).trim()}`;
+    }
+    const s = String(p?.stableId || "").trim();
+    if (s) return `s:${s}`;
+    return "";
+  }
 
   // src/lib/commentRecord.js
   function normalizeCommentText(value) {
@@ -578,13 +592,17 @@
 
   // src/lib/userRooms.js
   var UNKNOWN_USER_KEY = "__unknown__";
+  function shortUserKeyDisplay(userKey) {
+    if (!userKey || userKey === UNKNOWN_USER_KEY) return "";
+    const s = String(userKey);
+    return s.length <= 18 ? s : `${s.slice(0, 8)}\u2026${s.slice(-6)}`;
+  }
   function displayUserLabel(userKey, nickname) {
     if (!userKey || userKey === UNKNOWN_USER_KEY) {
       return "ID\u672A\u53D6\u5F97\uFF08DOM\u306B\u6295\u7A3F\u8005\u60C5\u5831\u306A\u3057\uFF09";
     }
     const name = String(nickname || "").trim();
-    const s = String(userKey);
-    const shortId = s.length <= 18 ? s : `${s.slice(0, 8)}\u2026${s.slice(-6)}`;
+    const shortId = shortUserKeyDisplay(userKey);
     if (name) return `${name}\uFF08${shortId}\uFF09`;
     return shortId;
   }
@@ -621,7 +639,47 @@
     return [...map.values()].sort((a, b) => b.lastAt - a.lastAt);
   }
 
-  // src/lib/userAccentHue.js
+  // src/lib/userSupportGridAccent.js
+  var ACCENT_OKLCH_LIGHT = Object.freeze([
+    "oklch(0.52 0.13 264)",
+    "oklch(0.58 0.12 230)",
+    "oklch(0.52 0.12 150)",
+    "oklch(0.62 0.14 85)",
+    "oklch(0.54 0.16 25)",
+    "oklch(0.52 0.14 310)",
+    "oklch(0.62 0.14 50)",
+    "oklch(0.56 0.02 264)"
+  ]);
+  var ACCENT_OKLCH_DARK = Object.freeze([
+    "oklch(0.78 0.09 264)",
+    "oklch(0.82 0.08 230)",
+    "oklch(0.78 0.09 150)",
+    "oklch(0.84 0.10 85)",
+    "oklch(0.79 0.11 25)",
+    "oklch(0.78 0.09 310)",
+    "oklch(0.84 0.10 50)",
+    "oklch(0.78 0.03 264)"
+  ]);
+  var ACCENT_HEX_LIGHT = Object.freeze([
+    "#375ca8",
+    "#0f8ab8",
+    "#217a4a",
+    "#c9a227",
+    "#c43c4f",
+    "#8f3d8c",
+    "#d9781a",
+    "#6b6f7a"
+  ]);
+  var ACCENT_HEX_DARK = Object.freeze([
+    "#8eb7ff",
+    "#6fd4f5",
+    "#5ecd8f",
+    "#e8cf5a",
+    "#ff8a9d",
+    "#d896ff",
+    "#ffb366",
+    "#b4b8c4"
+  ]);
   function fnv1a32(s) {
     let h = 2166136261;
     for (let i = 0; i < s.length; i += 1) {
@@ -630,10 +688,61 @@
     }
     return h >>> 0;
   }
-  function hueFromUserKey(userKey) {
+  function accentSlotFromUserKey(userKey) {
     const k = String(userKey || "").trim();
     if (!k || k === UNKNOWN_USER_KEY) return null;
-    return fnv1a32(k) % 360;
+    return fnv1a32(k) % 8;
+  }
+  function accentColorForSlot(slot, colorScheme) {
+    if (!Number.isInteger(slot) || slot < 0 || slot > 7) return null;
+    const pal = colorScheme === "dark" ? ACCENT_HEX_DARK : ACCENT_HEX_LIGHT;
+    return pal[slot] ?? null;
+  }
+  function accentSlotFromSupportEntry(entry, opts) {
+    if (!entry || typeof entry !== "object") return null;
+    const e = (
+      /** @type {{ userId?: string, nickname?: string }} */
+      entry
+    );
+    const uid = String(e.userId || "").trim();
+    if (uid) return accentSlotFromUserKey(uid);
+    const tile = String(opts?.tileSrc || "").trim();
+    const defaultTile = String(opts?.defaultTileSrc || "").trim();
+    const tileIsDistinct = Boolean(tile && (!defaultTile || tile !== defaultTile));
+    if (tileIsDistinct) return accentSlotFromUserKey(`t:${tile}`);
+    const sid = String(opts?.stableId || "").trim();
+    if (sid) return accentSlotFromUserKey(`s:${sid}`);
+    const nick = String(e.nickname || "").trim();
+    if (nick) return accentSlotFromUserKey(`n:${nick}`);
+    if (tile) return accentSlotFromUserKey(`t:${tile}`);
+    return null;
+  }
+  function supportUserKeyFromEntry(entry) {
+    if (!entry || typeof entry !== "object") return UNKNOWN_USER_KEY;
+    const uid = String(
+      /** @type {{ userId?: string }} */
+      entry.userId || ""
+    ).trim();
+    return uid || UNKNOWN_USER_KEY;
+  }
+  function supportOrdinalForIndex(entries, index) {
+    if (!Array.isArray(entries) || !Number.isFinite(index)) return 0;
+    const i = Math.floor(index);
+    if (i < 0 || i >= entries.length) return 0;
+    const key = supportUserKeyFromEntry(entries[i]);
+    let n = 0;
+    for (let j = 0; j <= i; j += 1) {
+      if (supportUserKeyFromEntry(entries[j]) === key) n += 1;
+    }
+    return n;
+  }
+  function supportSameUserTotalInEntries(entries, userKey) {
+    if (!Array.isArray(entries) || !userKey) return 0;
+    let n = 0;
+    for (const e of entries) {
+      if (supportUserKeyFromEntry(e) === userKey) n += 1;
+    }
+    return n;
   }
 
   // src/lib/supportGrowthAvatarLoad.js
@@ -1040,13 +1149,28 @@
     /** @type {number|null} */
     null
   );
-  function setCountDisplay(value) {
+  function setCountDisplay(value, watchSnapshot = null) {
     const countEl = $("count");
-    if (!countEl) return;
-    countEl.textContent = value;
-    countEl.classList.toggle("is-placeholder", value === "-" || value === "");
+    if (countEl) {
+      countEl.textContent = value;
+      countEl.classList.toggle("is-placeholder", value === "-" || value === "");
+    }
     const liveStatEl = $("liveStatComments");
     if (liveStatEl) liveStatEl.textContent = value;
+    const officialEl = (
+      /** @type {HTMLElement|null} */
+      $("liveStatCommentsOfficial")
+    );
+    if (officialEl) {
+      const oc = watchSnapshot?.officialCommentCount;
+      if (typeof oc === "number" && Number.isFinite(oc) && oc >= 0) {
+        officialEl.hidden = false;
+        officialEl.textContent = `\u516C\u5F0F ${oc.toLocaleString("ja-JP")} \u4EF6`;
+      } else {
+        officialEl.hidden = true;
+        officialEl.textContent = "";
+      }
+    }
     const num = parseInt(value, 10);
     if (!Number.isNaN(num) && _prevSupportCount != null && num > _prevSupportCount) {
       const card = document.getElementById("supportVisualLiveCard");
@@ -2057,6 +2181,27 @@
     /** ホバー再取得用の最後のポインタ座標 */
     hoverClientY: Number.NaN
   };
+  function getStoryColorScheme() {
+    if (typeof window.matchMedia !== "function") return "light";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  var storyGrowthColorSchemeListenerBound = false;
+  function ensureStoryGrowthColorSchemeListener() {
+    if (storyGrowthColorSchemeListenerBound) return;
+    storyGrowthColorSchemeListenerBound = true;
+    if (typeof window.matchMedia !== "function") return;
+    const mq = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => {
+      const root = STORY_GROWTH_STATE.root;
+      if (root) patchStoryGrowthIconsFromSource(root, {});
+      renderStoryUserLane();
+    };
+    if (typeof mq.addEventListener === "function") {
+      mq.addEventListener("change", onChange);
+    } else {
+      mq.addListener(onChange);
+    }
+  }
   var STORY_SOURCE_STATE = {
     liveId: "",
     entries: (
@@ -2182,7 +2327,12 @@
     const pin = STORY_GROWTH_STATE.pinnedCommentId;
     for (const el of root.querySelectorAll("img.nl-story-growth-icon")) {
       const id = el.getAttribute("data-comment-id");
-      el.classList.toggle("is-selected", Boolean(pin && id && id === pin));
+      const on = Boolean(pin && id && id === pin);
+      el.classList.toggle("is-selected", on);
+      const cell = el.closest(".nl-story-growth-cell");
+      if (cell instanceof HTMLElement) {
+        cell.classList.toggle("nl-story-growth-cell--selected", on);
+      }
     }
   }
   var storyGlobalDismissBound = false;
@@ -2249,16 +2399,22 @@
     const picked = [];
     const seen = /* @__PURE__ */ new Set();
     const liveId = String(STORY_SOURCE_STATE.liveId || "");
+    const laneScheme = getStoryColorScheme();
     for (let i = entries.length - 1; i >= 0 && picked.length < limit; i -= 1) {
       const e = entries[i];
-      const src = storyGrowthAvatarSrcCandidate(e, liveId);
-      if (!src) continue;
-      const uid = String(e?.userId || "").trim();
-      const key = uid || src;
-      if (seen.has(key)) continue;
-      seen.add(key);
+      const httpCandidate = storyGrowthAvatarSrcCandidate(e, liveId);
+      const dedupeKey = userLaneDedupeKey({
+        userId: e?.userId,
+        avatarHttpCandidate: httpCandidate,
+        stableId: commentStableId(e)
+      });
+      if (!dedupeKey) continue;
+      if (seen.has(dedupeKey)) continue;
+      seen.add(dedupeKey);
+      const displaySrc = pickUserLaneDisplayTileSrc(httpCandidate, STORY_GRID_DEFAULT_TILE_IMG);
+      if (!displaySrc) continue;
       const label = storyGrowthDisplayLabel(e, liveId) || "\u30E6\u30FC\u30B6\u30FC";
-      picked.push({ src, title: label });
+      picked.push({ displaySrc, title: label, entry: e });
     }
     lane.innerHTML = "";
     if (!picked.length) {
@@ -2268,9 +2424,11 @@
     }
     const frag = document.createDocumentFragment();
     for (const p of picked) {
+      const cell = document.createElement("span");
+      cell.className = "nl-story-userlane-cell";
       const img = document.createElement("img");
       img.className = "nl-story-userlane-avatar";
-      const requestedLane = p.src;
+      const requestedLane = p.displaySrc;
       const displayLane = storyAvatarLoadGuard.pickDisplaySrc(requestedLane);
       img.src = displayLane;
       storyAvatarLoadGuard.noteRemoteAttempt(img, requestedLane);
@@ -2284,7 +2442,20 @@
       if (isHttpOrHttpsUrl(img.src)) {
         img.referrerPolicy = "no-referrer";
       }
-      frag.appendChild(img);
+      const stable = commentStableId(p.entry);
+      const requestedTile = storyGrowthTileSrcForEntry(p.entry, liveId);
+      const slot = accentSlotFromSupportEntry(p.entry, {
+        tileSrc: requestedTile,
+        stableId: stable || "",
+        defaultTileSrc: STORY_GRID_DEFAULT_TILE_IMG
+      });
+      const accentCss = slot != null ? accentColorForSlot(slot, laneScheme) : null;
+      if (accentCss) {
+        cell.classList.add("nl-story-userlane-cell--accent");
+        cell.style.setProperty("--nl-user-accent", accentCss);
+      }
+      cell.appendChild(img);
+      frag.appendChild(cell);
     }
     lane.appendChild(frag);
     lane.setAttribute(
@@ -2764,12 +2935,11 @@
     return displayUserLabel(userKey, nickname);
   }
   function applyStoryGrowthIconAttributes(img, index, isNew) {
-    img.className = isNew ? "nl-story-growth-icon is-new" : "nl-story-growth-icon";
     const entry = getStoryEntryByIndex(index);
     const stable = commentStableId(entry);
-    if (stable && STORY_GROWTH_STATE.pinnedCommentId === stable) {
-      img.classList.add("is-selected");
-    }
+    const selected = Boolean(stable && STORY_GROWTH_STATE.pinnedCommentId === stable);
+    img.className = isNew ? "nl-story-growth-icon is-new" : "nl-story-growth-icon";
+    if (selected) img.classList.add("is-selected");
     const requestedTile = storyGrowthTileSrcForEntry(entry, STORY_SOURCE_STATE.liveId);
     const displayTile = storyAvatarLoadGuard.pickDisplaySrc(requestedTile);
     img.src = displayTile;
@@ -2785,14 +2955,37 @@
       img.removeAttribute("referrerpolicy");
       img.classList.remove("nl-story-growth-icon--remote");
     }
-    const userKeyForHue = entry ? String(entry.userId || "").trim() || UNKNOWN_USER_KEY : UNKNOWN_USER_KEY;
-    const accentHue = hueFromUserKey(userKeyForHue);
-    if (accentHue != null) {
-      img.classList.add("nl-story-growth-icon--user-accent");
-      img.style.setProperty("--nl-user-hue", String(accentHue));
-    } else {
-      img.classList.remove("nl-story-growth-icon--user-accent");
-      img.style.removeProperty("--nl-user-hue");
+    const entries = STORY_SOURCE_STATE.entries;
+    const storyKey = entry ? supportUserKeyFromEntry(entry) : UNKNOWN_USER_KEY;
+    const ordinal = supportOrdinalForIndex(entries, index);
+    const slot = accentSlotFromSupportEntry(entry, {
+      tileSrc: requestedTile,
+      stableId: stable || "",
+      defaultTileSrc: STORY_GRID_DEFAULT_TILE_IMG
+    });
+    const scheme = getStoryColorScheme();
+    const accentCss = slot != null ? accentColorForSlot(slot, scheme) : null;
+    if (accentCss) img.classList.add("nl-story-growth-icon--user-accent");
+    else img.classList.remove("nl-story-growth-icon--user-accent");
+    const cell = img.closest(".nl-story-growth-cell");
+    if (cell instanceof HTMLElement) {
+      if (accentCss) {
+        cell.style.setProperty("--nl-user-accent", accentCss);
+        cell.classList.add("nl-story-growth-cell--accent");
+        cell.classList.add("nl-story-growth-cell--user-accent");
+      } else {
+        cell.style.removeProperty("--nl-user-accent");
+        cell.classList.remove("nl-story-growth-cell--accent");
+        cell.classList.remove("nl-story-growth-cell--user-accent");
+      }
+      if (ordinal > 1) {
+        cell.classList.add("nl-story-growth-cell--repeat");
+        cell.setAttribute("data-support-ordinal", String(ordinal));
+      } else {
+        cell.classList.remove("nl-story-growth-cell--repeat");
+        cell.removeAttribute("data-support-ordinal");
+      }
+      cell.classList.toggle("nl-story-growth-cell--selected", selected);
     }
     const userLabel = storyGrowthDisplayLabel(entry, STORY_SOURCE_STATE.liveId);
     const text = truncateText(entry?.text || "", 26);
@@ -2802,17 +2995,25 @@
     img.setAttribute("role", "button");
     img.setAttribute("tabindex", "0");
     const hoverHint = storyHoverPreviewEnabled() ? "\u30DE\u30A6\u30B9\u3092\u4E57\u305B\u308B\u3068\u30D7\u30EC\u30D3\u30E5\u30FC\u3001" : "";
+    const totalSame = supportSameUserTotalInEntries(entries, storyKey);
+    const sameUserBlurb = entry && totalSame > 1 ? `\u540C\u4E00\u30E6\u30FC\u30B6\u30FC${ordinal}\u4EF6\u76EE\u3001\u4E00\u89A7\u306B\u540C\u30E6\u30FC\u30B6\u30FC\u8A08${totalSame}\u4EF6\u3002` : "";
     img.setAttribute(
       "aria-label",
-      entry ? `${index + 1}\u4EF6\u76EE ${userLabel} ${text || "\u30B3\u30E1\u30F3\u30C8"}\u3002${hoverHint}Enter \u307E\u305F\u306F Space \u3067\u8A73\u7D30\u306E\u56FA\u5B9A\u30FB\u89E3\u9664` : `${index + 1}\u4EF6\u76EE\u306E\u30B3\u30E1\u30F3\u30C8`
+      entry ? `${index + 1}\u4EF6\u76EE ${userLabel} ${text || "\u30B3\u30E1\u30F3\u30C8"}\u3002${sameUserBlurb}${hoverHint}Enter \u307E\u305F\u306F Space \u3067\u8A73\u7D30\u306E\u56FA\u5B9A\u30FB\u89E3\u9664` : `${index + 1}\u4EF6\u76EE\u306E\u30B3\u30E1\u30F3\u30C8`
     );
-    img.title = entry ? `#${entry.commentNo || "-"} ${userLabel}\uFF08${hoverHint}\u30AF\u30EA\u30C3\u30AF\u3067\u8A73\u7D30\uFF09` : `${index + 1}\u4EF6\u76EE`;
+    img.title = entry ? `#${entry.commentNo || "-"} ${userLabel}\uFF08${sameUserBlurb}${hoverHint}\u30AF\u30EA\u30C3\u30AF\u3067\u8A73\u7D30\uFF09` : `${index + 1}\u4EF6\u76EE`;
     img.alt = "";
   }
-  function createStoryGrowthIcon(isNew, index) {
+  function createStoryGrowthCell(isNew, index) {
+    const cell = document.createElement("span");
+    cell.className = "nl-story-growth-cell";
+    const media = document.createElement("span");
+    media.className = "nl-story-growth-cell__media";
     const img = document.createElement("img");
+    media.appendChild(img);
+    cell.appendChild(media);
     applyStoryGrowthIconAttributes(img, index, isNew);
-    return img;
+    return cell;
   }
   function patchStoryGrowthIconsFromSource(root, opts = {}) {
     const n = STORY_GROWTH_STATE.renderedCount;
@@ -2845,7 +3046,7 @@
     if (total <= 0) return;
     const frag = document.createDocumentFragment();
     for (let i = 0; i < total; i += 1) {
-      frag.appendChild(createStoryGrowthIcon(false, i));
+      frag.appendChild(createStoryGrowthCell(false, i));
     }
     root.appendChild(frag);
   }
@@ -2856,7 +3057,7 @@
     if (STORY_GROWTH_STATE.renderedCount >= STORY_GROWTH_STATE.targetCount) return;
     const nextIndex = STORY_GROWTH_STATE.renderedCount;
     STORY_GROWTH_STATE.renderedCount += 1;
-    root.appendChild(createStoryGrowthIcon(true, nextIndex));
+    root.appendChild(createStoryGrowthCell(true, nextIndex));
     if (STORY_GROWTH_STATE.renderedCount >= STORY_GROWTH_STATE.targetCount) return;
     STORY_GROWTH_STATE.timer = window.setTimeout(runStoryGrowthTick, storyGrowthStepDelayMs());
   }
@@ -2882,6 +3083,7 @@
     STORY_GROWTH_STATE.targetCount = target;
     if (!root) return;
     bindStoryGrowthInteractions(root);
+    ensureStoryGrowthColorSchemeListener();
     const iconPx = `${resolveStoryIconSize(target)}px`;
     const storyBody = root.closest(".nl-story-body");
     if (storyBody instanceof HTMLElement) {
@@ -3246,11 +3448,6 @@
     fill.style.width = `${Math.max(0, Math.min(100, Number(heatPercent) || 0)).toFixed(2)}%`;
     note.textContent = `${heatText}\uFF08\u3053\u306E5\u5206\u3067\u5897\u3048\u305F\u4EF6\u6570\uFF09`;
   }
-  function shortLabelForStrip(label, max = 16) {
-    const s = String(label || "");
-    if (s.length <= max) return s;
-    return `${s.slice(0, Math.max(1, max - 1))}\u2026`;
-  }
   function renderTopSupportRankStrip(stripRooms) {
     const strip = (
       /** @type {HTMLElement|null} */
@@ -3265,22 +3462,46 @@
     }
     strip.hidden = false;
     strip.removeAttribute("aria-hidden");
-    strip.setAttribute("aria-label", "\u5FDC\u63F4\u4EF6\u6570\u306E\u4E0A\u4F4D\uFF08\u63A8\u5B9A\uFF09");
+    strip.setAttribute(
+      "aria-label",
+      "\u8A18\u9332\u3057\u305F\u5FDC\u63F4\u30B3\u30E1\u30F3\u30C8\u3092\u30E6\u30FC\u30B6\u30FC\u5225\u306B\u6570\u3048\u305F\u4EF6\u6570\u306E\u591A\u3044\u9806"
+    );
+    const rankScheme = getStoryColorScheme();
     let knownRank = 0;
     const html = stripRooms.map((r) => {
       const label = displayUserLabel(r.userKey, r.nickname);
       const isUnknown = r.userKey === UNKNOWN_USER_KEY;
       if (!isUnknown) knownRank += 1;
       const placeHtml = !isUnknown ? `<span class="nl-top-support-rank__place" aria-hidden="true">${knownRank}</span>` : `<span class="nl-top-support-rank__place nl-top-support-rank__place--empty" aria-hidden="true"></span>`;
-      const short = escapeHtml(shortLabelForStrip(label, 18));
       const full = escapeAttr(label);
-      return `<div class="nl-top-support-rank__line ${isUnknown ? "nl-top-support-rank__line--unknown" : ""}" role="listitem" title="${full}">
+      const rawAv = String(r.avatarUrl || "").trim();
+      const thumbSrc = isHttpOrHttpsUrl(rawAv) ? rawAv : STORY_GRID_DEFAULT_TILE_IMG;
+      const thumbRp = isHttpOrHttpsUrl(thumbSrc) ? ' referrerpolicy="no-referrer"' : "";
+      const idText = isUnknown ? "\u2014" : escapeHtml(shortUserKeyDisplay(r.userKey) || String(r.userKey));
+      const nickRaw = String(r.nickname || "").trim();
+      const nameText = isUnknown ? "\u2014" : escapeHtml(nickRaw || "\uFF08\u672A\u53D6\u5F97\uFF09");
+      const idTitle = isUnknown ? "" : escapeAttr(String(r.userKey));
+      let lineClass = `nl-top-support-rank__line${isUnknown ? " nl-top-support-rank__line--unknown" : ""}`;
+      let lineStyle = "";
+      if (!isUnknown) {
+        const slot = accentSlotFromUserKey(r.userKey);
+        const col = slot != null ? accentColorForSlot(slot, rankScheme) : null;
+        if (col) {
+          lineClass += " nl-top-support-rank__line--has-accent";
+          lineStyle = ` style="--nl-rank-accent:${escapeAttr(col)}"`;
+        }
+      }
+      return `<div class="${lineClass}"${lineStyle} role="listitem" title="${full}">
         ${placeHtml}
         <span class="nl-top-support-rank__count">${r.count}\u4EF6</span>
-        <span class="nl-top-support-rank__who">${short}</span>
+        <span class="nl-top-support-rank__thumb-wrap">
+          <img class="nl-top-support-rank__thumb" src="${escapeAttr(thumbSrc)}" alt="" decoding="async"${thumbRp} />
+        </span>
+        <span class="nl-top-support-rank__id" title="${idTitle}">${idText}</span>
+        <span class="nl-top-support-rank__name">${nameText}</span>
       </div>`;
     }).join("");
-    strip.innerHTML = `<div class="nl-top-support-rank__list" role="list">${html}</div>`;
+    strip.innerHTML = `<p class="nl-top-support-rank__note">\u8A18\u9332\u5185\u30FB\u30E6\u30FC\u30B6\u30FC\u5225\u306E\u5FDC\u63F4\u4EF6\u6570\u304C\u591A\u3044\u9806\u3067\u3059\u3002</p><div class="nl-top-support-rank__list" role="list">${html}</div>`;
   }
   function renderUserRooms(entries) {
     const ul = (
@@ -3323,8 +3544,8 @@
       ...room,
       recentCount: recentMap.get(room.userKey) || 0
     })).sort((a, b) => {
-      if (b.recentCount !== a.recentCount) return b.recentCount - a.recentCount;
       if (b.count !== a.count) return b.count - a.count;
+      if (b.recentCount !== a.recentCount) return b.recentCount - a.recentCount;
       return b.lastAt - a.lastAt;
     });
     const denseLayout = document.body?.classList.contains("nl-tight") || document.body?.classList.contains("nl-compact");
@@ -4089,7 +4310,7 @@
       STORY_AVATAR_DIAG_STATE.selfPendingMatched = getOwnPostedMatchedIdSet(arr, lv).size;
       const displayEntries = buildDisplayCommentEntries(arr, lv);
       STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(displayEntries, lv);
-      setCountDisplay(String(displayEntries.length));
+      setCountDisplay(String(displayEntries.length), watchSnapshot);
       renderCommentTicker(
         /** @type {PopupCommentEntry[]} */
         displayEntries
@@ -5121,6 +5342,7 @@
   }
   function initPopup() {
     installExtensionContextErrorGuard();
+    ensureStoryGrowthColorSchemeListener();
     applyResponsivePopupLayout();
     void applyUsageTermsGateState();
     if (INLINE_MODE) {

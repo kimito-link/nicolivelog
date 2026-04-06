@@ -52,3 +52,30 @@ export function resolveSupportGrowthTileSrc(p) {
   }
   return def;
 }
+
+/**
+ * 識別ユーザーレーン用: https サムネがあれば表示に使い、無ければ拡張内既定タイル。
+ * @param {unknown} httpCandidate storyGrowthAvatarSrcCandidate 等の戻り（http(s) のみ）
+ * @param {unknown} defaultTileSrc 例: STORY_GRID_DEFAULT_TILE_IMG
+ * @returns {string}
+ */
+export function pickUserLaneDisplayTileSrc(httpCandidate, defaultTileSrc) {
+  if (isHttpOrHttpsUrl(httpCandidate)) return String(httpCandidate).trim();
+  return String(defaultTileSrc || '').trim();
+}
+
+/**
+ * 表示タイルが既定に揃っても衝突しないユーザーレーン用の重複排除キー。
+ * @param {{ userId?: unknown, avatarHttpCandidate?: unknown, stableId?: unknown }} p
+ * @returns {string} 空ならレーンに載せない
+ */
+export function userLaneDedupeKey(p) {
+  const u = String(p?.userId || '').trim();
+  if (u) return `u:${u}`;
+  if (isHttpOrHttpsUrl(p?.avatarHttpCandidate)) {
+    return `t:${String(p.avatarHttpCandidate).trim()}`;
+  }
+  const s = String(p?.stableId || '').trim();
+  if (s) return `s:${s}`;
+  return '';
+}

@@ -285,6 +285,14 @@
     const s = String(url || "").trim();
     return /^https?:\/\//i.test(s);
   }
+  function niconicoDefaultUserIconUrl(userId) {
+    const s = String(userId || "").trim();
+    if (!/^\d{5,14}$/.test(s)) return "";
+    const n = Number(s);
+    if (!Number.isFinite(n) || n < 1) return "";
+    const bucket = Math.max(1, Math.floor(n / 1e4));
+    return `https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/${bucket}/${s}.jpg`;
+  }
 
   // src/lib/commentRecord.js
   function userIdFromNicoUserIconHttpUrl(url) {
@@ -3681,7 +3689,11 @@
       const rowNick = r.nickname ? String(r.nickname).trim() : "";
       const nickname = (canUseInterceptMeta ? String(entry?.name || "").trim() : "") || rowNick || (userId ? interceptedNicknames.get(String(userId)) : "") || "";
       const rowAv = String(r.avatarUrl || "").trim();
-      const av = rowAv || (canUseInterceptMeta && isHttpAvatarUrl(entry?.av) ? String(entry?.av || "").trim() : userId && isHttpAvatarUrl(interceptedAvatars.get(String(userId))) ? String(interceptedAvatars.get(String(userId)) || "").trim() : "");
+      let av = rowAv || (canUseInterceptMeta && isHttpAvatarUrl(entry?.av) ? String(entry?.av || "").trim() : userId && isHttpAvatarUrl(interceptedAvatars.get(String(userId))) ? String(interceptedAvatars.get(String(userId)) || "").trim() : "");
+      if (!av && userId) {
+        const derivedIcon = niconicoDefaultUserIconUrl(String(userId));
+        if (derivedIcon) av = derivedIcon;
+      }
       return {
         ...r,
         userId,

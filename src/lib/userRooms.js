@@ -7,6 +7,17 @@ import { isHttpOrHttpsUrl } from './supportGrowthTileSrc.js';
 export const UNKNOWN_USER_KEY = '__unknown__';
 
 /**
+ * 一覧・ランキング用の短い userKey 表示（未取得は空）
+ * @param {string} userKey
+ * @returns {string}
+ */
+export function shortUserKeyDisplay(userKey) {
+  if (!userKey || userKey === UNKNOWN_USER_KEY) return '';
+  const s = String(userKey);
+  return s.length <= 18 ? s : `${s.slice(0, 8)}…${s.slice(-6)}`;
+}
+
+/**
  * @param {string} userKey
  * @param {string} [nickname]
  */
@@ -15,8 +26,7 @@ export function displayUserLabel(userKey, nickname) {
     return 'ID未取得（DOMに投稿者情報なし）';
   }
   const name = String(nickname || '').trim();
-  const s = String(userKey);
-  const shortId = s.length <= 18 ? s : `${s.slice(0, 8)}…${s.slice(-6)}`;
+  const shortId = shortUserKeyDisplay(userKey);
   if (name) return `${name}（${shortId}）`;
   return shortId;
 }

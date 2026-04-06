@@ -49,12 +49,22 @@ import { pickLatestCommentEntry } from '../lib/pickLatestComment.js';
 import {
   aggregateCommentsByUser,
   displayUserLabel,
+  shortUserKeyDisplay,
   UNKNOWN_USER_KEY
 } from '../lib/userRooms.js';
-import { hueFromUserKey } from '../lib/userAccentHue.js';
+import {
+  accentSlotFromSupportEntry,
+  accentSlotFromUserKey,
+  accentColorForSlot,
+  supportOrdinalForIndex,
+  supportSameUserTotalInEntries,
+  supportUserKeyFromEntry
+} from '../lib/userSupportGridAccent.js';
 import {
   resolveSupportGrowthTileSrc,
-  isHttpOrHttpsUrl
+  isHttpOrHttpsUrl,
+  pickUserLaneDisplayTileSrc,
+  userLaneDedupeKey
 } from '../lib/supportGrowthTileSrc.js';
 import { createSupportAvatarLoadGuard } from '../lib/supportGrowthAvatarLoad.js';
 import { entriesRelatedForStoryDetail } from '../lib/storyDetailRelatedEntries.js';
@@ -286,14 +296,30 @@ function triggerCharaReaction(iconEl, { delta, thresholds, images }) {
 
 let _prevSupportCount = /** @type {number|null} */ (null);
 
-/** @param {string} value */
-function setCountDisplay(value) {
+/**
+ * @param {string} value
+ * @param {WatchPageSnapshot|null} [watchSnapshot] 公式コメント数の併記用
+ */
+function setCountDisplay(value, watchSnapshot = null) {
   const countEl = $('count');
-  if (!countEl) return;
-  countEl.textContent = value;
-  countEl.classList.toggle('is-placeholder', value === '-' || value === '');
+  if (countEl) {
+    countEl.textContent = value;
+    countEl.classList.toggle('is-placeholder', value === '-' || value === '');
+  }
   const liveStatEl = $('liveStatComments');
   if (liveStatEl) liveStatEl.textContent = value;
+
+  const officialEl = /** @type {HTMLElement|null} */ ($('liveStatCommentsOfficial'));
+  if (officialEl) {
+    const oc = watchSnapshot?.officialCommentCount;
+    if (typeof oc === 'number' && Number.isFinite(oc) && oc >= 0) {
+      officialEl.hidden = false;
+      officialEl.textContent = `公式 ${oc.toLocaleString('ja-JP')} 件`;
+    } else {
+      officialEl.hidden = true;
+      officialEl.textContent = '';
+    }
+  }
 
   const num = parseInt(value, 10);
   if (!Number.isNaN(num) && _prevSupportCount != null && num > _prevSupportCount) {
@@ -1586,6 +1612,33 @@ const STORY_GROWTH_STATE = {
   hoverClientY: Number.NaN
 };
 
+/** @returns {'light'|'dark'} */
+function getStoryColorScheme() {
+  if (typeof window.matchMedia !== 'function') return 'light';
+  return window.matchMedia('(prefers-color-scheme: dark)').matches
+    ? 'dark'
+    : 'light';
+}
+
+let storyGrowthColorSchemeListenerBound = false;
+
+function ensureStoryGrowthColorSchemeListener() {
+  if (storyGrowthColorSchemeListenerBound) return;
+  storyGrowthColorSchemeListenerBound = true;
+  if (typeof window.matchMedia !== 'function') return;
+  const mq = window.matchMedia('(prefers-color-scheme: dark)');
+  const onChange = () => {
+    const root = STORY_GROWTH_STATE.root;
+    if (root) patchStoryGrowthIconsFromSource(root, {});
+    renderStoryUserLane();
+  };
+  if (typeof mq.addEventListener === 'function') {
+    mq.addEventListener('change', onChange);
+  } else {
+    mq.addListener(onChange);
+  }
+}
+
 /** アイコン列が参照するコメント（全件） */
 const STORY_SOURCE_STATE = {
   liveId: '',
@@ -1732,7 +1785,12 @@ function syncGrowthIconSelection(root) {
   const pin = STORY_GROWTH_STATE.pinnedCommentId;
   for (const el of root.querySelectorAll('img.nl-story-growth-icon')) {
     const id = el.getAttribute('data-comment-id');
-    el.classList.toggle('is-selected', Boolean(pin && id && id === pin));
+    const on = Boolean(pin && id && id === pin);
+    el.classList.toggle('is-selected', on);
+    const cell = el.closest('.nl-story-growth-cell');
+    if (cell instanceof HTMLElement) {
+      cell.classList.toggle('nl-story-growth-cell--selected', on);
+    }
   }
 }
 
@@ -1797,20 +1855,26 @@ function renderStoryUserLane() {
   }
 
   const limit = INLINE_MODE ? 48 : 24;
-  /** @type {{ src: string, title: string }[]} */
+  /** @type {{ displaySrc: string, title: string, entry: PopupCommentEntry }[]} */
   const picked = [];
   const seen = new Set();
   const liveId = String(STORY_SOURCE_STATE.liveId || '');
+  const laneScheme = getStoryColorScheme();
   for (let i = entries.length - 1; i >= 0 && picked.length < limit; i -= 1) {
     const e = entries[i];
-    const src = storyGrowthAvatarSrcCandidate(e, liveId);
-    if (!src) continue;
-    const uid = String(e?.userId || '').trim();
-    const key = uid || src;
-    if (seen.has(key)) continue;
-    seen.add(key);
+    const httpCandidate = storyGrowthAvatarSrcCandidate(e, liveId);
+    const dedupeKey = userLaneDedupeKey({
+      userId: e?.userId,
+      avatarHttpCandidate: httpCandidate,
+      stableId: commentStableId(e)
+    });
+    if (!dedupeKey) continue;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    const displaySrc = pickUserLaneDisplayTileSrc(httpCandidate, STORY_GRID_DEFAULT_TILE_IMG);
+    if (!displaySrc) continue;
     const label = storyGrowthDisplayLabel(e, liveId) || 'ユーザー';
-    picked.push({ src, title: label });
+    picked.push({ displaySrc, title: label, entry: e });
   }
 
   lane.innerHTML = '';
@@ -1822,9 +1886,12 @@ function renderStoryUserLane() {
 
   const frag = document.createDocumentFragment();
   for (const p of picked) {
+    const cell = document.createElement('span');
+    cell.className = 'nl-story-userlane-cell';
+
     const img = document.createElement('img');
     img.className = 'nl-story-userlane-avatar';
-    const requestedLane = p.src;
+    const requestedLane = p.displaySrc;
     const displayLane = storyAvatarLoadGuard.pickDisplaySrc(requestedLane);
     img.src = displayLane;
     storyAvatarLoadGuard.noteRemoteAttempt(img, requestedLane);
@@ -1838,7 +1905,22 @@ function renderStoryUserLane() {
     if (isHttpOrHttpsUrl(img.src)) {
       img.referrerPolicy = 'no-referrer';
     }
-    frag.appendChild(img);
+
+    const stable = commentStableId(p.entry);
+    const requestedTile = storyGrowthTileSrcForEntry(p.entry, liveId);
+    const slot = accentSlotFromSupportEntry(p.entry, {
+      tileSrc: requestedTile,
+      stableId: stable || '',
+      defaultTileSrc: STORY_GRID_DEFAULT_TILE_IMG
+    });
+    const accentCss = slot != null ? accentColorForSlot(slot, laneScheme) : null;
+    if (accentCss) {
+      cell.classList.add('nl-story-userlane-cell--accent');
+      cell.style.setProperty('--nl-user-accent', accentCss);
+    }
+
+    cell.appendChild(img);
+    frag.appendChild(cell);
   }
   lane.appendChild(frag);
   lane.setAttribute(
@@ -2430,12 +2512,12 @@ function storyGrowthDisplayLabel(entry, liveId) {
  * @param {boolean} isNew
  */
 function applyStoryGrowthIconAttributes(img, index, isNew) {
-  img.className = isNew ? 'nl-story-growth-icon is-new' : 'nl-story-growth-icon';
   const entry = getStoryEntryByIndex(index);
   const stable = commentStableId(entry);
-  if (stable && STORY_GROWTH_STATE.pinnedCommentId === stable) {
-    img.classList.add('is-selected');
-  }
+  const selected = Boolean(stable && STORY_GROWTH_STATE.pinnedCommentId === stable);
+
+  img.className = isNew ? 'nl-story-growth-icon is-new' : 'nl-story-growth-icon';
+  if (selected) img.classList.add('is-selected');
   const requestedTile = storyGrowthTileSrcForEntry(entry, STORY_SOURCE_STATE.liveId);
   const displayTile = storyAvatarLoadGuard.pickDisplaySrc(requestedTile);
   img.src = displayTile;
@@ -2451,17 +2533,41 @@ function applyStoryGrowthIconAttributes(img, index, isNew) {
     img.removeAttribute('referrerpolicy');
     img.classList.remove('nl-story-growth-icon--remote');
   }
-  const userKeyForHue = entry
-    ? String(entry.userId || '').trim() || UNKNOWN_USER_KEY
-    : UNKNOWN_USER_KEY;
-  const accentHue = hueFromUserKey(userKeyForHue);
-  if (accentHue != null) {
-    img.classList.add('nl-story-growth-icon--user-accent');
-    img.style.setProperty('--nl-user-hue', String(accentHue));
-  } else {
-    img.classList.remove('nl-story-growth-icon--user-accent');
-    img.style.removeProperty('--nl-user-hue');
+
+  const entries = STORY_SOURCE_STATE.entries;
+  const storyKey = entry ? supportUserKeyFromEntry(entry) : UNKNOWN_USER_KEY;
+  const ordinal = supportOrdinalForIndex(entries, index);
+  const slot = accentSlotFromSupportEntry(entry, {
+    tileSrc: requestedTile,
+    stableId: stable || '',
+    defaultTileSrc: STORY_GRID_DEFAULT_TILE_IMG
+  });
+  const scheme = getStoryColorScheme();
+  const accentCss = slot != null ? accentColorForSlot(slot, scheme) : null;
+  if (accentCss) img.classList.add('nl-story-growth-icon--user-accent');
+  else img.classList.remove('nl-story-growth-icon--user-accent');
+
+  const cell = img.closest('.nl-story-growth-cell');
+  if (cell instanceof HTMLElement) {
+    if (accentCss) {
+      cell.style.setProperty('--nl-user-accent', accentCss);
+      cell.classList.add('nl-story-growth-cell--accent');
+      cell.classList.add('nl-story-growth-cell--user-accent');
+    } else {
+      cell.style.removeProperty('--nl-user-accent');
+      cell.classList.remove('nl-story-growth-cell--accent');
+      cell.classList.remove('nl-story-growth-cell--user-accent');
+    }
+    if (ordinal > 1) {
+      cell.classList.add('nl-story-growth-cell--repeat');
+      cell.setAttribute('data-support-ordinal', String(ordinal));
+    } else {
+      cell.classList.remove('nl-story-growth-cell--repeat');
+      cell.removeAttribute('data-support-ordinal');
+    }
+    cell.classList.toggle('nl-story-growth-cell--selected', selected);
   }
+
   const userLabel = storyGrowthDisplayLabel(entry, STORY_SOURCE_STATE.liveId);
   const text = truncateText(entry?.text || '', 26);
   img.setAttribute('data-comment-index', String(index));
@@ -2472,14 +2578,19 @@ function applyStoryGrowthIconAttributes(img, index, isNew) {
   const hoverHint = storyHoverPreviewEnabled()
     ? 'マウスを乗せるとプレビュー、'
     : '';
+  const totalSame = supportSameUserTotalInEntries(entries, storyKey);
+  const sameUserBlurb =
+    entry && totalSame > 1
+      ? `同一ユーザー${ordinal}件目、一覧に同ユーザー計${totalSame}件。`
+      : '';
   img.setAttribute(
     'aria-label',
     entry
-      ? `${index + 1}件目 ${userLabel} ${text || 'コメント'}。${hoverHint}Enter または Space で詳細の固定・解除`
+      ? `${index + 1}件目 ${userLabel} ${text || 'コメント'}。${sameUserBlurb}${hoverHint}Enter または Space で詳細の固定・解除`
       : `${index + 1}件目のコメント`
   );
   img.title = entry
-    ? `#${entry.commentNo || '-'} ${userLabel}（${hoverHint}クリックで詳細）`
+    ? `#${entry.commentNo || '-'} ${userLabel}（${sameUserBlurb}${hoverHint}クリックで詳細）`
     : `${index + 1}件目`;
   img.alt = '';
 }
@@ -2488,10 +2599,16 @@ function applyStoryGrowthIconAttributes(img, index, isNew) {
  * @param {boolean} isNew
  * @param {number} index
  */
-function createStoryGrowthIcon(isNew, index) {
+function createStoryGrowthCell(isNew, index) {
+  const cell = document.createElement('span');
+  cell.className = 'nl-story-growth-cell';
+  const media = document.createElement('span');
+  media.className = 'nl-story-growth-cell__media';
   const img = document.createElement('img');
+  media.appendChild(img);
+  cell.appendChild(media);
   applyStoryGrowthIconAttributes(img, index, isNew);
-  return img;
+  return cell;
 }
 
 /**
@@ -2527,7 +2644,7 @@ function rebuildStoryGrowth(root, total) {
   if (total <= 0) return;
   const frag = document.createDocumentFragment();
   for (let i = 0; i < total; i += 1) {
-    frag.appendChild(createStoryGrowthIcon(false, i));
+    frag.appendChild(createStoryGrowthCell(false, i));
   }
   root.appendChild(frag);
 }
@@ -2539,7 +2656,7 @@ function runStoryGrowthTick() {
   if (STORY_GROWTH_STATE.renderedCount >= STORY_GROWTH_STATE.targetCount) return;
   const nextIndex = STORY_GROWTH_STATE.renderedCount;
   STORY_GROWTH_STATE.renderedCount += 1;
-  root.appendChild(createStoryGrowthIcon(true, nextIndex));
+  root.appendChild(createStoryGrowthCell(true, nextIndex));
   if (STORY_GROWTH_STATE.renderedCount >= STORY_GROWTH_STATE.targetCount) return;
   STORY_GROWTH_STATE.timer = window.setTimeout(runStoryGrowthTick, storyGrowthStepDelayMs());
 }
@@ -2574,6 +2691,7 @@ function syncStoryGrowth(liveId, count, root) {
 
   if (!root) return;
   bindStoryGrowthInteractions(root);
+  ensureStoryGrowthColorSchemeListener();
 
   const iconPx = `${resolveStoryIconSize(target)}px`;
   const storyBody = root.closest('.nl-story-body');
@@ -3041,16 +3159,9 @@ function renderRoomHeatSummary(totalRecent, activeUsers, heatPercent, heatText) 
   note.textContent = `${heatText}（この5分で増えた件数）`;
 }
 
-/** @param {string} label @param {number} [max] */
-function shortLabelForStrip(label, max = 16) {
-  const s = String(label || '');
-  if (s.length <= max) return s;
-  return `${s.slice(0, Math.max(1, max - 1))}…`;
-}
-
 /**
- * 応援カード直下に、上位ユーザーの順位・件数・短い表示名を出す（サムネイルは使わない）。
- * @param {{ userKey: string, nickname: string, count: number }[]} stripRooms
+ * 応援カード直下に、上位ユーザーの順位・件数・サムネ・ID・表示名を出す（記録コメントの集計）。
+ * @param {{ userKey: string, nickname: string, count: number, avatarUrl?: string }[]} stripRooms
  */
 function renderTopSupportRankStrip(stripRooms) {
   const strip = /** @type {HTMLElement|null} */ ($('topSupportRankStrip'));
@@ -3063,7 +3174,11 @@ function renderTopSupportRankStrip(stripRooms) {
   }
   strip.hidden = false;
   strip.removeAttribute('aria-hidden');
-  strip.setAttribute('aria-label', '応援件数の上位（推定）');
+  strip.setAttribute(
+    'aria-label',
+    '記録した応援コメントをユーザー別に数えた件数の多い順'
+  );
+  const rankScheme = getStoryColorScheme();
   let knownRank = 0;
   const html = stripRooms
     .map((r) => {
@@ -3073,16 +3188,42 @@ function renderTopSupportRankStrip(stripRooms) {
       const placeHtml = !isUnknown
         ? `<span class="nl-top-support-rank__place" aria-hidden="true">${knownRank}</span>`
         : `<span class="nl-top-support-rank__place nl-top-support-rank__place--empty" aria-hidden="true"></span>`;
-      const short = escapeHtml(shortLabelForStrip(label, 18));
       const full = escapeAttr(label);
-      return `<div class="nl-top-support-rank__line ${isUnknown ? 'nl-top-support-rank__line--unknown' : ''}" role="listitem" title="${full}">
+      const rawAv = String(r.avatarUrl || '').trim();
+      const thumbSrc = isHttpOrHttpsUrl(rawAv)
+        ? rawAv
+        : STORY_GRID_DEFAULT_TILE_IMG;
+      const thumbRp = isHttpOrHttpsUrl(thumbSrc) ? ' referrerpolicy="no-referrer"' : '';
+      const idText = isUnknown
+        ? '—'
+        : escapeHtml(shortUserKeyDisplay(r.userKey) || String(r.userKey));
+      const nickRaw = String(r.nickname || '').trim();
+      const nameText = isUnknown
+        ? '—'
+        : escapeHtml(nickRaw || '（未取得）');
+      const idTitle = isUnknown ? '' : escapeAttr(String(r.userKey));
+      let lineClass = `nl-top-support-rank__line${isUnknown ? ' nl-top-support-rank__line--unknown' : ''}`;
+      let lineStyle = '';
+      if (!isUnknown) {
+        const slot = accentSlotFromUserKey(r.userKey);
+        const col = slot != null ? accentColorForSlot(slot, rankScheme) : null;
+        if (col) {
+          lineClass += ' nl-top-support-rank__line--has-accent';
+          lineStyle = ` style="--nl-rank-accent:${escapeAttr(col)}"`;
+        }
+      }
+      return `<div class="${lineClass}"${lineStyle} role="listitem" title="${full}">
         ${placeHtml}
         <span class="nl-top-support-rank__count">${r.count}件</span>
-        <span class="nl-top-support-rank__who">${short}</span>
+        <span class="nl-top-support-rank__thumb-wrap">
+          <img class="nl-top-support-rank__thumb" src="${escapeAttr(thumbSrc)}" alt="" decoding="async"${thumbRp} />
+        </span>
+        <span class="nl-top-support-rank__id" title="${idTitle}">${idText}</span>
+        <span class="nl-top-support-rank__name">${nameText}</span>
       </div>`;
     })
     .join('');
-  strip.innerHTML = `<div class="nl-top-support-rank__list" role="list">${html}</div>`;
+  strip.innerHTML = `<p class="nl-top-support-rank__note">記録内・ユーザー別の応援件数が多い順です。</p><div class="nl-top-support-rank__list" role="list">${html}</div>`;
 }
 
 /** @param {PopupCommentEntry[]} entries */
@@ -3138,8 +3279,8 @@ function renderUserRooms(entries) {
       recentCount: recentMap.get(room.userKey) || 0
     }))
     .sort((a, b) => {
-      if (b.recentCount !== a.recentCount) return b.recentCount - a.recentCount;
       if (b.count !== a.count) return b.count - a.count;
+      if (b.recentCount !== a.recentCount) return b.recentCount - a.recentCount;
       return b.lastAt - a.lastAt;
     });
 
@@ -3996,7 +4137,7 @@ async function refresh() {
   STORY_AVATAR_DIAG_STATE.selfPendingMatched = getOwnPostedMatchedIdSet(arr, lv).size;
   const displayEntries = buildDisplayCommentEntries(arr, lv);
   STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(displayEntries, lv);
-  setCountDisplay(String(displayEntries.length));
+  setCountDisplay(String(displayEntries.length), watchSnapshot);
   renderCommentTicker(/** @type {PopupCommentEntry[]} */ (displayEntries));
   exportBtn.disabled = false;
   exportBtn.dataset.liveId = lv;
@@ -5205,6 +5346,7 @@ async function downloadCommentsHtml(liveId, storageKey, watchUrl) {
 
 function initPopup() {
   installExtensionContextErrorGuard();
+  ensureStoryGrowthColorSchemeListener();
   applyResponsivePopupLayout();
   void applyUsageTermsGateState();
   if (INLINE_MODE) {

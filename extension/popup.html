@@ -7,6 +7,7 @@
     <title>君斗りんくの追憶のきらめき</title>
     <style>
       :root {
+        color-scheme: light dark;
         --nl-pop-width: 420px;
         --nl-pop-height: 780px;
         --nl-base-font: 15.25px;
@@ -555,6 +556,21 @@
         max-height: none;
       }
 
+      /* 識別色はラッパー背景・外枠のみ（既定のリンクゆっくり画像の見え方は変えない） */
+      .nl-story-userlane-cell {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        flex-shrink: 0;
+        border-radius: 999px;
+      }
+
+      .nl-story-userlane-cell--accent {
+        padding: 3px;
+        background: color-mix(in srgb, var(--nl-user-accent) 20%, transparent);
+        box-shadow: 0 0 0 2px color-mix(in srgb, var(--nl-user-accent) 48%, transparent);
+      }
+
       .nl-story-userlane-avatar {
         width: 32px;
         height: 32px;
@@ -656,9 +672,55 @@
         overflow: visible;
       }
 
-      .nl-story-growth-icon {
+      .nl-story-growth-cell {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
         width: var(--nl-story-icon-size);
         height: var(--nl-story-icon-size);
+        box-sizing: border-box;
+        border-radius: 4px;
+        overflow: visible;
+        position: relative;
+        vertical-align: top;
+        flex-shrink: 0;
+      }
+
+      .nl-story-growth-cell__media {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        height: 100%;
+        overflow: hidden;
+        border-radius: 4px;
+        flex-shrink: 0;
+      }
+
+      .nl-story-growth-cell--accent {
+        background: color-mix(in srgb, var(--nl-user-accent) 8%, transparent);
+      }
+
+      .nl-story-growth-cell.nl-story-growth-cell--repeat::after {
+        content: '×' attr(data-support-ordinal);
+        position: absolute;
+        bottom: 1px;
+        right: 0;
+        padding: 0 1px;
+        font-size: 7px;
+        font-weight: 800;
+        line-height: 1;
+        letter-spacing: -0.02em;
+        color: var(--nl-text);
+        text-shadow:
+          0 0 2px var(--nl-surface),
+          0 0 2px var(--nl-surface);
+        pointer-events: none;
+      }
+
+      .nl-story-growth-icon {
+        width: 100%;
+        height: 100%;
         object-fit: contain;
         object-position: center;
         filter: drop-shadow(0 1px 1px rgb(2 17 31 / 18%));
@@ -680,9 +742,17 @@
         border: 1px solid color-mix(in srgb, #6d4c41 40%, var(--nl-border) 60%);
       }
 
-      /* userId ごとに決定論的な色相リング（同一ユーザーは同色） */
-      .nl-story-growth-icon.nl-story-growth-icon--user-accent {
-        box-shadow: 0 0 0 2px hsl(var(--nl-user-hue, 200) 72% 46%);
+      /* 外側セルに 4px リング（内側 __media でクリップしない。Chrome100 では :has 使わず） */
+      .nl-story-growth-cell--accent.nl-story-growth-cell--user-accent {
+        box-shadow: 0 0 0 4px var(--nl-user-accent);
+      }
+
+      /* ホバーは画像内 inset（親の overflow で外側リングが切れない） */
+      .nl-story-growth-cell--accent.nl-story-growth-cell--user-accent
+        .nl-story-growth-icon.nl-story-growth-icon--user-accent:hover:not(:focus-visible):not(
+          .is-selected
+        ) {
+        box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--nl-user-accent) 72%, #000000);
       }
 
       .nl-story-meter-label {
@@ -704,15 +774,18 @@
         transform: translateY(-1px);
       }
 
-      .nl-story-growth-icon.nl-story-growth-icon--user-accent:hover {
-        box-shadow: 0 0 0 2px hsl(var(--nl-user-hue, 200) 76% 40%);
+      .nl-story-growth-cell--selected,
+      .nl-story-growth-cell:focus-within {
+        box-shadow:
+          0 0 0 2px #ffffff,
+          0 0 0 4px #0284c7;
+        z-index: 2;
+        position: relative;
       }
 
       .nl-story-growth-icon:focus-visible,
       .nl-story-growth-icon.is-selected {
-        box-shadow:
-          0 0 0 2px #ffffff,
-          0 0 0 4px #0284c7;
+        box-shadow: none;
       }
 
       .nl-story-detail {
@@ -1623,6 +1696,19 @@
         max-width: 100%;
       }
 
+      .nl-live-stat-sub {
+        margin-top: 2px;
+        font-size: clamp(7px, 1.85vw, 9px);
+        font-weight: 600;
+        color: var(--nl-muted);
+        line-height: 1.25;
+        text-align: center;
+        max-width: 100%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+
       .nl-top-support-rank {
         width: 100%;
         margin-top: 5px;
@@ -1630,20 +1716,28 @@
         border-top: 1px solid color-mix(in srgb, var(--nl-border) 55%, transparent);
       }
 
+      .nl-top-support-rank__note {
+        margin: 0 0 4px;
+        font-size: clamp(7px, 1.8vw, 9px);
+        font-weight: 600;
+        color: var(--nl-muted);
+        line-height: 1.3;
+      }
+
       .nl-top-support-rank__list {
         display: flex;
         flex-direction: column;
-        gap: 3px;
+        gap: 4px;
         width: 100%;
         min-width: 0;
         text-align: left;
       }
 
       .nl-top-support-rank__line {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: baseline;
-        gap: 4px 6px;
+        display: grid;
+        grid-template-columns: auto auto minmax(22px, 26px) minmax(0, 1fr) minmax(0, 1fr);
+        align-items: center;
+        gap: 4px 5px;
         font-size: clamp(8px, 2vw, 10px);
         line-height: 1.25;
         color: var(--nl-text);
@@ -1666,6 +1760,16 @@
         line-height: 1;
       }
 
+      .nl-top-support-rank__line.nl-top-support-rank__line--has-accent {
+        padding: 2px 5px;
+        border-radius: 6px;
+        background: color-mix(in srgb, var(--nl-rank-accent) 15%, transparent);
+      }
+
+      .nl-top-support-rank__line.nl-top-support-rank__line--has-accent .nl-top-support-rank__place {
+        background: var(--nl-rank-accent);
+      }
+
       .nl-top-support-rank__place--empty {
         visibility: hidden;
         min-width: 1.35em;
@@ -1674,29 +1778,60 @@
       }
 
       .nl-top-support-rank__count {
-        flex-shrink: 0;
         font-weight: 800;
         font-variant-numeric: tabular-nums;
         color: #0f766e;
       }
 
-      .nl-top-support-rank__who {
-        flex: 1 1 40%;
+      .nl-top-support-rank__thumb-wrap {
+        width: 24px;
+        height: 24px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: var(--nl-surface);
+        border: 1px solid color-mix(in srgb, var(--nl-border) 78%, #fff 22%);
+        flex-shrink: 0;
+        justify-self: center;
+      }
+
+      .nl-top-support-rank__thumb {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        display: block;
+      }
+
+      .nl-top-support-rank__id,
+      .nl-top-support-rank__name {
         min-width: 0;
-        font-weight: 600;
-        color: var(--nl-muted);
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        font-weight: 600;
+        font-size: 0.92em;
       }
 
-      .nl-top-support-rank__line--unknown .nl-top-support-rank__who {
+      .nl-top-support-rank__id {
+        color: var(--nl-text-sub);
+      }
+
+      .nl-top-support-rank__name {
+        color: var(--nl-muted);
+      }
+
+      .nl-top-support-rank__line--unknown .nl-top-support-rank__name {
         font-weight: 700;
         color: var(--nl-text);
       }
 
       html.nl-inline body .nl-top-support-rank__line {
         font-size: clamp(9px, 2.3vw, 11px);
+        grid-template-columns: auto auto minmax(24px, 28px) minmax(0, 1fr) minmax(0, 1fr);
+      }
+
+      html.nl-inline body .nl-top-support-rank__thumb-wrap {
+        width: 26px;
+        height: 26px;
       }
 
       html.nl-inline body .nl-live-stat-icon {
@@ -3624,7 +3759,7 @@
         <div
           class="nl-live-stat-card nl-live-stat-card--comments nl-live-stat-card--support-visual"
           id="supportVisualLiveCard"
-          title="応援コメント数のサマリー（詳細は下の「アイコン列・グリッド・診断を表示」から）"
+          title="大きい数字は拡張がこの配信で記録した応援コメント件数。下段はニコ生公式の累計コメント数（取得できたときのみ表示）。"
         >
           <img
             class="nl-live-stat-icon"
@@ -3632,9 +3767,14 @@
             alt=""
             decoding="async"
           />
-          <div class="nl-live-stat-label">応援</div>
+          <div class="nl-live-stat-label">記録</div>
           <div class="nl-live-stat-value" id="liveStatComments">—</div>
-          <div class="nl-live-stat-unit">コメント</div>
+          <div class="nl-live-stat-unit">応援コメント</div>
+          <div
+            class="nl-live-stat-sub nl-live-stat-sub--official"
+            id="liveStatCommentsOfficial"
+            hidden
+          ></div>
           <div
             id="topSupportRankStrip"
             class="nl-top-support-rank"

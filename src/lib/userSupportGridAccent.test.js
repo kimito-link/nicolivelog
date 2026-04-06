@@ -1,0 +1,149 @@
+import { describe, it, expect } from 'vitest';
+import { UNKNOWN_USER_KEY } from './userRooms.js';
+import {
+  accentSlotFromUserKey,
+  accentOklchForSlot,
+  accentColorForSlot,
+  accentSlotFromSupportEntry,
+  supportUserKeyFromEntry,
+  supportOrdinalForIndex,
+  supportSameUserTotalInEntries,
+  ACCENT_OKLCH_LIGHT,
+  ACCENT_OKLCH_DARK,
+  ACCENT_HEX_LIGHT
+} from './userSupportGridAccent.js';
+
+describe('accentSlotFromUserKey', () => {
+  it('同じキーは同じスロット', () => {
+    expect(accentSlotFromUserKey('a:DrGpMc3qxk3QZ-bs')).toBe(
+      accentSlotFromUserKey('a:DrGpMc3qxk3QZ-bs')
+    );
+  });
+
+  it('UNKNOWN・空は null', () => {
+    expect(accentSlotFromUserKey('')).toBeNull();
+    expect(accentSlotFromUserKey('   ')).toBeNull();
+    expect(accentSlotFromUserKey(UNKNOWN_USER_KEY)).toBeNull();
+  });
+
+  it('通常キーは 0–7', () => {
+    const s = accentSlotFromUserKey('a:foo');
+    expect(s).not.toBeNull();
+    expect(Number.isInteger(s)).toBe(true);
+    expect(s).toBeGreaterThanOrEqual(0);
+    expect(s).toBeLessThan(8);
+  });
+});
+
+describe('accentOklchForSlot', () => {
+  it('範囲外は null', () => {
+    expect(accentOklchForSlot(-1, 'light')).toBeNull();
+    expect(accentOklchForSlot(8, 'light')).toBeNull();
+    expect(accentOklchForSlot(3.5, 'light')).toBeNull();
+  });
+
+  it('light/dark で配列と一致', () => {
+    for (let i = 0; i < 8; i += 1) {
+      expect(accentOklchForSlot(i, 'light')).toBe(ACCENT_OKLCH_LIGHT[i]);
+      expect(accentOklchForSlot(i, 'dark')).toBe(ACCENT_OKLCH_DARK[i]);
+    }
+  });
+
+  it('oklch 文字列形式', () => {
+    const c = accentOklchForSlot(0, 'light');
+    expect(c).toMatch(/^oklch\([\d.]+ [\d.]+ [\d.]+\)$/);
+  });
+});
+
+describe('accentColorForSlot', () => {
+  it('HEX と配列一致', () => {
+    for (let i = 0; i < 8; i += 1) {
+      expect(accentColorForSlot(i, 'light')).toBe(ACCENT_HEX_LIGHT[i]);
+      expect(accentColorForSlot(i, 'light')).toMatch(/^#[0-9a-f]{6}$/i);
+    }
+  });
+});
+
+describe('accentSlotFromSupportEntry', () => {
+  it('userId があれば userId ベース', () => {
+    const s1 = accentSlotFromSupportEntry(
+      { userId: 'a:foo' },
+      { tileSrc: 'https://x/a.png', defaultTileSrc: '' }
+    );
+    expect(s1).toBe(accentSlotFromUserKey('a:foo'));
+  });
+
+  it('userId がなくタイルが既定と異なればタイル URL で決定', () => {
+    const a = accentSlotFromSupportEntry(
+      { nickname: 'n' },
+      { tileSrc: 'https://cdn/a.jpg', defaultTileSrc: 'images/default.png' }
+    );
+    const b = accentSlotFromSupportEntry(
+      { nickname: 'n' },
+      { tileSrc: 'https://cdn/b.jpg', defaultTileSrc: 'images/default.png' }
+    );
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(a).not.toBe(b);
+  });
+
+  it('タイルが既定のみなら stableId を使う', () => {
+    const def = 'images/default.png';
+    const a = accentSlotFromSupportEntry(
+      {},
+      { tileSrc: def, defaultTileSrc: def, stableId: 'id-a' }
+    );
+    const b = accentSlotFromSupportEntry(
+      {},
+      { tileSrc: def, defaultTileSrc: def, stableId: 'id-b' }
+    );
+    expect(a).not.toBeNull();
+    expect(b).not.toBeNull();
+    expect(a).not.toBe(b);
+  });
+});
+
+describe('supportUserKeyFromEntry', () => {
+  it('userId 優先', () => {
+    expect(supportUserKeyFromEntry({ userId: ' u1 ', nickname: 'n' })).toBe('u1');
+  });
+
+  it('空 userId は UNKNOWN', () => {
+    expect(supportUserKeyFromEntry({ nickname: 'x' })).toBe(UNKNOWN_USER_KEY);
+  });
+});
+
+describe('supportOrdinalForIndex', () => {
+  it('範囲外は 0', () => {
+    expect(supportOrdinalForIndex([], 0)).toBe(0);
+    expect(supportOrdinalForIndex([{ userId: 'a' }], -1)).toBe(0);
+    expect(supportOrdinalForIndex([{ userId: 'a' }], 1)).toBe(0);
+  });
+
+  it('同一 userId の表示順 ordinal', () => {
+    const entries = [
+      { userId: 'a' },
+      { userId: 'b' },
+      { userId: 'a' },
+      { userId: 'a' }
+    ];
+    expect(supportOrdinalForIndex(entries, 0)).toBe(1);
+    expect(supportOrdinalForIndex(entries, 1)).toBe(1);
+    expect(supportOrdinalForIndex(entries, 2)).toBe(2);
+    expect(supportOrdinalForIndex(entries, 3)).toBe(3);
+  });
+
+  it('userId なしは同一 UNKNOWN として数える', () => {
+    const entries = [{ nickname: 'x' }, { nickname: 'y' }];
+    expect(supportOrdinalForIndex(entries, 0)).toBe(1);
+    expect(supportOrdinalForIndex(entries, 1)).toBe(2);
+  });
+});
+
+describe('supportSameUserTotalInEntries', () => {
+  it('全体件数', () => {
+    const entries = [{ userId: 'a' }, { userId: 'b' }, { userId: 'a' }];
+    expect(supportSameUserTotalInEntries(entries, 'a')).toBe(2);
+    expect(supportSameUserTotalInEntries(entries, 'b')).toBe(1);
+  });
+});
