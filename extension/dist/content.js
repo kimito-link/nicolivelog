@@ -436,6 +436,41 @@
     return { next, added, storageTouched };
   }
 
+  // src/lib/commentSubmitConfirm.js
+  var COMMENT_SUBMIT_CONFIRM_PROBE_MS = Object.freeze([
+    280,
+    700,
+    1400,
+    2500,
+    4e3
+  ]);
+  function isEditorReflectingSubmit(expectedNormalized, currentNormalized) {
+    const exp = String(expectedNormalized || "").trim();
+    const cur = String(currentNormalized || "").trim();
+    if (!exp) return false;
+    if (!cur || cur !== exp) return true;
+    return false;
+  }
+  async function waitUntilEditorReflectsSubmit(opts) {
+    const {
+      expectedNormalized,
+      readNormalized,
+      probeEndpointsMs = COMMENT_SUBMIT_CONFIRM_PROBE_MS,
+      sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+    } = opts;
+    const expected = String(expectedNormalized || "").trim();
+    if (!expected) return false;
+    const endpoints = [...probeEndpointsMs].sort((a, b) => a - b);
+    let waited = 0;
+    for (const endpoint of endpoints) {
+      const delta = Math.max(0, endpoint - waited);
+      waited = endpoint;
+      if (delta > 0) await sleep(delta);
+      if (isEditorReflectingSubmit(expected, readNormalized())) return true;
+    }
+    return false;
+  }
+
   // src/lib/nicoliveDom.js
   var LINE_HEAD = /^(\d{1,8})\s+([\s\S]+)$/;
   function parseCommentLineText(text) {
@@ -2916,21 +2951,14 @@
   async function confirmSubmittedCommentAsync(editor, rawText) {
     const expected = normalizeCommentText(rawText);
     if (!expected) return false;
-    const probes = [280, 700, 1400];
-    let waited = 0;
-    for (const probe of probes) {
-      const delta = Math.max(0, probe - waited);
-      waited = probe;
-      if (delta > 0) {
-        await new Promise((r) => setTimeout(r, delta));
-      }
-      const currentEditor = editor.isConnected && isVisibleElement(editor) ? editor : findCommentEditorElement();
-      const currentText = normalizeCommentText(readCommentEditorText(currentEditor));
-      if (!currentText || currentText !== expected) {
-        return true;
-      }
-    }
-    return false;
+    return waitUntilEditorReflectsSubmit({
+      expectedNormalized: expected,
+      readNormalized: () => {
+        const currentEditor = editor.isConnected && isVisibleElement(editor) ? editor : findCommentEditorElement();
+        return normalizeCommentText(readCommentEditorText(currentEditor));
+      },
+      probeEndpointsMs: COMMENT_SUBMIT_CONFIRM_PROBE_MS
+    });
   }
   async function postCommentFromContentAsync(rawText) {
     if (!canPostCommentInThisFrame()) {
@@ -3050,7 +3078,7 @@
     const expected = normalizeCommentText(rawText);
     const lid = String(liveId || "").trim().toLowerCase();
     if (!expected || !lid || !recording) return;
-    const probes = [280, 700, 1400];
+    const probes = [...COMMENT_SUBMIT_CONFIRM_PROBE_MS];
     let done = false;
     for (const delayMs of probes) {
       setTimeout(() => {
@@ -3490,7 +3518,13 @@
       return true;
     }
     if (msg.type === "NLS_POST_COMMENT") {
-      if (!canPostCommentInThisFrame()) return;
+      if (!canPostCommentInThisFrame()) {
+        sendResponse({
+          ok: false,
+          error: "\u3053\u306E\u30D5\u30EC\u30FC\u30E0\u306B\u306F\u30B3\u30E1\u30F3\u30C8\u6B04\u304C\u3042\u308A\u307E\u305B\u3093\u3002"
+        });
+        return true;
+      }
       const text = "text" in msg ? String(
         /** @type {{ text?: unknown }} */
         msg.text || ""

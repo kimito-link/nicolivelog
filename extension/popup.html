@@ -680,6 +680,11 @@
         border: 1px solid color-mix(in srgb, #6d4c41 40%, var(--nl-border) 60%);
       }
 
+      /* userId ごとに決定論的な色相リング（同一ユーザーは同色） */
+      .nl-story-growth-icon.nl-story-growth-icon--user-accent {
+        box-shadow: 0 0 0 2px hsl(var(--nl-user-hue, 200) 72% 46%);
+      }
+
       .nl-story-meter-label {
         margin-top: 3px;
         font-size: 8.7px;
@@ -697,6 +702,10 @@
       .nl-story-growth-icon:hover {
         filter: drop-shadow(0 2px 2px rgb(2 17 31 / 24%));
         transform: translateY(-1px);
+      }
+
+      .nl-story-growth-icon.nl-story-growth-icon--user-accent:hover {
+        box-shadow: 0 0 0 2px hsl(var(--nl-user-hue, 200) 76% 40%);
       }
 
       .nl-story-growth-icon:focus-visible,

@@ -31,6 +31,10 @@ import {
   normalizeThumbIntervalMsForHost
 } from '../lib/thumbSettings.js';
 import { mergeNewComments, normalizeCommentText } from '../lib/commentRecord.js';
+import {
+  COMMENT_SUBMIT_CONFIRM_PROBE_MS,
+  waitUntilEditorReflectsSubmit
+} from '../lib/commentSubmitConfirm.js';
 import { collectLoggedInViewerProfile } from '../lib/watchPageViewerProfile.js';
 import { extractCommentsFromNode } from '../lib/nicoliveDom.js';
 import {
@@ -1620,24 +1624,17 @@ function canPostCommentInThisFrame() {
 async function confirmSubmittedCommentAsync(editor, rawText) {
   const expected = normalizeCommentText(rawText);
   if (!expected) return false;
-  const probes = [280, 700, 1400];
-  let waited = 0;
-  for (const probe of probes) {
-    const delta = Math.max(0, probe - waited);
-    waited = probe;
-    if (delta > 0) {
-      await new Promise((r) => setTimeout(r, delta));
-    }
-    const currentEditor =
-      editor.isConnected && isVisibleElement(editor)
-        ? editor
-        : findCommentEditorElement();
-    const currentText = normalizeCommentText(readCommentEditorText(currentEditor));
-    if (!currentText || currentText !== expected) {
-      return true;
-    }
-  }
-  return false;
+  return waitUntilEditorReflectsSubmit({
+    expectedNormalized: expected,
+    readNormalized: () => {
+      const currentEditor =
+        editor.isConnected && isVisibleElement(editor)
+          ? editor
+          : findCommentEditorElement();
+      return normalizeCommentText(readCommentEditorText(currentEditor));
+    },
+    probeEndpointsMs: COMMENT_SUBMIT_CONFIRM_PROBE_MS
+  });
 }
 
 /**
@@ -1797,7 +1794,7 @@ function scheduleNativeSelfPostedConfirm(editor, rawText) {
   const expected = normalizeCommentText(rawText);
   const lid = String(liveId || '').trim().toLowerCase();
   if (!expected || !lid || !recording) return;
-  const probes = [280, 700, 1400];
+  const probes = [...COMMENT_SUBMIT_CONFIRM_PROBE_MS];
   let done = false;
   for (const delayMs of probes) {
     setTimeout(() => {
@@ -2359,7 +2356,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   }
 
   if (msg.type === 'NLS_POST_COMMENT') {
-    if (!canPostCommentInThisFrame()) return;
+    if (!canPostCommentInThisFrame()) {
+      sendResponse({
+        ok: false,
+        error: 'このフレームにはコメント欄がありません。'
+      });
+      return true;
+    }
     const text =
       'text' in msg ? String(/** @type {{ text?: unknown }} */ (msg).text || '') : '';
     void postCommentFromContentAsync(text)

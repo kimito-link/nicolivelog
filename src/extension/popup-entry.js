@@ -51,6 +51,7 @@ import {
   displayUserLabel,
   UNKNOWN_USER_KEY
 } from '../lib/userRooms.js';
+import { hueFromUserKey } from '../lib/userAccentHue.js';
 import {
   resolveSupportGrowthTileSrc,
   isHttpOrHttpsUrl
@@ -2449,6 +2450,17 @@ function applyStoryGrowthIconAttributes(img, index, isNew) {
   } else {
     img.removeAttribute('referrerpolicy');
     img.classList.remove('nl-story-growth-icon--remote');
+  }
+  const userKeyForHue = entry
+    ? String(entry.userId || '').trim() || UNKNOWN_USER_KEY
+    : UNKNOWN_USER_KEY;
+  const accentHue = hueFromUserKey(userKeyForHue);
+  if (accentHue != null) {
+    img.classList.add('nl-story-growth-icon--user-accent');
+    img.style.setProperty('--nl-user-hue', String(accentHue));
+  } else {
+    img.classList.remove('nl-story-growth-icon--user-accent');
+    img.style.removeProperty('--nl-user-hue');
   }
   const userLabel = storyGrowthDisplayLabel(entry, STORY_SOURCE_STATE.liveId);
   const text = truncateText(entry?.text || '', 26);

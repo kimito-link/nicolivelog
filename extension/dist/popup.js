@@ -621,6 +621,21 @@
     return [...map.values()].sort((a, b) => b.lastAt - a.lastAt);
   }
 
+  // src/lib/userAccentHue.js
+  function fnv1a32(s) {
+    let h = 2166136261;
+    for (let i = 0; i < s.length; i += 1) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619) >>> 0;
+    }
+    return h >>> 0;
+  }
+  function hueFromUserKey(userKey) {
+    const k = String(userKey || "").trim();
+    if (!k || k === UNKNOWN_USER_KEY) return null;
+    return fnv1a32(k) % 360;
+  }
+
   // src/lib/supportGrowthAvatarLoad.js
   function defaultUrlKey(url) {
     const s = String(url || "").trim();
@@ -2769,6 +2784,15 @@
     } else {
       img.removeAttribute("referrerpolicy");
       img.classList.remove("nl-story-growth-icon--remote");
+    }
+    const userKeyForHue = entry ? String(entry.userId || "").trim() || UNKNOWN_USER_KEY : UNKNOWN_USER_KEY;
+    const accentHue = hueFromUserKey(userKeyForHue);
+    if (accentHue != null) {
+      img.classList.add("nl-story-growth-icon--user-accent");
+      img.style.setProperty("--nl-user-hue", String(accentHue));
+    } else {
+      img.classList.remove("nl-story-growth-icon--user-accent");
+      img.style.removeProperty("--nl-user-hue");
     }
     const userLabel = storyGrowthDisplayLabel(entry, STORY_SOURCE_STATE.liveId);
     const text = truncateText(entry?.text || "", 26);
