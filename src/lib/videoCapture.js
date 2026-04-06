@@ -4,7 +4,6 @@
  */
 
 const DEFAULT_MAX_EDGE = 1280;
-export const SCREENSHOT_DOWNLOAD_SUBDIR = 'スクリーンショット';
 
 /**
  * アスペクト比を保ちつつ maxW/maxH に収まる整数サイズ
@@ -30,9 +29,6 @@ export function fitThumbnailDimensions(srcW, srcH, maxW, maxH) {
 }
 
 /**
- * Chrome 拡張は任意の絶対パスへは保存できないため、
- * スクショはダウンロード先配下の `スクリーンショット/` に寄せる。
- *
  * @param {string} liveId
  * @param {string} ext
  * @param {number} nowMs
@@ -44,7 +40,27 @@ export function buildScreenshotFilename(liveId, ext, nowMs) {
     .slice(0, 32) || 'unknown';
   const e = String(ext || 'png').replace(/^\./, '').toLowerCase() || 'png';
   const ts = Math.floor(Number(nowMs) || Date.now());
-  return `${SCREENSHOT_DOWNLOAD_SUBDIR}/nicolivelog-${safeLv}-${ts}.${e}`;
+  return `nicolivelog-${safeLv}-${ts}.${e}`;
+}
+
+/**
+ * data:image/* URL を Blob に変換する。
+ * anchor download 方式で使う（chrome.downloads.download は「保存先を確認」設定に勝てない）。
+ * @param {string} dataUrl
+ * @returns {Blob|null}
+ */
+export function dataUrlToBlob(dataUrl) {
+  if (!dataUrl || typeof dataUrl !== 'string') return null;
+  const m = dataUrl.match(/^data:(image\/[^;]+);base64,(.+)$/s);
+  if (!m) return null;
+  try {
+    const bin = atob(m[2]);
+    const bytes = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+    return new Blob([bytes], { type: m[1] });
+  } catch {
+    return null;
+  }
 }
 
 /**

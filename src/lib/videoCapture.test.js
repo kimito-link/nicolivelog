@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   fitThumbnailDimensions,
   buildScreenshotFilename,
-  SCREENSHOT_DOWNLOAD_SUBDIR,
+  dataUrlToBlob,
   interpretCaptureError
 } from './videoCapture.js';
 
@@ -41,24 +41,38 @@ describe('fitThumbnailDimensions', () => {
 });
 
 describe('buildScreenshotFilename', () => {
-  it('スクショ用サブフォルダ配下に lv とタイムスタンプを含む', () => {
+  it('lv とタイムスタンプを含むフラットなファイル名', () => {
     const name = buildScreenshotFilename('lv12345', 'png', 1_700_000_000_000);
-    expect(name).toMatch(
-      new RegExp(`^${SCREENSHOT_DOWNLOAD_SUBDIR}/nicolivelog-lv12345-\\d+\\.png$`)
-    );
+    expect(name).toMatch(/^nicolivelog-lv12345-\d+\.png$/);
     expect(name).toContain('1700000000000');
+    expect(name).not.toContain('/');
   });
 
-  it('危険文字を除去して親ディレクトリへ逃がさない', () => {
+  it('危険文字を除去', () => {
     const name = buildScreenshotFilename('lv../../x', 'png', 1);
-    expect(name.startsWith(`${SCREENSHOT_DOWNLOAD_SUBDIR}/`)).toBe(true);
-    expect(name.slice(`${SCREENSHOT_DOWNLOAD_SUBDIR}/`.length)).not.toContain('/');
+    expect(name).not.toContain('/');
     expect(name).not.toContain('\\');
     expect(name).not.toContain('..');
   });
 
   it('拡張子のドットは正規化', () => {
     expect(buildScreenshotFilename('lv1', '.PNG', 0)).toMatch(/\.png$/i);
+  });
+});
+
+describe('dataUrlToBlob', () => {
+  it('data:image/png;base64 を Blob に変換', () => {
+    const pixel = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVQI12NgAAIABQAB';
+    const blob = dataUrlToBlob(`data:image/png;base64,${pixel}`);
+    expect(blob).toBeInstanceOf(Blob);
+    expect(blob.type).toBe('image/png');
+    expect(blob.size).toBeGreaterThan(0);
+  });
+
+  it('不正な data URL は null を返す', () => {
+    expect(dataUrlToBlob('')).toBeNull();
+    expect(dataUrlToBlob('https://example.com/a.png')).toBeNull();
+    expect(dataUrlToBlob('data:text/plain,hello')).toBeNull();
   });
 });
 

@@ -4129,15 +4129,19 @@ async function reloadWatchTabForUrl(watchUrl) {
   const candidates = await collectWatchTabCandidates(w);
   for (const c of candidates) {
     try {
-      await chrome.scripting.executeScript({
-        target: { tabId: c.id },
-        func: () => {
-          globalThis.location.reload();
-        }
-      });
+      await chrome.tabs.reload(c.id);
       return { ok: true };
     } catch {
-      // 次の候補
+      // tabs.reload 失敗 → scripting でフォールバック
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId: c.id },
+          func: () => { globalThis.location.reload(); }
+        });
+        return { ok: true };
+      } catch {
+        // 次の候補
+      }
     }
   }
   return {
@@ -5424,20 +5428,25 @@ function initPopup() {
       }
       const lv = res.liveId || extractLiveIdFromUrl(watchUrl) || 'unknown';
       const filename = buildScreenshotFilename(lv, 'png', Date.now());
-      await chrome.downloads.download({
-        url: res.dataUrl,
-        filename,
-        saveAs: false,
-        conflictAction: 'uniquify'
-      });
-      setCaptureStatus(
-        captureStatus,
-        'スクリーンショット フォルダに保存しました。',
-        'success'
-      );
+      let saved = false;
+      try {
+        await chrome.downloads.download({
+          url: res.dataUrl,
+          filename,
+          saveAs: false,
+          conflictAction: 'uniquify'
+        });
+        saved = true;
+      } catch { /* download API may fail — fall through to tab preview */ }
+      if (saved) {
+        setCaptureStatus(captureStatus, '保存しました。', 'success');
+      } else {
+        await chrome.tabs.create({ url: res.dataUrl });
+        setCaptureStatus(captureStatus, '新しいタブに表示しました。右クリック→「名前を付けて画像を保存」で保存できます。', 'idle');
+      }
       safeRefresh();
-    } catch {
-      setCaptureStatus(captureStatus, 'ダウンロードに失敗しました。', 'error');
+    } catch (err) {
+      setCaptureStatus(captureStatus, `キャプチャに失敗: ${err instanceof Error ? err.message : String(err)}`, 'error');
     }
   });
 

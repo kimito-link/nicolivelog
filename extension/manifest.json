@@ -9,7 +9,7 @@
     "48": "images/logo/kimito-rinku-app-icon-48.png",
     "128": "images/logo/kimito-rinku-app-icon-128.png"
   },
-  "permissions": ["storage", "scripting", "downloads", "alarms"],
+  "permissions": ["storage", "scripting", "downloads", "alarms", "tabs"],
   "host_permissions": [
     "https://*.nicovideo.jp/*",
     "http://127.0.0.1:3456/*",

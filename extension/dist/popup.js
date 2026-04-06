@@ -182,12 +182,11 @@
   }
 
   // src/lib/videoCapture.js
-  var SCREENSHOT_DOWNLOAD_SUBDIR = "\u30B9\u30AF\u30EA\u30FC\u30F3\u30B7\u30E7\u30C3\u30C8";
   function buildScreenshotFilename(liveId, ext, nowMs) {
     const safeLv = String(liveId || "unknown").replace(/[/\\:*?"<>|]/g, "").replace(/\.\./g, "").slice(0, 32) || "unknown";
     const e = String(ext || "png").replace(/^\./, "").toLowerCase() || "png";
     const ts = Math.floor(Number(nowMs) || Date.now());
-    return `${SCREENSHOT_DOWNLOAD_SUBDIR}/nicolivelog-${safeLv}-${ts}.${e}`;
+    return `nicolivelog-${safeLv}-${ts}.${e}`;
   }
 
   // src/lib/thumbSettings.js
@@ -4190,14 +4189,19 @@
     const candidates = await collectWatchTabCandidates(w);
     for (const c of candidates) {
       try {
-        await chrome.scripting.executeScript({
-          target: { tabId: c.id },
-          func: () => {
-            globalThis.location.reload();
-          }
-        });
+        await chrome.tabs.reload(c.id);
         return { ok: true };
       } catch {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId: c.id },
+            func: () => {
+              globalThis.location.reload();
+            }
+          });
+          return { ok: true };
+        } catch {
+        }
       }
     }
     return {
@@ -5363,20 +5367,26 @@
         }
         const lv = res.liveId || extractLiveIdFromUrl(watchUrl) || "unknown";
         const filename = buildScreenshotFilename(lv, "png", Date.now());
-        await chrome.downloads.download({
-          url: res.dataUrl,
-          filename,
-          saveAs: false,
-          conflictAction: "uniquify"
-        });
-        setCaptureStatus(
-          captureStatus,
-          "\u30B9\u30AF\u30EA\u30FC\u30F3\u30B7\u30E7\u30C3\u30C8 \u30D5\u30A9\u30EB\u30C0\u306B\u4FDD\u5B58\u3057\u307E\u3057\u305F\u3002",
-          "success"
-        );
+        let saved = false;
+        try {
+          await chrome.downloads.download({
+            url: res.dataUrl,
+            filename,
+            saveAs: false,
+            conflictAction: "uniquify"
+          });
+          saved = true;
+        } catch {
+        }
+        if (saved) {
+          setCaptureStatus(captureStatus, "\u4FDD\u5B58\u3057\u307E\u3057\u305F\u3002", "success");
+        } else {
+          await chrome.tabs.create({ url: res.dataUrl });
+          setCaptureStatus(captureStatus, "\u65B0\u3057\u3044\u30BF\u30D6\u306B\u8868\u793A\u3057\u307E\u3057\u305F\u3002\u53F3\u30AF\u30EA\u30C3\u30AF\u2192\u300C\u540D\u524D\u3092\u4ED8\u3051\u3066\u753B\u50CF\u3092\u4FDD\u5B58\u300D\u3067\u4FDD\u5B58\u3067\u304D\u307E\u3059\u3002", "idle");
+        }
         safeRefresh();
-      } catch {
-        setCaptureStatus(captureStatus, "\u30C0\u30A6\u30F3\u30ED\u30FC\u30C9\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002", "error");
+      } catch (err) {
+        setCaptureStatus(captureStatus, `\u30AD\u30E3\u30D7\u30C1\u30E3\u306B\u5931\u6557: ${err instanceof Error ? err.message : String(err)}`, "error");
       }
     });
     thumbIntervalSel?.addEventListener("change", async () => {
