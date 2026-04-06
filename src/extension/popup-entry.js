@@ -781,11 +781,28 @@ function syncFrameShareInput() {
 
 /** ストーリー枠は りんく上半身（応援カウンター） */
 const STORY_RINK_FACE_IMG = 'images/toumeilink.png';
-const STORY_RINK_TILE_IMG =
-  'images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-closed.png';
+/** アイコンURLなし・リモート取得失敗時のみ（ニコ動プレイヤーを連想させるオリジナルTV・非公式ロゴ） */
+const STORY_GRID_PLACEHOLDER_IMG = 'images/nico-retro-tv-placeholder.svg';
+
+/** @param {HTMLImageElement} img */
+function applyStoryAvatarTvFallbackClass(img) {
+  if (!(img instanceof HTMLImageElement)) return;
+  if (img.classList.contains('nl-story-userlane-avatar')) {
+    img.classList.add('nl-avatar--tv-fallback');
+    return;
+  }
+  if (img.classList.contains('nl-story-growth-icon')) {
+    img.classList.add('nl-story-growth-icon--tv-fallback');
+    return;
+  }
+  if (img.classList.contains('nl-story-detail-img')) {
+    img.classList.add('nl-story-detail-img--tv-fallback');
+  }
+}
 
 const storyAvatarLoadGuard = createSupportAvatarLoadGuard({
-  fallbackSrc: STORY_RINK_TILE_IMG
+  fallbackSrc: STORY_GRID_PLACEHOLDER_IMG,
+  onFallbackApplied: applyStoryAvatarTvFallbackClass
 });
 
 const MAX_SELF_POSTED_ITEMS = 48;
@@ -1341,7 +1358,7 @@ function storyGrowthAvatarSrcCandidate(entry, liveId, entries = STORY_SOURCE_STA
  * @param {PopupCommentEntry[]|null|undefined} [entries]
  */
 function storyGrowthTileSrcForEntry(entry, liveId, entries = STORY_SOURCE_STATE.entries) {
-  return storyGrowthAvatarSrcCandidate(entry, liveId, entries) || STORY_RINK_TILE_IMG;
+  return storyGrowthAvatarSrcCandidate(entry, liveId, entries) || STORY_GRID_PLACEHOLDER_IMG;
 }
 
 const STORY_HOP_STATE = {
@@ -1718,8 +1735,13 @@ function renderStoryUserLane() {
     const img = document.createElement('img');
     img.className = 'nl-story-userlane-avatar';
     const requestedLane = p.src;
-    img.src = storyAvatarLoadGuard.pickDisplaySrc(requestedLane);
+    const displayLane = storyAvatarLoadGuard.pickDisplaySrc(requestedLane);
+    img.src = displayLane;
     storyAvatarLoadGuard.noteRemoteAttempt(img, requestedLane);
+    img.classList.toggle(
+      'nl-avatar--tv-fallback',
+      displayLane === STORY_GRID_PLACEHOLDER_IMG
+    );
     img.alt = '';
     img.title = p.title;
     img.decoding = 'async';
@@ -1889,8 +1911,13 @@ function renderStoryCommentDetailPanel() {
       entry,
       String(entry.liveId || STORY_SOURCE_STATE.liveId || '')
     );
-    img.src = storyAvatarLoadGuard.pickDisplaySrc(requestedDetail);
+    const displayDetail = storyAvatarLoadGuard.pickDisplaySrc(requestedDetail);
+    img.src = displayDetail;
     storyAvatarLoadGuard.noteRemoteAttempt(img, requestedDetail);
+    img.classList.toggle(
+      'nl-story-detail-img--tv-fallback',
+      displayDetail === STORY_GRID_PLACEHOLDER_IMG
+    );
     if (isHttpOrHttpsUrl(img.src)) {
       img.referrerPolicy = 'no-referrer';
       img.classList.add('nl-story-detail-img--remote');
@@ -2320,8 +2347,13 @@ function applyStoryGrowthIconAttributes(img, index, isNew) {
     img.classList.add('is-selected');
   }
   const requestedTile = storyGrowthTileSrcForEntry(entry, STORY_SOURCE_STATE.liveId);
-  img.src = storyAvatarLoadGuard.pickDisplaySrc(requestedTile);
+  const displayTile = storyAvatarLoadGuard.pickDisplaySrc(requestedTile);
+  img.src = displayTile;
   storyAvatarLoadGuard.noteRemoteAttempt(img, requestedTile);
+  img.classList.toggle(
+    'nl-story-growth-icon--tv-fallback',
+    displayTile === STORY_GRID_PLACEHOLDER_IMG
+  );
   if (isHttpOrHttpsUrl(img.src)) {
     img.referrerPolicy = 'no-referrer';
     img.classList.add('nl-story-growth-icon--remote');

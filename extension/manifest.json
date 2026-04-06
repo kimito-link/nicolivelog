@@ -48,6 +48,7 @@
         "popup.html",
         "dist/popup.js",
         "images/toumeilink.png",
+        "images/nico-retro-tv-placeholder.svg",
         "images/yukkuri-charactore-english/*/*.png"
       ],
       "matches": [

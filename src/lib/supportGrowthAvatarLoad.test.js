@@ -2,8 +2,7 @@
 import { describe, it, expect } from 'vitest';
 import { createSupportAvatarLoadGuard } from './supportGrowthAvatarLoad.js';
 
-const FALLBACK =
-  'images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-closed.png';
+const FALLBACK = 'images/nico-retro-tv-placeholder.svg';
 const REMOTE = 'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/1/123456789.jpg';
 
 describe('createSupportAvatarLoadGuard', () => {
@@ -29,7 +28,7 @@ describe('createSupportAvatarLoadGuard', () => {
     img.src = REMOTE;
     g.noteRemoteAttempt(img, REMOTE);
     img.dispatchEvent(new Event('error'));
-    expect(img.src).toContain('link-yukkuri-half-eyes-mouth-closed');
+    expect(img.src).toContain('nico-retro-tv-placeholder');
     expect(g.pickDisplaySrc(REMOTE)).toBe(FALLBACK);
   });
 
@@ -49,7 +48,23 @@ describe('createSupportAvatarLoadGuard', () => {
     img.src = g.pickDisplaySrc(REMOTE);
     g.noteRemoteAttempt(img, REMOTE);
     img.dispatchEvent(new Event('error'));
-    expect(img.src).toContain('link-yukkuri-half-eyes-mouth-closed');
+    expect(img.src).toContain('nico-retro-tv-placeholder');
+  });
+
+  it('error 時に onFallbackApplied を呼ぶ', () => {
+    let called = 0;
+    const g = createSupportAvatarLoadGuard({
+      fallbackSrc: FALLBACK,
+      onFallbackApplied: () => {
+        called += 1;
+      }
+    });
+    const img = document.createElement('img');
+    img.className = 'nl-story-growth-icon';
+    img.src = REMOTE;
+    g.noteRemoteAttempt(img, REMOTE);
+    img.dispatchEvent(new Event('error'));
+    expect(called).toBe(1);
   });
 
   it('clearFailedUrls で再びリモートを試せる', () => {

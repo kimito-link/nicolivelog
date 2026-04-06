@@ -21,12 +21,20 @@ function defaultUrlKey(url) {
 }
 
 /**
- * @param {{ fallbackSrc: string, urlKey?: (s: string) => string }} options
+ * @param {{
+ *   fallbackSrc: string,
+ *   urlKey?: (s: string) => string,
+ *   onFallbackApplied?: (img: HTMLImageElement) => void
+ * }} options
  */
 export function createSupportAvatarLoadGuard(options) {
   const fallbackSrc = String(options?.fallbackSrc || '');
   const urlKeyFn =
     typeof options?.urlKey === 'function' ? options.urlKey : defaultUrlKey;
+  const onFallbackApplied =
+    typeof options?.onFallbackApplied === 'function'
+      ? options.onFallbackApplied
+      : null;
 
   /** @type {Set<string>} */
   const failedKeys = new Set();
@@ -59,6 +67,7 @@ export function createSupportAvatarLoadGuard(options) {
     const onError = () => {
       failedKeys.add(key);
       img.src = fallbackSrc;
+      onFallbackApplied?.(img);
     };
     img.addEventListener('error', onError, { once: true });
   }

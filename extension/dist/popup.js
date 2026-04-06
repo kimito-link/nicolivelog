@@ -635,6 +635,7 @@
   function createSupportAvatarLoadGuard(options) {
     const fallbackSrc = String(options?.fallbackSrc || "");
     const urlKeyFn = typeof options?.urlKey === "function" ? options.urlKey : defaultUrlKey;
+    const onFallbackApplied = typeof options?.onFallbackApplied === "function" ? options.onFallbackApplied : null;
     const failedKeys = /* @__PURE__ */ new Set();
     function pickDisplaySrc(requestedSrc) {
       const req = String(requestedSrc || "").trim();
@@ -654,6 +655,7 @@
       const onError = () => {
         failedKeys.add(key);
         img.src = fallbackSrc;
+        onFallbackApplied?.(img);
       };
       img.addEventListener("error", onError, { once: true });
     }
@@ -1433,9 +1435,24 @@
     input.value = createFrameShareCode(popupFrameState.id, popupFrameState.custom);
   }
   var STORY_RINK_FACE_IMG = "images/toumeilink.png";
-  var STORY_RINK_TILE_IMG = "images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-closed.png";
+  var STORY_GRID_PLACEHOLDER_IMG = "images/nico-retro-tv-placeholder.svg";
+  function applyStoryAvatarTvFallbackClass(img) {
+    if (!(img instanceof HTMLImageElement)) return;
+    if (img.classList.contains("nl-story-userlane-avatar")) {
+      img.classList.add("nl-avatar--tv-fallback");
+      return;
+    }
+    if (img.classList.contains("nl-story-growth-icon")) {
+      img.classList.add("nl-story-growth-icon--tv-fallback");
+      return;
+    }
+    if (img.classList.contains("nl-story-detail-img")) {
+      img.classList.add("nl-story-detail-img--tv-fallback");
+    }
+  }
   var storyAvatarLoadGuard = createSupportAvatarLoadGuard({
-    fallbackSrc: STORY_RINK_TILE_IMG
+    fallbackSrc: STORY_GRID_PLACEHOLDER_IMG,
+    onFallbackApplied: applyStoryAvatarTvFallbackClass
   });
   var MAX_SELF_POSTED_ITEMS = 48;
   var SELF_POST_DUPLICATE_WINDOW_MS = 5e3;
@@ -1809,7 +1826,7 @@
     return isHttpOrHttpsUrl(src) ? src : "";
   }
   function storyGrowthTileSrcForEntry(entry, liveId, entries = STORY_SOURCE_STATE.entries) {
-    return storyGrowthAvatarSrcCandidate(entry, liveId, entries) || STORY_RINK_TILE_IMG;
+    return storyGrowthAvatarSrcCandidate(entry, liveId, entries) || STORY_GRID_PLACEHOLDER_IMG;
   }
   var STORY_HOP_STATE = {
     clearTimer: (
@@ -2172,8 +2189,13 @@
       const img = document.createElement("img");
       img.className = "nl-story-userlane-avatar";
       const requestedLane = p.src;
-      img.src = storyAvatarLoadGuard.pickDisplaySrc(requestedLane);
+      const displayLane = storyAvatarLoadGuard.pickDisplaySrc(requestedLane);
+      img.src = displayLane;
       storyAvatarLoadGuard.noteRemoteAttempt(img, requestedLane);
+      img.classList.toggle(
+        "nl-avatar--tv-fallback",
+        displayLane === STORY_GRID_PLACEHOLDER_IMG
+      );
       img.alt = "";
       img.title = p.title;
       img.decoding = "async";
@@ -2318,8 +2340,13 @@
         entry,
         String(entry.liveId || STORY_SOURCE_STATE.liveId || "")
       );
-      img.src = storyAvatarLoadGuard.pickDisplaySrc(requestedDetail);
+      const displayDetail = storyAvatarLoadGuard.pickDisplaySrc(requestedDetail);
+      img.src = displayDetail;
       storyAvatarLoadGuard.noteRemoteAttempt(img, requestedDetail);
+      img.classList.toggle(
+        "nl-story-detail-img--tv-fallback",
+        displayDetail === STORY_GRID_PLACEHOLDER_IMG
+      );
       if (isHttpOrHttpsUrl(img.src)) {
         img.referrerPolicy = "no-referrer";
         img.classList.add("nl-story-detail-img--remote");
@@ -2662,8 +2689,13 @@
       img.classList.add("is-selected");
     }
     const requestedTile = storyGrowthTileSrcForEntry(entry, STORY_SOURCE_STATE.liveId);
-    img.src = storyAvatarLoadGuard.pickDisplaySrc(requestedTile);
+    const displayTile = storyAvatarLoadGuard.pickDisplaySrc(requestedTile);
+    img.src = displayTile;
     storyAvatarLoadGuard.noteRemoteAttempt(img, requestedTile);
+    img.classList.toggle(
+      "nl-story-growth-icon--tv-fallback",
+      displayTile === STORY_GRID_PLACEHOLDER_IMG
+    );
     if (isHttpOrHttpsUrl(img.src)) {
       img.referrerPolicy = "no-referrer";
       img.classList.add("nl-story-growth-icon--remote");
