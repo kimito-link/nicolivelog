@@ -25,7 +25,7 @@ test.describe('拡張機能（モック watch）', () => {
 
     const page = await context.newPage();
     await page.goto(MOCK_WATCH, { waitUntil: 'load', timeout: 60_000 });
-    await expect(page.locator('.comment-panel')).toBeVisible();
+    await expect(page.locator('#e2e-comment-form')).toBeVisible();
 
     await expect
       .poll(

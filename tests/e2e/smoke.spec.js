@@ -16,7 +16,7 @@ test.describe('smoke', () => {
 
     const page = await context.newPage();
     await page.goto(MOCK_WATCH, { waitUntil: 'load', timeout: 60_000 });
-    await expect(page.locator('#e2e-comment-compose.comment-panel')).toBeVisible();
+    await expect(page.locator('#e2e-comment-form')).toBeVisible();
   });
 
   test('拡張 popup が開きコア領域が表示される', async ({ context }) => {

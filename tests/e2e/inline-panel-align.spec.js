@@ -78,7 +78,9 @@ test.describe('inline panel alignment', () => {
     expect(metrics, 'インラインホストが DOM にある').not.toBeNull();
     expect(metrics.display).toBe('block');
     const w = Number.parseFloat(metrics.width);
-    expect(w).toBeGreaterThan(430);
+    // player_row でも resolvePlayerRowRect が挿入アンカー（多くは video 幅）で上限化するため、
+    // 2 列 mock（動画 400px + サイド 220px）ではパネル幅は動画幅付近になる
+    expect(w).toBeGreaterThan(380);
     expect(w).toBeLessThanOrEqual(660);
   });
 

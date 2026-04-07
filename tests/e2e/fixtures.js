@@ -25,7 +25,7 @@ export const test = base.extend({
 
 /**
  * 利用条件ゲート廃止後も、JS で data 属性が付くまで短く待つ（E2E 安定用）
- * @param {import('@playwright/test').Page} popup
+ * @param {import('@playwright/test').Page | import('@playwright/test').FrameLocator} popup
  */
 export async function dismissExtensionUsageTermsGate(popup) {
   await expect(popup.locator('html')).toHaveAttribute('data-nl-usage-terms-ack', '1', {

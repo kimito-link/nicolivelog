@@ -1,9 +1,21 @@
 import { defineConfig } from '@playwright/test';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+/**
+ * E2E 用静的ルート。相対パスをコマンドに渡すと cwd 次第で 404 になる。
+ * Windows では日本語パスをシェル引数に含めると serve が壊れることがあるため、
+ * webServer.cwd に絶対パスを渡し、コマンドは `serve .` のみにする。
+ */
+const e2eFixturesDir = path.join(__dirname, 'tests', 'e2e', 'fixtures');
+/** npx 経由だと Windows で子プロセス追跡がずれ serve が即死することがあるため node で CLI を直起動 */
+const serveCliJs = path.join(__dirname, 'node_modules', 'serve', 'build', 'main.js');
 
 /**
  * 拡張機能の読み込みは Chromium の永続コンテキストが必要で、多くの環境では headless 非対応。
  * ローカルでの操作確認（ヘッド付き既定）: test:e2e:headed / test:e2e:interaction / test:e2e:smoke / test:e2e:monkey / test:e2e:ui
- * SKIP_E2E=1 は npm スクリプト `scripts/run-e2e.mjs` 側で処理（playwright 自体を起動しない）。
+ * SKIP_E2E=1 は npm スクリプト `scripts/run-e2e.mjs` 側で処理（Playwright 自体は起動しない）。
  *
  * E2E_NO_WEBSERVER=1 … モック watch 用の静的サーバを立てない（chrome-extension:// のみの spec 向け）。
  */
@@ -24,10 +36,15 @@ export default defineConfig({
     ? {}
     : {
         webServer: {
-          command: 'npx serve tests/e2e/fixtures -l 3456 --no-request-logging',
+          // 3456 占有時に serve が別ポートへ逃げると、url 待機は古いプロセスへ当たり E2E が空 DOM になる。固定失敗にする。
+          command: `node ${JSON.stringify(serveCliJs)} . -l tcp://127.0.0.1:3456 --no-port-switching --no-request-logging`,
+          cwd: e2eFixturesDir,
           url: 'http://127.0.0.1:3456/watch/lv888888888/',
           reuseExistingServer: !process.env.CI,
-          timeout: 120_000
+          timeout: 120_000,
+          // Windows で子の stdout/stderr が背圧で詰まり serve が固まる／落ちるのを防ぐ
+          stdout: 'pipe',
+          stderr: 'pipe'
         }
       })
 });

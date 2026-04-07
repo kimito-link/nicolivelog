@@ -145,7 +145,6 @@ test.describe('popup layout', () => {
         requiredAllExist: required.every((v) => v.exists)
       };
     });
-    console.log('popup metrics', metrics);
 
     expect(metrics.width).toBeGreaterThanOrEqual(340);
     expect(metrics.width).toBeLessThanOrEqual(540);
@@ -409,7 +408,6 @@ test.describe('popup layout', () => {
         topId: top && 'id' in top ? /** @type {HTMLElement} */ (top).id : ''
       };
     });
-    console.log('elementFromPoint at support visual summary center', hit);
     expect(hit.ok).toBe(true);
 
     await popup.locator('#supportVisualDetailsSummary').click();

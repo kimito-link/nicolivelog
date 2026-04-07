@@ -29,31 +29,7 @@
     <h1>nicolivelog E2E mock</h1>
     <p>URL は <code>/watch/lv888888888/</code>。コメントパネル構造のみニコ生に近い。</p>
 
-    <!-- NLS_POST_COMMENT E2E: 送信後 1.8s で欄が空く（React 遅延クリアの模倣） -->
-    <div class="ga-ns-comment-panel comment-panel" id="e2e-comment-compose">
-      <form id="e2e-comment-form">
-        <textarea placeholder="コメントを入力" name="comment" rows="2"></textarea>
-        <button type="submit" aria-label="コメントを送信">送信</button>
-      </form>
-    </div>
-    <script>
-      (function () {
-        var form = document.getElementById('e2e-comment-form');
-        if (!form) return;
-        form.addEventListener('submit', function (e) {
-          e.preventDefault();
-          var ta = form.querySelector('textarea');
-          if (!ta) return;
-          setTimeout(function () {
-            ta.value = '';
-            try {
-              ta.dispatchEvent(new Event('input', { bubbles: true }));
-            } catch (err) { /* ignore */ }
-          }, 1800);
-        });
-      })();
-    </script>
-
+    <!-- 先頭の .ga-ns-comment-panel が findNicoCommentPanel に選ばれるため、仮想リスト（行あり）を先に置く -->
     <video
       id="e2e-mock-video"
       width="320"
@@ -84,7 +60,7 @@
       })();
     </script>
 
-    <div class="ga-ns-comment-panel comment-panel">
+    <div class="ga-ns-comment-panel">
       <div
         class="comment-data-grid data-grid"
         role="grid"
@@ -112,6 +88,34 @@
             '</div>';
         }
         root.innerHTML = html;
+      })();
+    </script>
+
+    <!-- NLS_POST_COMMENT E2E: 送信後 1.8s で欄が空く（React 遅延クリアの模倣） -->
+    <!-- comment-panel クラスはこのブロックのみ（.comment-panel セレクタの strict 一意） -->
+    <div class="ga-ns-comment-panel comment-panel" id="e2e-comment-compose">
+      <form id="e2e-comment-form">
+        <textarea placeholder="コメントを入力" name="comment" rows="2"></textarea>
+        <button type="submit" aria-label="コメントを送信">送信</button>
+      </form>
+    </div>
+    <script>
+      (function () {
+        var form = document.getElementById('e2e-comment-form');
+        if (!form) return;
+        form.addEventListener('submit', function (e) {
+          e.preventDefault();
+          var ta = form.querySelector('textarea');
+          if (!ta) return;
+          setTimeout(function () {
+            ta.value = '';
+            try {
+              ta.dispatchEvent(new Event('input', { bubbles: true }));
+            } catch (err) {
+              /* ignore */
+            }
+          }, 1800);
+        });
       })();
     </script>
   </body>

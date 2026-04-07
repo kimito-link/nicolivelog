@@ -92,6 +92,8 @@ test.describe('extension interaction', () => {
 
     const panel = page.frameLocator(`#${INLINE_IFRAME_ID}`);
     await expect(panel.locator('.nl-main')).toBeVisible({ timeout: 25_000 });
+    await dismissExtensionUsageTermsGate(panel);
+    await page.waitForTimeout(400);
 
     const toggle = panel.locator('#recordToggle');
     await expect(toggle).toBeVisible();
