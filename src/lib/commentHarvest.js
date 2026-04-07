@@ -5,6 +5,12 @@
 import { isHttpOrHttpsUrl } from './supportGrowthTileSrc.js';
 
 /**
+ * 仮想リスト走査のステップ幅（ホストの clientHeight に対する比率）。
+ * 大きいほど速いがウィンドウ同士の重なりが減り、取りこぼしが増えやすい。
+ */
+export const HARVEST_SCROLL_STEP_CLIENT_HEIGHT_RATIO = 0.58;
+
+/**
  * 同一コメント（commentNo + text）について、スクロール位置ごとの抽出結果をマージする。
  * 後続パスで仮想行が「薄く」なり userId / avatarUrl が空になることがあるため、
  * 空で上書きしない（調査メモ research-nicolive-pc-comments.md §8.1）。
@@ -159,7 +165,11 @@ export function pageUserLikelyTypingIn(doc) {
  *   document?: Document,
  *   extractCommentsFromNode: (el: Element) => { commentNo?: string, text: string, userId?: string|null, avatarUrl?: string }[],
  *   waitMs?: number,
- *   respectTyping?: boolean
+ *   respectTyping?: boolean,
+ *   twoPass?: boolean,
+ *   twoPassGapMs?: number,
+ *   scrollStepClientHeightRatio?: number,
+ *   onBetweenVirtualPasses?: () => void
  * }} opts
  */
 export async function harvestVirtualCommentList(opts) {
@@ -167,6 +177,12 @@ export async function harvestVirtualCommentList(opts) {
   const extract = opts.extractCommentsFromNode;
   const waitMs = opts.waitMs ?? 50;
   const respectTyping = opts.respectTyping !== false;
+  const twoPass = Boolean(opts.twoPass);
+  const twoPassGapMs = opts.twoPassGapMs ?? 140;
+  const scrollStepRatio =
+    typeof opts.scrollStepClientHeightRatio === 'number'
+      ? opts.scrollStepClientHeightRatio
+      : HARVEST_SCROLL_STEP_CLIENT_HEIGHT_RATIO;
 
   const panel = findNicoCommentPanel(doc);
   const scanRoot = panel || doc.body;
@@ -191,58 +207,69 @@ export async function harvestVirtualCommentList(opts) {
     }
   };
 
-  const host = panel ? findCommentListScrollHost(doc) : null;
-  if (!host || host.scrollHeight <= host.clientHeight + 10) {
-    const m = new Map();
-    mergeInto(m, extract(scanRoot));
-    return [...m.values()];
-  }
+  /**
+   * @param {Map<string, { commentNo?: string, text: string, userId?: string|null, avatarUrl?: string }>} map
+   * @param {boolean} restoreFocusAfter
+   */
+  const runVirtualScrollSweep = async (map, restoreFocusAfter) => {
+    const host = panel ? findCommentListScrollHost(doc) : null;
+    if (!host || host.scrollHeight <= host.clientHeight + 10) {
+      mergeInto(map, extract(scanRoot));
+      return;
+    }
 
-  if (respectTyping && pageUserLikelyTypingIn(doc)) {
-    const m = new Map();
-    mergeInto(m, extract(scanRoot));
-    return [...m.values()];
-  }
+    if (respectTyping && pageUserLikelyTypingIn(doc)) {
+      mergeInto(map, extract(scanRoot));
+      return;
+    }
 
-  const out = new Map();
-  const saved = host.scrollTop;
-  const max = Math.max(0, host.scrollHeight - host.clientHeight);
-  const step = Math.max(64, Math.floor(host.clientHeight * 0.72));
+    const saved = host.scrollTop;
+    const max = Math.max(0, host.scrollHeight - host.clientHeight);
+    const step = Math.max(64, Math.floor(host.clientHeight * scrollStepRatio));
+
+    host.scrollTop = 0;
+    await raf(doc);
+    await delay(waitMs);
+    mergeInto(map, extract(scanRoot));
+
+    for (let y = 0; y <= max; y += step) {
+      host.scrollTop = Math.min(y, max);
+      await raf(doc);
+      await delay(waitMs);
+      mergeInto(map, extract(scanRoot));
+    }
+
+    host.scrollTop = max;
+    await raf(doc);
+    await delay(waitMs);
+    mergeInto(map, extract(scanRoot));
+
+    host.scrollTop = saved;
+    await raf(doc);
+    await delay(30);
+
+    if (restoreFocusAfter && focusEl && focusEl.isConnected) {
+      try {
+        focusEl.focus({ preventScroll: true });
+      } catch {
+        try {
+          focusEl.focus();
+        } catch {
+          // no-op
+        }
+      }
+    }
+  };
 
   const focusEl =
     doc.activeElement instanceof HTMLElement ? doc.activeElement : null;
 
-  host.scrollTop = 0;
-  await raf(doc);
-  await delay(waitMs);
-  mergeInto(out, extract(scanRoot));
-
-  for (let y = 0; y <= max; y += step) {
-    host.scrollTop = Math.min(y, max);
-    await raf(doc);
-    await delay(waitMs);
-    mergeInto(out, extract(scanRoot));
-  }
-
-  host.scrollTop = max;
-  await raf(doc);
-  await delay(waitMs);
-  mergeInto(out, extract(scanRoot));
-
-  host.scrollTop = saved;
-  await raf(doc);
-  await delay(30);
-
-  if (focusEl && focusEl.isConnected) {
-    try {
-      focusEl.focus({ preventScroll: true });
-    } catch {
-      try {
-        focusEl.focus();
-      } catch {
-        // no-op
-      }
-    }
+  const out = new Map();
+  await runVirtualScrollSweep(out, !twoPass);
+  if (twoPass) {
+    await delay(twoPassGapMs);
+    opts.onBetweenVirtualPasses?.();
+    await runVirtualScrollSweep(out, true);
   }
 
   return [...out.values()];

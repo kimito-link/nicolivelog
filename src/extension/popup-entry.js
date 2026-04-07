@@ -17,6 +17,7 @@ import {
   KEY_POPUP_FRAME_CUSTOM,
   KEY_LAST_WATCH_URL,
   KEY_RECORDING,
+  KEY_DEEP_HARVEST_QUIET_UI,
   KEY_SELF_POSTED_RECENTS,
   KEY_USER_COMMENT_PROFILE_CACHE,
   KEY_COMMENT_PANEL_STATUS,
@@ -36,6 +37,7 @@ import {
   giftUsersStorageKey,
   isCommentEnterSendEnabled,
   isRecordingEnabled,
+  isDeepHarvestQuietUiEnabled,
   normalizeInlinePanelWidthMode,
   normalizeCalmPanelMotion
 } from '../lib/storageKeys.js';
@@ -1170,6 +1172,8 @@ function syncFrameShareInput() {
 
 /** ストーリー枠は りんく上半身（応援カウンター） */
 const STORY_RINK_FACE_IMG = 'images/toumeilink.png';
+/** 記録ON・件数0のときのストーリー顔（PNG タイル既定とは別の差し絵） */
+const STORY_RINK_COLLECTING_JPG = 'images/icon/kewXCUOt_400x400.jpg';
 /**
  * 応援グリッドで「そのコメントにサムネURLが無い」ときの既定タイル（ゆっくり。キャラ削除ではない）
  */
@@ -2012,7 +2016,8 @@ function truncateText(value, max) {
  *   liveId?: string,
  *   delta?: number,
  *   reaction?: 'idle'|'pulse'|'burst'|'sparkle',
- *   count?: number
+ *   count?: number,
+ *   faceSrc?: string
  * }} [opts]
  */
 function setSceneStory(lead, sub, opts = {}) {
@@ -2027,7 +2032,8 @@ function setSceneStory(lead, sub, opts = {}) {
   const delta = Math.max(0, Number(opts.delta || 0));
   const liveId = String(opts.liveId || '');
   const count = Math.max(0, Number(opts.count || 0));
-  if (img) img.src = STORY_RINK_FACE_IMG;
+  const facePick = String(opts.faceSrc || '').trim();
+  if (img) img.src = facePick || STORY_RINK_FACE_IMG;
   if (leadEl) leadEl.textContent = lead;
   if (subEl) subEl.textContent = sub;
   if (deltaEl) {
@@ -3518,6 +3524,22 @@ function renderCharacterScene(state) {
     : [];
 
   const reaction = computeStoryReaction(liveId, commentCount);
+
+  if (recording && commentCount <= 0) {
+    setSceneStory(
+      'りんくがみんなの応援コメントを集めています',
+      `「${title || liveId || '放送'}」を開いたままにしてね。数字がすぐ増えないときは、右のコメント一覧が仮想スクロールのため少し待つか、一覧を少しスクロールすると取り込みやすいよ。${roleCopy}`,
+      {
+        liveId,
+        delta: 0,
+        reaction: 'idle',
+        count: reaction.count,
+        faceSrc: STORY_RINK_COLLECTING_JPG
+      }
+    );
+    return;
+  }
+
   const countLabel = reaction.count.toLocaleString('ja-JP');
   setSceneStory(
     'りんくがみんなの応援コメントを集めているよ！',
@@ -3915,6 +3937,7 @@ function renderTopSupportRankStrip(stripRooms) {
   const rankScheme = getStoryColorScheme();
   const models = topSupportRankLineModels(stripRooms, {
     defaultThumbSrc: STORY_GRID_DEFAULT_TILE_IMG,
+    anonymousFallbackThumbSrc: STORY_REMOTE_FAILED_PLACEHOLDER_IMG,
     colorScheme: rankScheme
   });
   const html = models
@@ -5150,6 +5173,7 @@ async function refresh() {
       KEY_SELF_POSTED_RECENTS,
       KEY_LAST_WATCH_URL,
       KEY_RECORDING,
+      KEY_DEEP_HARVEST_QUIET_UI,
       KEY_INLINE_PANEL_WIDTH_MODE,
       KEY_CALM_PANEL_MOTION,
       KEY_STORAGE_WRITE_ERROR,
@@ -5175,6 +5199,16 @@ async function refresh() {
 
   toggle.checked = isRecordingEnabled(openBag[KEY_RECORDING]);
   toggle.disabled = false;
+
+  const deepHarvestQuietEl = /** @type {HTMLInputElement|null} */ (
+    $('deepHarvestQuietUiToggle')
+  );
+  if (deepHarvestQuietEl) {
+    deepHarvestQuietEl.checked = isDeepHarvestQuietUiEnabled(
+      openBag[KEY_DEEP_HARVEST_QUIET_UI]
+    );
+    deepHarvestQuietEl.disabled = false;
+  }
 
   const panelMode = normalizeInlinePanelWidthMode(
     openBag[KEY_INLINE_PANEL_WIDTH_MODE]
@@ -7076,6 +7110,20 @@ function initPopup() {
       const ok = await storageSetSafe({ [KEY_RECORDING]: toggle.checked });
       if (!ok) return;
       safeRefresh();
+    } catch {
+      //
+    }
+  });
+
+  const deepHarvestQuietToggle = /** @type {HTMLInputElement|null} */ (
+    $('deepHarvestQuietUiToggle')
+  );
+  deepHarvestQuietToggle?.addEventListener('change', async () => {
+    try {
+      const ok = await storageSetSafe({
+        [KEY_DEEP_HARVEST_QUIET_UI]: deepHarvestQuietToggle.checked
+      });
+      if (!ok) return;
     } catch {
       //
     }

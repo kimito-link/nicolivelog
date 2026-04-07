@@ -191,6 +191,7 @@ export function htmlProfileGapBars(series) {
  */
 export function commentTypeKeyLabelJa(key) {
   const k = String(key || '').trim().toLowerCase();
+  /** @type {Record<string, string>} */
   const map = {
     gift: 'ギフト',
     normal: '通常',

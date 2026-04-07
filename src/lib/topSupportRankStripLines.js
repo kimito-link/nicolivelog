@@ -1,4 +1,7 @@
-import { isHttpOrHttpsUrl } from './supportGrowthTileSrc.js';
+import {
+  isHttpOrHttpsUrl,
+  pickSupportGrowthFallbackTileSrc
+} from './supportGrowthTileSrc.js';
 import {
   accentColorForSlot,
   accentSlotFromUserKey
@@ -34,11 +37,16 @@ import { anonymousNicknameFallback } from './nicoAnonymousDisplay.js';
  * 応援ランキングストリップ1行分の表示モデル（DOM・HTML エスケープなし）。
  *
  * @param {TopSupportRankRoom[]} stripRooms
- * @param {{ defaultThumbSrc: string, colorScheme?: 'light'|'dark' }} opts
+ * @param {{
+ *   defaultThumbSrc: string,
+ *   anonymousFallbackThumbSrc?: string,
+ *   colorScheme?: 'light'|'dark'
+ * }} opts
  * @returns {TopSupportRankLineModel[]}
  */
 export function topSupportRankLineModels(stripRooms, opts) {
   const defaultThumb = String(opts?.defaultThumbSrc || '').trim();
+  const anonThumb = String(opts?.anonymousFallbackThumbSrc || '').trim();
   const colorScheme = opts?.colorScheme === 'dark' ? 'dark' : 'light';
   const rooms = Array.isArray(stripRooms) ? stripRooms : [];
   let knownRank = 0;
@@ -50,7 +58,13 @@ export function topSupportRankLineModels(stripRooms, opts) {
     const placeNumber = isUnknown ? null : knownRank;
 
     const rawAv = String(r?.avatarUrl || '').trim();
-    const thumbSrc = isHttpOrHttpsUrl(rawAv) ? rawAv : defaultThumb;
+    const uidForThumb = isUnknown ? '' : userKey;
+    const thumbSrc = pickSupportGrowthFallbackTileSrc(
+      uidForThumb,
+      rawAv,
+      defaultThumb,
+      anonThumb || defaultThumb
+    );
     const thumbNeedsNoReferrer = isHttpOrHttpsUrl(thumbSrc);
 
     const idTitle = isUnknown ? '' : String(r.userKey);

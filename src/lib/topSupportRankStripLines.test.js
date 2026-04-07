@@ -70,7 +70,24 @@ describe('topSupportRankLineModels', () => {
     }
   });
 
-  it('avatarUrl が非 http のとき defaultThumbSrc', () => {
+  it('先頭 unknown のあと known が10人で順位 1〜10', () => {
+    const rooms = [
+      { userKey: UNKNOWN_USER_KEY, nickname: '', count: 999 },
+      ...Array.from({ length: 10 }, (_, i) => ({
+        userKey: String(20000 + i),
+        nickname: `U${i}`,
+        count: 100 - i
+      }))
+    ];
+    const rows = topSupportRankLineModels(rooms, { defaultThumbSrc: DEF_THUMB });
+    expect(rows).toHaveLength(11);
+    expect(rows[0].placeNumber).toBeNull();
+    for (let i = 0; i < 10; i++) {
+      expect(rows[i + 1].placeNumber).toBe(i + 1);
+    }
+  });
+
+  it('avatarUrl が非 http のとき defaultThumbSrc（数字IDはゆっくり既定を優先）', () => {
     const [row] = topSupportRankLineModels(
       [
         {
@@ -84,6 +101,23 @@ describe('topSupportRankLineModels', () => {
     );
     expect(row.thumbSrc).toBe(DEF_THUMB);
     expect(row.thumbNeedsNoReferrer).toBe(false);
+  });
+
+  it('匿名IDで http サムネが無いとき anonymousFallbackThumbSrc を使う', () => {
+    const tv = 'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/defaults/tv.jpg';
+    const [row] = topSupportRankLineModels(
+      [
+        {
+          userKey: 'a:AXaKZ_4ShxQHJVsX',
+          nickname: '',
+          count: 3,
+          avatarUrl: ''
+        }
+      ],
+      { defaultThumbSrc: DEF_THUMB, anonymousFallbackThumbSrc: tv }
+    );
+    expect(row.thumbSrc).toBe(tv);
+    expect(row.thumbNeedsNoReferrer).toBe(true);
   });
 
   it('https avatar はその URL と no-referrer フラグ', () => {

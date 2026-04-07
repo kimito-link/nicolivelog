@@ -20,4 +20,13 @@ describe('pickDevMonitorDebugSubset', () => {
     expect(sub).not.toHaveProperty('gridKids');
     expect(sub).not.toHaveProperty('deepSample');
   });
+
+  it('harvestPipeline をそのまま通す', () => {
+    const hp = { runCount: 3, lastRowCount: 120, harvestRunning: false };
+    const sub = pickDevMonitorDebugSubset({
+      intercept: 1,
+      harvestPipeline: hp
+    });
+    expect(sub.harvestPipeline).toEqual(hp);
+  });
 });

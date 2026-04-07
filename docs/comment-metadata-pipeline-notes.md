@@ -1,6 +1,6 @@
 # コメントメタデータ（userId / avatarUrl）パイプライン整理メモ
 
-最終更新: 2026-04-06  
+最終更新: 2026-04-07  
 外部 LLM（Claude / Gemini / Grok / Venis AI）および Cursor 上の調査を踏まえ、**nicolivelog 実装と整合する範囲**で要約した内部メモ。規約遵守・PII 最小化を前提とする。
 
 ---
@@ -74,6 +74,8 @@
 ## 4. デバッグ・診断（本番影響を抑える）
 
 - **既存**: ポップアップの折りたたみ「開発・テスト用 監視」、`collectWatchPageSnapshot` の `_debug` 要約（本文断片の多いフィールドは `pickDevMonitorDebugSubset` で除外）。  
+- **`_debug.harvestPipeline`（取得パイプライン用）**: deep harvest の完了時刻・最終マージ行数・累積実行回数・直近エラー有無、`harvestRunning`、NDGR 保留キュー長、直近 `persist` バッチ行数。定期 deep（約12分・タブ可視・記録中のみ）は `scheduleDeepHarvest` の QUIET UI ローディングとは別経路で、滝表示用オーバーレイは出さない。  
+- **NDGR と DOM の二重保存**: いずれも `persistCommentRows` → `mergeNewComments` に入り、ストレージ側は liveId＋正規化本文＋番号系キーで突き合わせ、既存行は **メタ（userId / av / nick）の強化のみ**（同一キーで別レコード増殖しない）。  
 - **案（未実装）**: `debugTrace` フラグ時のみ、コメントに `trace`（経路・present/absent・時刻、userId は先頭数文字 or ハッシュ）を付与し、本番書き込みでは除外。`chrome.storage.session` への短命リングバッファも候補。
 
 **Venis AI 案のスキーマ例**（本番では書かない・PII は短縮のこと）:

@@ -12,6 +12,7 @@ import {
   KEY_POPUP_FRAME,
   KEY_POPUP_FRAME_CUSTOM,
   KEY_RECORDING,
+  KEY_DEEP_HARVEST_QUIET_UI,
   KEY_SELF_POSTED_RECENTS,
   KEY_USER_COMMENT_PROFILE_CACHE,
   KEY_COMMENT_PANEL_STATUS,
@@ -21,6 +22,7 @@ import {
   commentsStorageKey,
   giftUsersStorageKey,
   isRecordingEnabled,
+  isDeepHarvestQuietUiEnabled,
   normalizeInlinePanelWidthMode
 } from '../lib/storageKeys.js';
 import {
@@ -99,6 +101,26 @@ const STATS_POLL_MS = 45_000;
 /** 返信サジェスト等と同様に DOM 更新がテキスト差し替えだけのときの取りこぼし防止 */
 const LIVE_PANEL_SCAN_MS = 800;
 const DEEP_HARVEST_DELAY_MS = 1200;
+/**
+ * 仮想コメント一覧の deep harvest はスクロールホストの scrollTop を段階的に動かすため、
+ * 視聴ページを開いた直後に「メインのコメントが滝のように流れる」ように見える。
+ * 初回・録画ON 直後だけ遅らせ、ユーザーが画面に慣れてから走査する。
+ * 長すぎるとこの間は仮想バッファ外の過去コメントが deep で拾えず、記録件数が伸びにくい。
+ */
+const DEEP_HARVEST_QUIET_UI_MS = 3200;
+/** deep harvest 1ステップあたりの待ち（短すぎると仮想行の取りこぼし、長いと視覚的な走査時間が伸びる） */
+const DEEP_HARVEST_SCROLL_WAIT_MS = 55;
+/** 2 周目の deep の直前ギャップ（仮想 DOM の再配置で取りこぼした行の再出現を待つ） */
+const DEEP_HARVEST_SECOND_PASS_GAP_MS = 180;
+/**
+ * 長時間配信で仮想バッファ外の取りこぼしを減らす低頻度 deep（タブが visible で記録中のみ）。
+ * QUIET UI は runDeepHarvest 内では使わず、定期経路も滝 UI 用ローディングは出さない。
+ */
+const DEEP_HARVEST_PERIODIC_MS = 12 * 60 * 1000;
+/** 長めの待ちのあいだ、ゆっくりりんくで「読み込み中」と示す（web_accessible と一致させる） */
+const DEEP_HARVEST_LOADING_HOST_ID = 'nl-deep-harvest-loading';
+const DEEP_HARVEST_LOADING_IMG_PATH =
+  'images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-closed.png';
 const BOOTSTRAP_DELAYS_MS = [400, 2000, 4500];
 const MAX_SELF_POSTED_ITEMS = 48;
 const SELF_POST_RECENT_TTL_MS = 24 * 60 * 60 * 1000;
@@ -115,6 +137,8 @@ const SNAPSHOT_LINK_RELS = new Set([
 ]);
 
 let recording = false;
+/** deep harvest の遅延＋ローディング UI（storage、既定オン） */
+let deepHarvestQuietUi = true;
 /** @type {string|null} */
 let liveId = null;
 
@@ -156,6 +180,15 @@ let observedMutationRoot = null;
 let nativeSelfPostRecorderBound = false;
 let lastNativeSelfPost = { liveId: '', textNorm: '', at: 0 };
 let harvestRunning = false;
+/** deep harvest 成功ごとに更新（スナップショット `_debug.harvestPipeline` 用） */
+const deepHarvestPipelineStats = {
+  lastCompletedAt: 0,
+  lastRowCount: 0,
+  runCount: 0,
+  lastError: false
+};
+/** 直近の persistCommentRowsImpl に渡った行数（0 = 未実行またはスキップ） */
+let lastPersistCommentBatchSize = 0;
 /** @type {WeakMap<Element, true>} */
 const scrollHooked = new WeakMap();
 
@@ -2184,6 +2217,12 @@ function collectWatchPageSnapshot() {
       wsCommentCount,
       wsAge: wsViewerCountUpdatedAt ? Date.now() - wsViewerCountUpdatedAt : -1,
       intercept: interceptedUsers.size,
+      harvestPipeline: {
+        ...deepHarvestPipelineStats,
+        harvestRunning,
+        ndgrPending: ndgrChatRowsPending.length,
+        lastPersistBatch: lastPersistCommentBatchSize
+      },
       embeddedVC: _edProps ? pickViewerCountFromEmbeddedData(_edProps) : null,
       officialVsRecorded:
         officialCommentCount != null &&
@@ -2596,6 +2635,19 @@ async function readRecordingFlag() {
   return isRecordingEnabled(r[KEY_RECORDING]);
 }
 
+async function readDeepHarvestQuietUiFromStorage() {
+  if (!hasExtensionContext()) {
+    deepHarvestQuietUi = true;
+    return;
+  }
+  try {
+    const bag = await chrome.storage.local.get(KEY_DEEP_HARVEST_QUIET_UI);
+    deepHarvestQuietUi = isDeepHarvestQuietUiEnabled(bag[KEY_DEEP_HARVEST_QUIET_UI]);
+  } catch {
+    deepHarvestQuietUi = true;
+  }
+}
+
 /** @param {HTMLImageElement} img */
 function bindCommentRowUserIconLoadOnce(img) {
   if (!(img instanceof HTMLImageElement)) return;
@@ -2908,6 +2960,7 @@ async function persistCommentRowsImpl(rows) {
   ) {
     return;
   }
+  lastPersistCommentBatchSize = rows.length;
   const enriched = enrichRowsWithInterceptedUserIds(rows);
   const key = commentsStorageKey(liveId);
   try {
@@ -3147,6 +3200,7 @@ function syncLiveIdFromLocation() {
   }
 
   liveId = null;
+  cancelPendingDeepHarvest();
   void clearCommentHarvestPanelDiagnostic();
   clearNdgrChatRowsPending();
   clearThumbTimer();
@@ -3201,14 +3255,118 @@ function scheduleFlush() {
 
 /** @type {number|null} */
 let deepHarvestTimer = null;
-/** @param {string} _reason */
-function scheduleDeepHarvest(_reason) {
-  if (!recording || !liveId || !locationAllowsCommentRecording()) return;
+
+function removeDeepHarvestLoadingUi() {
+  try {
+    document.getElementById(DEEP_HARVEST_LOADING_HOST_ID)?.remove();
+  } catch {
+    // no-op
+  }
+}
+
+function ensureDeepHarvestLoadingUi() {
+  if (!hasExtensionContext()) return;
+  if (document.getElementById(DEEP_HARVEST_LOADING_HOST_ID)) return;
+  let imgUrl = '';
+  try {
+    imgUrl = chrome.runtime.getURL(DEEP_HARVEST_LOADING_IMG_PATH);
+  } catch {
+    imgUrl = '';
+  }
+  const host = document.createElement('div');
+  host.id = DEEP_HARVEST_LOADING_HOST_ID;
+  host.setAttribute('role', 'status');
+  host.setAttribute('aria-live', 'polite');
+  host.setAttribute(
+    'aria-label',
+    'コメント一覧の読み込み準備中。しばらくお待ちください。'
+  );
+  host.style.cssText = [
+    'position:fixed',
+    'z-index:2147483646',
+    'right:max(16px,env(safe-area-inset-right))',
+    'bottom:max(16px,env(safe-area-inset-bottom))',
+    'left:auto',
+    'max-width:min(320px,calc(100vw - 32px))',
+    'box-sizing:border-box',
+    'padding:12px 14px',
+    'border-radius:12px',
+    'background:rgba(255,255,255,0.96)',
+    'color:#1a1a1a',
+    'font:14px/1.45 system-ui,-apple-system,sans-serif',
+    'box-shadow:0 4px 24px rgba(0,0,0,0.12)',
+    'display:flex',
+    'align-items:center',
+    'gap:12px',
+    'pointer-events:none'
+  ].join(';');
+  const img = document.createElement('img');
+  img.alt = '';
+  img.decoding = 'async';
+  img.width = 48;
+  img.height = 48;
+  img.style.cssText =
+    'width:48px;height:48px;object-fit:contain;flex-shrink:0;border-radius:8px';
+  if (imgUrl) img.src = imgUrl;
+  const text = document.createElement('div');
+  text.style.cssText = 'min-width:0';
+  text.innerHTML =
+    '<div style="font-weight:600;margin:0 0 2px">読み込み中…</div>' +
+    '<div style="font-size:12px;opacity:0.78;margin:0;line-height:1.35">' +
+    'コメント記録の準備をしています。ゆっくりしていってね！' +
+    '</div>';
+  host.appendChild(img);
+  host.appendChild(text);
+  try {
+    document.documentElement.appendChild(host);
+  } catch {
+    // no-op
+  }
+}
+
+function cancelPendingDeepHarvest() {
+  if (deepHarvestTimer) {
+    clearTimeout(deepHarvestTimer);
+    deepHarvestTimer = null;
+  }
+  removeDeepHarvestLoadingUi();
+}
+
+/** @param {string} reason */
+function scheduleDeepHarvest(reason) {
+  if (!recording || !liveId || !locationAllowsCommentRecording()) {
+    cancelPendingDeepHarvest();
+    return;
+  }
   if (deepHarvestTimer) clearTimeout(deepHarvestTimer);
+  const wantQuietSchedule =
+    deepHarvestQuietUi &&
+    (reason === 'startup' || reason === 'recording-on');
+  const delayMs = wantQuietSchedule
+    ? Math.max(DEEP_HARVEST_DELAY_MS, DEEP_HARVEST_QUIET_UI_MS)
+    : DEEP_HARVEST_DELAY_MS;
+  if (!wantQuietSchedule) {
+    removeDeepHarvestLoadingUi();
+  } else {
+    ensureDeepHarvestLoadingUi();
+  }
   deepHarvestTimer = setTimeout(() => {
     deepHarvestTimer = null;
+    removeDeepHarvestLoadingUi();
     runDeepHarvest().catch(() => {});
-  }, DEEP_HARVEST_DELAY_MS);
+  }, delayMs);
+}
+
+/**
+ * 低頻度の追加 deep（定期・タブ可視時）。`scheduleDeepHarvest` とは別タイマーで競合しないよう
+ * `harvestRunning` を見てスキップする。
+ */
+function tryPeriodicDeepHarvest() {
+  if (!hasExtensionContext()) return;
+  if (!recording || !liveId || !locationAllowsCommentRecording()) return;
+  if (document.hidden) return;
+  if (harvestRunning) return;
+  void runDeepHarvest();
 }
 
 async function runDeepHarvest() {
@@ -3225,9 +3383,17 @@ async function runDeepHarvest() {
     const rows = await harvestVirtualCommentList({
       document,
       extractCommentsFromNode,
-      waitMs: 55
+      waitMs: DEEP_HARVEST_SCROLL_WAIT_MS,
+      twoPass: true,
+      twoPassGapMs: DEEP_HARVEST_SECOND_PASS_GAP_MS
     });
     await persistCommentRows(rows);
+    deepHarvestPipelineStats.lastCompletedAt = Date.now();
+    deepHarvestPipelineStats.lastRowCount = rows.length;
+    deepHarvestPipelineStats.runCount += 1;
+    deepHarvestPipelineStats.lastError = false;
+  } catch {
+    deepHarvestPipelineStats.lastError = true;
   } finally {
     harvestRunning = false;
   }
@@ -3439,6 +3605,7 @@ async function start() {
   if (!hasExtensionContext()) return;
   if (!shouldRunWatchContentInThisFrame()) return;
   recording = await readRecordingFlag();
+  await readDeepHarvestQuietUiFromStorage();
   if (isWatchInlinePanelTopFrame()) {
     ensurePageFrameStyle();
     await loadPageFrameSettings().catch(() => {});
@@ -3508,6 +3675,24 @@ async function start() {
         .catch(() => {});
     }
 
+    if (changes[KEY_DEEP_HARVEST_QUIET_UI]) {
+      deepHarvestQuietUi = isDeepHarvestQuietUiEnabled(
+        changes[KEY_DEEP_HARVEST_QUIET_UI].newValue
+      );
+      if (
+        !deepHarvestQuietUi &&
+        recording &&
+        liveId &&
+        locationAllowsCommentRecording() &&
+        deepHarvestTimer
+      ) {
+        cancelPendingDeepHarvest();
+        scheduleDeepHarvest('live-id-change');
+      } else if (!deepHarvestQuietUi) {
+        removeDeepHarvestLoadingUi();
+      }
+    }
+
     if (changes[KEY_RECORDING]) {
       recording = isRecordingEnabled(changes[KEY_RECORDING].newValue);
       if (recording) {
@@ -3517,6 +3702,7 @@ async function start() {
         scheduleDeepHarvest('recording-on');
         tryAttachScrollHookSoon();
       } else {
+        cancelPendingDeepHarvest();
         resetOfficialCommentSamplingState();
         void clearCommentHarvestPanelDiagnostic();
       }
@@ -3554,6 +3740,10 @@ async function start() {
     }
     scanVisibleCommentsNow();
   }, LIVE_PANEL_SCAN_MS);
+
+  setInterval(() => {
+    tryPeriodicDeepHarvest();
+  }, DEEP_HARVEST_PERIODIC_MS);
 
   pollStatsFromPage();
   setInterval(() => {

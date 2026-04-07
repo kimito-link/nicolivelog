@@ -5,6 +5,7 @@ import {
   findLargestVerticalScrollHost,
   findCommentListScrollHost,
   harvestVirtualCommentList,
+  HARVEST_SCROLL_STEP_CLIENT_HEIGHT_RATIO,
   mergeVirtualHarvestRows,
   pageUserLikelyTypingIn
 } from './commentHarvest.js';
@@ -296,5 +297,50 @@ describe('harvestVirtualCommentList', () => {
       respectTyping: false
     });
     expect(extractCalls).toBeGreaterThan(2);
+  });
+
+  it('twoPass で第2パスが追加行をマージする', async () => {
+    document.body.innerHTML = `
+      <div class="ga-ns-comment-panel">
+        <div class="body" role="rowgroup" style="height:50px;overflow:auto;width:200px">
+          <div style="height:400px"></div>
+        </div>
+      </div>`;
+    const body = document.querySelector('.body');
+    Object.defineProperty(body, 'clientHeight', { value: 50, configurable: true });
+    Object.defineProperty(body, 'scrollHeight', { value: 400, configurable: true });
+    let scrollTop = 0;
+    Object.defineProperty(body, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (v) => {
+        scrollTop = v;
+      }
+    });
+    let sweep = 0;
+    const rows = await harvestVirtualCommentList({
+      document,
+      extractCommentsFromNode: () =>
+        sweep === 0
+          ? [{ commentNo: '1', text: 'a', userId: '11' }]
+          : [
+              { commentNo: '1', text: 'a', userId: '11' },
+              { commentNo: '2', text: 'b', userId: '22' }
+            ],
+      waitMs: 0,
+      twoPass: true,
+      twoPassGapMs: 0,
+      onBetweenVirtualPasses: () => {
+        sweep = 1;
+      }
+    });
+    const keys = new Set(rows.map((r) => `${r.commentNo}\t${r.text}`));
+    expect(keys.has('1\ta')).toBe(true);
+    expect(keys.has('2\tb')).toBe(true);
+  });
+
+  it('HARVEST_SCROLL_STEP_CLIENT_HEIGHT_RATIO は取りこぼし対策で 0.72 未満', () => {
+    expect(HARVEST_SCROLL_STEP_CLIENT_HEIGHT_RATIO).toBeLessThan(0.72);
+    expect(HARVEST_SCROLL_STEP_CLIENT_HEIGHT_RATIO).toBeGreaterThan(0.4);
   });
 });

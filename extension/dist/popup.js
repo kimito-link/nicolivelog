@@ -91,6 +91,7 @@
 
   // src/lib/storageKeys.js
   var KEY_RECORDING = "nls_recording_enabled";
+  var KEY_DEEP_HARVEST_QUIET_UI = "nls_deep_harvest_quiet_ui";
   var KEY_LAST_WATCH_URL = "nls_last_watch_url";
   var KEY_STORAGE_WRITE_ERROR = "nls_storage_write_error";
   var KEY_COMMENT_PANEL_STATUS = "nls_comment_panel_status";
@@ -124,6 +125,9 @@
     return INLINE_PANEL_WIDTH_PLAYER_ROW;
   }
   function isRecordingEnabled(raw) {
+    return raw !== false;
+  }
+  function isDeepHarvestQuietUiEnabled(raw) {
     return raw !== false;
   }
   function isCommentEnterSendEnabled(raw) {
@@ -1212,6 +1216,7 @@
   // src/lib/topSupportRankStripLines.js
   function topSupportRankLineModels(stripRooms, opts) {
     const defaultThumb = String(opts?.defaultThumbSrc || "").trim();
+    const anonThumb = String(opts?.anonymousFallbackThumbSrc || "").trim();
     const colorScheme = opts?.colorScheme === "dark" ? "dark" : "light";
     const rooms = Array.isArray(stripRooms) ? stripRooms : [];
     let knownRank = 0;
@@ -1221,7 +1226,13 @@
       if (!isUnknown) knownRank += 1;
       const placeNumber = isUnknown ? null : knownRank;
       const rawAv = String(r?.avatarUrl || "").trim();
-      const thumbSrc = isHttpOrHttpsUrl(rawAv) ? rawAv : defaultThumb;
+      const uidForThumb = isUnknown ? "" : userKey;
+      const thumbSrc = pickSupportGrowthFallbackTileSrc(
+        uidForThumb,
+        rawAv,
+        defaultThumb,
+        anonThumb || defaultThumb
+      );
       const thumbNeedsNoReferrer = isHttpOrHttpsUrl(thumbSrc);
       const idTitle = isUnknown ? "" : String(r.userKey);
       const idShort = isUnknown ? "\u2014" : shortUserKeyDisplay(userKey) || String(userKey);
@@ -1255,7 +1266,7 @@
   }
 
   // src/lib/topSupportRankStripConfig.js
-  var TOP_SUPPORT_RANK_STRIP_MAX = 10;
+  var TOP_SUPPORT_RANK_STRIP_MAX = 11;
 
   // src/lib/topSupportRankStripStableKey.js
   function topSupportRankStripStableKey(liveId, entryCount, stripRooms) {
@@ -1516,6 +1527,7 @@ ${body}`;
       wsCommentCount: o.wsCommentCount,
       wsAge: o.wsAge,
       intercept: o.intercept,
+      harvestPipeline: o.harvestPipeline,
       embeddedVC: o.embeddedVC,
       programBeginAtMs: o.programBeginAtMs,
       embeddedBeginAt: o.embeddedBeginAt,
@@ -3503,6 +3515,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     input.value = createFrameShareCode(popupFrameState.id, popupFrameState.custom);
   }
   var STORY_RINK_FACE_IMG = "images/toumeilink.png";
+  var STORY_RINK_COLLECTING_JPG = "images/icon/kewXCUOt_400x400.jpg";
   var STORY_GRID_DEFAULT_TILE_IMG = "images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-closed.png";
   var STORY_GUIDE_FACE_RINK = "images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-closed.png";
   var STORY_GUIDE_FACE_KONTA = "images/yukkuri-charactore-english/konta/kitsune-yukkuri-half-eyes-mouth-closed.png";
@@ -4103,7 +4116,8 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     const delta = Math.max(0, Number(opts.delta || 0));
     const liveId = String(opts.liveId || "");
     const count = Math.max(0, Number(opts.count || 0));
-    if (img) img.src = STORY_RINK_FACE_IMG;
+    const facePick = String(opts.faceSrc || "").trim();
+    if (img) img.src = facePick || STORY_RINK_FACE_IMG;
     if (leadEl) leadEl.textContent = lead;
     if (subEl) subEl.textContent = sub;
     if (deltaEl) {
@@ -5395,6 +5409,20 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     const caster = truncateText(snapshot?.broadcasterName || "", 18);
     const tags = Array.isArray(snapshot?.tags) ? snapshot.tags.filter((v) => String(v || "").trim()).slice(0, 2) : [];
     const reaction = computeStoryReaction(liveId, commentCount);
+    if (recording && commentCount <= 0) {
+      setSceneStory(
+        "\u308A\u3093\u304F\u304C\u307F\u3093\u306A\u306E\u5FDC\u63F4\u30B3\u30E1\u30F3\u30C8\u3092\u96C6\u3081\u3066\u3044\u307E\u3059",
+        `\u300C${title || liveId || "\u653E\u9001"}\u300D\u3092\u958B\u3044\u305F\u307E\u307E\u306B\u3057\u3066\u306D\u3002\u6570\u5B57\u304C\u3059\u3050\u5897\u3048\u306A\u3044\u3068\u304D\u306F\u3001\u53F3\u306E\u30B3\u30E1\u30F3\u30C8\u4E00\u89A7\u304C\u4EEE\u60F3\u30B9\u30AF\u30ED\u30FC\u30EB\u306E\u305F\u3081\u5C11\u3057\u5F85\u3064\u304B\u3001\u4E00\u89A7\u3092\u5C11\u3057\u30B9\u30AF\u30ED\u30FC\u30EB\u3059\u308B\u3068\u53D6\u308A\u8FBC\u307F\u3084\u3059\u3044\u3088\u3002${roleCopy}`,
+        {
+          liveId,
+          delta: 0,
+          reaction: "idle",
+          count: reaction.count,
+          faceSrc: STORY_RINK_COLLECTING_JPG
+        }
+      );
+      return;
+    }
     const countLabel = reaction.count.toLocaleString("ja-JP");
     setSceneStory(
       "\u308A\u3093\u304F\u304C\u307F\u3093\u306A\u306E\u5FDC\u63F4\u30B3\u30E1\u30F3\u30C8\u3092\u96C6\u3081\u3066\u3044\u308B\u3088\uFF01",
@@ -5722,6 +5750,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     const rankScheme = getStoryColorScheme();
     const models = topSupportRankLineModels(stripRooms, {
       defaultThumbSrc: STORY_GRID_DEFAULT_TILE_IMG,
+      anonymousFallbackThumbSrc: STORY_REMOTE_FAILED_PLACEHOLDER_IMG,
       colorScheme: rankScheme
     });
     const html = models.map((m) => {
@@ -6762,6 +6791,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
           KEY_SELF_POSTED_RECENTS,
           KEY_LAST_WATCH_URL,
           KEY_RECORDING,
+          KEY_DEEP_HARVEST_QUIET_UI,
           KEY_INLINE_PANEL_WIDTH_MODE,
           KEY_CALM_PANEL_MOTION,
           KEY_STORAGE_WRITE_ERROR,
@@ -6788,6 +6818,16 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       applyCommentHarvestBannerFromBag(openBag, viewerLvForError);
       toggle.checked = isRecordingEnabled(openBag[KEY_RECORDING]);
       toggle.disabled = false;
+      const deepHarvestQuietEl = (
+        /** @type {HTMLInputElement|null} */
+        $("deepHarvestQuietUiToggle")
+      );
+      if (deepHarvestQuietEl) {
+        deepHarvestQuietEl.checked = isDeepHarvestQuietUiEnabled(
+          openBag[KEY_DEEP_HARVEST_QUIET_UI]
+        );
+        deepHarvestQuietEl.disabled = false;
+      }
       const panelMode = normalizeInlinePanelWidthMode(
         openBag[KEY_INLINE_PANEL_WIDTH_MODE]
       );
@@ -8461,6 +8501,19 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         const ok = await storageSetSafe({ [KEY_RECORDING]: toggle.checked });
         if (!ok) return;
         safeRefresh();
+      } catch {
+      }
+    });
+    const deepHarvestQuietToggle = (
+      /** @type {HTMLInputElement|null} */
+      $("deepHarvestQuietUiToggle")
+    );
+    deepHarvestQuietToggle?.addEventListener("change", async () => {
+      try {
+        const ok = await storageSetSafe({
+          [KEY_DEEP_HARVEST_QUIET_UI]: deepHarvestQuietToggle.checked
+        });
+        if (!ok) return;
       } catch {
       }
     });

@@ -8,6 +8,7 @@ import {
   KEY_NL_ENTITLEMENT_TIER,
   KEY_LAST_WATCH_URL,
   KEY_RECORDING,
+  KEY_DEEP_HARVEST_QUIET_UI,
   KEY_SELF_POSTED_RECENTS,
   KEY_USER_COMMENT_PROFILE_CACHE,
   EXTENSION_SOFT_CACHE_STORAGE_KEYS,
@@ -20,6 +21,7 @@ import {
   giftUsersStorageKey,
   isCommentEnterSendEnabled,
   isRecordingEnabled,
+  isDeepHarvestQuietUiEnabled,
   isUsageTermsAcknowledged,
   normalizeInlinePanelWidthMode,
   normalizeEntitlementTier,
@@ -37,6 +39,7 @@ describe('storage key constants', () => {
 
   it('プレフィックスで衝突しにくい文字列', () => {
     expect(KEY_RECORDING).toMatch(/^nls_/);
+    expect(KEY_DEEP_HARVEST_QUIET_UI).toMatch(/^nls_/);
     expect(KEY_LAST_WATCH_URL).toMatch(/^nls_/);
     expect(KEY_STORAGE_WRITE_ERROR).toMatch(/^nls_/);
     expect(KEY_COMMENT_PANEL_STATUS).toMatch(/^nls_/);
@@ -63,6 +66,13 @@ describe('storage key constants', () => {
     expect(isUsageTermsAcknowledged(false)).toBe(false);
     expect(isUsageTermsAcknowledged('true')).toBe(false);
     expect(isUsageTermsAcknowledged(true)).toBe(true);
+  });
+
+  it('isDeepHarvestQuietUiEnabled は false のみオフ（未設定はオン）', () => {
+    expect(isDeepHarvestQuietUiEnabled(undefined)).toBe(true);
+    expect(isDeepHarvestQuietUiEnabled(null)).toBe(true);
+    expect(isDeepHarvestQuietUiEnabled(true)).toBe(true);
+    expect(isDeepHarvestQuietUiEnabled(false)).toBe(false);
   });
 
   it('commentsStorageKey は trim + 小文字', () => {

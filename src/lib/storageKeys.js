@@ -4,6 +4,12 @@
 
 export const KEY_RECORDING = 'nls_recording_enabled';
 
+/**
+ * 記録ON時、初回のコメント一覧 deep harvest を遅らせる＋ゆっくりローディングを出す。
+ * false のときは従来どおり短い遅延のみ（記録が伸びやすいが一覧が動きやすい）。
+ */
+export const KEY_DEEP_HARVEST_QUIET_UI = 'nls_deep_harvest_quiet_ui';
+
 /** ポップアップが「アクティブタブが watch 以外」のとき表示用（コンテンツスクリプトが更新） */
 export const KEY_LAST_WATCH_URL = 'nls_last_watch_url';
 
@@ -97,6 +103,11 @@ export function normalizeInlinePanelWidthMode(raw) {
 
 /** @param {unknown} raw */
 export function isRecordingEnabled(raw) {
+  return raw !== false;
+}
+
+/** @param {unknown} raw */
+export function isDeepHarvestQuietUiEnabled(raw) {
   return raw !== false;
 }
 

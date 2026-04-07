@@ -65,6 +65,7 @@
 
   // src/lib/storageKeys.js
   var KEY_RECORDING = "nls_recording_enabled";
+  var KEY_DEEP_HARVEST_QUIET_UI = "nls_deep_harvest_quiet_ui";
   var KEY_LAST_WATCH_URL = "nls_last_watch_url";
   var KEY_STORAGE_WRITE_ERROR = "nls_storage_write_error";
   var KEY_COMMENT_PANEL_STATUS = "nls_comment_panel_status";
@@ -87,6 +88,9 @@
     return INLINE_PANEL_WIDTH_PLAYER_ROW;
   }
   function isRecordingEnabled(raw) {
+    return raw !== false;
+  }
+  function isDeepHarvestQuietUiEnabled(raw) {
     return raw !== false;
   }
   function commentsStorageKey(liveId2) {
@@ -1756,6 +1760,7 @@
   }
 
   // src/lib/commentHarvest.js
+  var HARVEST_SCROLL_STEP_CLIENT_HEIGHT_RATIO = 0.58;
   function mergeVirtualHarvestRows(prev, next) {
     const uidN = String(next.userId ?? "").trim();
     const uidP = String(prev.userId ?? "").trim();
@@ -1859,6 +1864,9 @@
     const extract = opts.extractCommentsFromNode;
     const waitMs = opts.waitMs ?? 50;
     const respectTyping = opts.respectTyping !== false;
+    const twoPass = Boolean(opts.twoPass);
+    const twoPassGapMs = opts.twoPassGapMs ?? 140;
+    const scrollStepRatio = typeof opts.scrollStepClientHeightRatio === "number" ? opts.scrollStepClientHeightRatio : HARVEST_SCROLL_STEP_CLIENT_HEIGHT_RATIO;
     const panel = findNicoCommentPanel(doc);
     const scanRoot = panel || doc.body;
     if (!extract) return [];
@@ -1876,48 +1884,54 @@
         map.set(k, mergeVirtualHarvestRows(existing, row));
       }
     };
-    const host = panel ? findCommentListScrollHost(doc) : null;
-    if (!host || host.scrollHeight <= host.clientHeight + 10) {
-      const m = /* @__PURE__ */ new Map();
-      mergeInto(m, extract(scanRoot));
-      return [...m.values()];
-    }
-    if (respectTyping && pageUserLikelyTypingIn(doc)) {
-      const m = /* @__PURE__ */ new Map();
-      mergeInto(m, extract(scanRoot));
-      return [...m.values()];
-    }
-    const out = /* @__PURE__ */ new Map();
-    const saved = host.scrollTop;
-    const max = Math.max(0, host.scrollHeight - host.clientHeight);
-    const step = Math.max(64, Math.floor(host.clientHeight * 0.72));
-    const focusEl = doc.activeElement instanceof HTMLElement ? doc.activeElement : null;
-    host.scrollTop = 0;
-    await raf(doc);
-    await delay(waitMs);
-    mergeInto(out, extract(scanRoot));
-    for (let y = 0; y <= max; y += step) {
-      host.scrollTop = Math.min(y, max);
+    const runVirtualScrollSweep = async (map, restoreFocusAfter) => {
+      const host = panel ? findCommentListScrollHost(doc) : null;
+      if (!host || host.scrollHeight <= host.clientHeight + 10) {
+        mergeInto(map, extract(scanRoot));
+        return;
+      }
+      if (respectTyping && pageUserLikelyTypingIn(doc)) {
+        mergeInto(map, extract(scanRoot));
+        return;
+      }
+      const saved = host.scrollTop;
+      const max = Math.max(0, host.scrollHeight - host.clientHeight);
+      const step = Math.max(64, Math.floor(host.clientHeight * scrollStepRatio));
+      host.scrollTop = 0;
       await raf(doc);
       await delay(waitMs);
-      mergeInto(out, extract(scanRoot));
-    }
-    host.scrollTop = max;
-    await raf(doc);
-    await delay(waitMs);
-    mergeInto(out, extract(scanRoot));
-    host.scrollTop = saved;
-    await raf(doc);
-    await delay(30);
-    if (focusEl && focusEl.isConnected) {
-      try {
-        focusEl.focus({ preventScroll: true });
-      } catch {
+      mergeInto(map, extract(scanRoot));
+      for (let y = 0; y <= max; y += step) {
+        host.scrollTop = Math.min(y, max);
+        await raf(doc);
+        await delay(waitMs);
+        mergeInto(map, extract(scanRoot));
+      }
+      host.scrollTop = max;
+      await raf(doc);
+      await delay(waitMs);
+      mergeInto(map, extract(scanRoot));
+      host.scrollTop = saved;
+      await raf(doc);
+      await delay(30);
+      if (restoreFocusAfter && focusEl && focusEl.isConnected) {
         try {
-          focusEl.focus();
+          focusEl.focus({ preventScroll: true });
         } catch {
+          try {
+            focusEl.focus();
+          } catch {
+          }
         }
       }
+    };
+    const focusEl = doc.activeElement instanceof HTMLElement ? doc.activeElement : null;
+    const out = /* @__PURE__ */ new Map();
+    await runVirtualScrollSweep(out, !twoPass);
+    if (twoPass) {
+      await delay(twoPassGapMs);
+      opts.onBetweenVirtualPasses?.();
+      await runVirtualScrollSweep(out, true);
     }
     return [...out.values()];
   }
@@ -2260,6 +2274,12 @@
   var STATS_POLL_MS = 45e3;
   var LIVE_PANEL_SCAN_MS = 800;
   var DEEP_HARVEST_DELAY_MS = 1200;
+  var DEEP_HARVEST_QUIET_UI_MS = 3200;
+  var DEEP_HARVEST_SCROLL_WAIT_MS = 55;
+  var DEEP_HARVEST_SECOND_PASS_GAP_MS = 180;
+  var DEEP_HARVEST_PERIODIC_MS = 12 * 60 * 1e3;
+  var DEEP_HARVEST_LOADING_HOST_ID = "nl-deep-harvest-loading";
+  var DEEP_HARVEST_LOADING_IMG_PATH = "images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-closed.png";
   var BOOTSTRAP_DELAYS_MS = [400, 2e3, 4500];
   var MAX_SELF_POSTED_ITEMS = 48;
   var SELF_POST_RECENT_TTL_MS = 24 * 60 * 60 * 1e3;
@@ -2275,6 +2295,7 @@
     "stylesheet"
   ]);
   var recording = false;
+  var deepHarvestQuietUi = true;
   var liveId = null;
   var wsViewerCount = null;
   var wsCommentCount = null;
@@ -2295,6 +2316,13 @@
   var nativeSelfPostRecorderBound = false;
   var lastNativeSelfPost = { liveId: "", textNorm: "", at: 0 };
   var harvestRunning = false;
+  var deepHarvestPipelineStats = {
+    lastCompletedAt: 0,
+    lastRowCount: 0,
+    runCount: 0,
+    lastError: false
+  };
+  var lastPersistCommentBatchSize = 0;
   var scrollHooked = /* @__PURE__ */ new WeakMap();
   var thumbAuto = false;
   var thumbIntervalMs = 0;
@@ -3864,6 +3892,12 @@
         wsCommentCount,
         wsAge: wsViewerCountUpdatedAt ? Date.now() - wsViewerCountUpdatedAt : -1,
         intercept: interceptedUsers.size,
+        harvestPipeline: {
+          ...deepHarvestPipelineStats,
+          harvestRunning,
+          ndgrPending: ndgrChatRowsPending.length,
+          lastPersistBatch: lastPersistCommentBatchSize
+        },
         embeddedVC: _edProps ? pickViewerCountFromEmbeddedData(_edProps) : null,
         officialVsRecorded: officialCommentCount != null && Number.isFinite(officialCommentCount) && officialCommentCount >= 0 ? {
           officialComments: officialCommentCount,
@@ -4237,6 +4271,18 @@
     const r = await chrome.storage.local.get(KEY_RECORDING);
     return isRecordingEnabled(r[KEY_RECORDING]);
   }
+  async function readDeepHarvestQuietUiFromStorage() {
+    if (!hasExtensionContext()) {
+      deepHarvestQuietUi = true;
+      return;
+    }
+    try {
+      const bag = await chrome.storage.local.get(KEY_DEEP_HARVEST_QUIET_UI);
+      deepHarvestQuietUi = isDeepHarvestQuietUiEnabled(bag[KEY_DEEP_HARVEST_QUIET_UI]);
+    } catch {
+      deepHarvestQuietUi = true;
+    }
+  }
   function bindCommentRowUserIconLoadOnce(img) {
     if (!(img instanceof HTMLImageElement)) return;
     if (img.dataset.nlsCommentAvBound === "1") return;
@@ -4457,6 +4503,7 @@
     if (!rows?.length || !recording || !liveId || !locationAllowsCommentRecording() || !hasExtensionContext()) {
       return;
     }
+    lastPersistCommentBatchSize = rows.length;
     const enriched = enrichRowsWithInterceptedUserIds(rows);
     const key = commentsStorageKey(liveId);
     try {
@@ -4668,6 +4715,7 @@
       return;
     }
     liveId = null;
+    cancelPendingDeepHarvest();
     void clearCommentHarvestPanelDiagnostic();
     clearNdgrChatRowsPending();
     clearThumbTimer();
@@ -4712,14 +4760,98 @@
     }, DEBOUNCE_MS);
   }
   var deepHarvestTimer = null;
-  function scheduleDeepHarvest(_reason) {
-    if (!recording || !liveId || !locationAllowsCommentRecording()) return;
+  function removeDeepHarvestLoadingUi() {
+    try {
+      document.getElementById(DEEP_HARVEST_LOADING_HOST_ID)?.remove();
+    } catch {
+    }
+  }
+  function ensureDeepHarvestLoadingUi() {
+    if (!hasExtensionContext()) return;
+    if (document.getElementById(DEEP_HARVEST_LOADING_HOST_ID)) return;
+    let imgUrl = "";
+    try {
+      imgUrl = chrome.runtime.getURL(DEEP_HARVEST_LOADING_IMG_PATH);
+    } catch {
+      imgUrl = "";
+    }
+    const host = document.createElement("div");
+    host.id = DEEP_HARVEST_LOADING_HOST_ID;
+    host.setAttribute("role", "status");
+    host.setAttribute("aria-live", "polite");
+    host.setAttribute(
+      "aria-label",
+      "\u30B3\u30E1\u30F3\u30C8\u4E00\u89A7\u306E\u8AAD\u307F\u8FBC\u307F\u6E96\u5099\u4E2D\u3002\u3057\u3070\u3089\u304F\u304A\u5F85\u3061\u304F\u3060\u3055\u3044\u3002"
+    );
+    host.style.cssText = [
+      "position:fixed",
+      "z-index:2147483646",
+      "right:max(16px,env(safe-area-inset-right))",
+      "bottom:max(16px,env(safe-area-inset-bottom))",
+      "left:auto",
+      "max-width:min(320px,calc(100vw - 32px))",
+      "box-sizing:border-box",
+      "padding:12px 14px",
+      "border-radius:12px",
+      "background:rgba(255,255,255,0.96)",
+      "color:#1a1a1a",
+      "font:14px/1.45 system-ui,-apple-system,sans-serif",
+      "box-shadow:0 4px 24px rgba(0,0,0,0.12)",
+      "display:flex",
+      "align-items:center",
+      "gap:12px",
+      "pointer-events:none"
+    ].join(";");
+    const img = document.createElement("img");
+    img.alt = "";
+    img.decoding = "async";
+    img.width = 48;
+    img.height = 48;
+    img.style.cssText = "width:48px;height:48px;object-fit:contain;flex-shrink:0;border-radius:8px";
+    if (imgUrl) img.src = imgUrl;
+    const text = document.createElement("div");
+    text.style.cssText = "min-width:0";
+    text.innerHTML = '<div style="font-weight:600;margin:0 0 2px">\u8AAD\u307F\u8FBC\u307F\u4E2D\u2026</div><div style="font-size:12px;opacity:0.78;margin:0;line-height:1.35">\u30B3\u30E1\u30F3\u30C8\u8A18\u9332\u306E\u6E96\u5099\u3092\u3057\u3066\u3044\u307E\u3059\u3002\u3086\u3063\u304F\u308A\u3057\u3066\u3044\u3063\u3066\u306D\uFF01</div>';
+    host.appendChild(img);
+    host.appendChild(text);
+    try {
+      document.documentElement.appendChild(host);
+    } catch {
+    }
+  }
+  function cancelPendingDeepHarvest() {
+    if (deepHarvestTimer) {
+      clearTimeout(deepHarvestTimer);
+      deepHarvestTimer = null;
+    }
+    removeDeepHarvestLoadingUi();
+  }
+  function scheduleDeepHarvest(reason) {
+    if (!recording || !liveId || !locationAllowsCommentRecording()) {
+      cancelPendingDeepHarvest();
+      return;
+    }
     if (deepHarvestTimer) clearTimeout(deepHarvestTimer);
+    const wantQuietSchedule = deepHarvestQuietUi && (reason === "startup" || reason === "recording-on");
+    const delayMs = wantQuietSchedule ? Math.max(DEEP_HARVEST_DELAY_MS, DEEP_HARVEST_QUIET_UI_MS) : DEEP_HARVEST_DELAY_MS;
+    if (!wantQuietSchedule) {
+      removeDeepHarvestLoadingUi();
+    } else {
+      ensureDeepHarvestLoadingUi();
+    }
     deepHarvestTimer = setTimeout(() => {
       deepHarvestTimer = null;
+      removeDeepHarvestLoadingUi();
       runDeepHarvest().catch(() => {
       });
-    }, DEEP_HARVEST_DELAY_MS);
+    }, delayMs);
+  }
+  function tryPeriodicDeepHarvest() {
+    if (!hasExtensionContext()) return;
+    if (!recording || !liveId || !locationAllowsCommentRecording()) return;
+    if (document.hidden) return;
+    if (harvestRunning) return;
+    void runDeepHarvest();
   }
   async function runDeepHarvest() {
     if (harvestRunning || !recording || !liveId || !locationAllowsCommentRecording()) {
@@ -4730,9 +4862,17 @@
       const rows = await harvestVirtualCommentList({
         document,
         extractCommentsFromNode,
-        waitMs: 55
+        waitMs: DEEP_HARVEST_SCROLL_WAIT_MS,
+        twoPass: true,
+        twoPassGapMs: DEEP_HARVEST_SECOND_PASS_GAP_MS
       });
       await persistCommentRows(rows);
+      deepHarvestPipelineStats.lastCompletedAt = Date.now();
+      deepHarvestPipelineStats.lastRowCount = rows.length;
+      deepHarvestPipelineStats.runCount += 1;
+      deepHarvestPipelineStats.lastError = false;
+    } catch {
+      deepHarvestPipelineStats.lastError = true;
     } finally {
       harvestRunning = false;
     }
@@ -4911,6 +5051,7 @@
     if (!hasExtensionContext()) return;
     if (!shouldRunWatchContentInThisFrame()) return;
     recording = await readRecordingFlag();
+    await readDeepHarvestQuietUiFromStorage();
     if (isWatchInlinePanelTopFrame()) {
       ensurePageFrameStyle();
       await loadPageFrameSettings().catch(() => {
@@ -4977,6 +5118,17 @@
         readThumbSettings().then(() => applyThumbSchedule()).catch(() => {
         });
       }
+      if (changes[KEY_DEEP_HARVEST_QUIET_UI]) {
+        deepHarvestQuietUi = isDeepHarvestQuietUiEnabled(
+          changes[KEY_DEEP_HARVEST_QUIET_UI].newValue
+        );
+        if (!deepHarvestQuietUi && recording && liveId && locationAllowsCommentRecording() && deepHarvestTimer) {
+          cancelPendingDeepHarvest();
+          scheduleDeepHarvest("live-id-change");
+        } else if (!deepHarvestQuietUi) {
+          removeDeepHarvestLoadingUi();
+        }
+      }
       if (changes[KEY_RECORDING]) {
         recording = isRecordingEnabled(changes[KEY_RECORDING].newValue);
         if (recording) {
@@ -4986,6 +5138,7 @@
           scheduleDeepHarvest("recording-on");
           tryAttachScrollHookSoon();
         } else {
+          cancelPendingDeepHarvest();
           resetOfficialCommentSamplingState();
           void clearCommentHarvestPanelDiagnostic();
         }
@@ -5016,6 +5169,9 @@
       }
       scanVisibleCommentsNow();
     }, LIVE_PANEL_SCAN_MS);
+    setInterval(() => {
+      tryPeriodicDeepHarvest();
+    }, DEEP_HARVEST_PERIODIC_MS);
     pollStatsFromPage();
     setInterval(() => {
       if (!hasExtensionContext()) return;

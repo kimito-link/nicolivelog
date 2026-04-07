@@ -13,6 +13,7 @@ export function pickDevMonitorDebugSubset(raw) {
     wsCommentCount: o.wsCommentCount,
     wsAge: o.wsAge,
     intercept: o.intercept,
+    harvestPipeline: o.harvestPipeline,
     embeddedVC: o.embeddedVC,
     programBeginAtMs: o.programBeginAtMs,
     embeddedBeginAt: o.embeddedBeginAt,
