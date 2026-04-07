@@ -271,7 +271,26 @@ async function reloadExistingWatchTabs() {
   }
 }
 
+/**
+ * manifest に side_panel があると、環境によってツールバー押下がサイドパネル側に取られ、
+ * iframe 経由の表示が空に見えることがある。action.default_popup を確実に使わせる。
+ */
+function ensureToolbarOpensPopupNotSidePanel() {
+  try {
+    if (
+      typeof chrome !== 'undefined' &&
+      chrome.sidePanel &&
+      typeof chrome.sidePanel.setPanelBehavior === 'function'
+    ) {
+      void chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: false });
+    }
+  } catch {
+    // API 未対応・ポリシー制限
+  }
+}
+
 chrome.runtime.onInstalled.addListener((details) => {
+  ensureToolbarOpensPopupNotSidePanel();
   void ensureAutoBackupAlarm();
   if (details?.reason === 'update') {
     void reloadExistingWatchTabs();
@@ -281,6 +300,7 @@ chrome.runtime.onInstalled.addListener((details) => {
 });
 
 chrome.runtime.onStartup.addListener(() => {
+  ensureToolbarOpensPopupNotSidePanel();
   void ensureAutoBackupAlarm();
   void injectIntoExistingTabs();
 });

@@ -13,11 +13,13 @@ import {
   KEY_POPUP_FRAME_CUSTOM,
   KEY_RECORDING,
   KEY_SELF_POSTED_RECENTS,
+  KEY_USER_COMMENT_PROFILE_CACHE,
   KEY_COMMENT_PANEL_STATUS,
   KEY_STORAGE_WRITE_ERROR,
   KEY_THUMB_AUTO,
   KEY_THUMB_INTERVAL_MS,
   commentsStorageKey,
+  giftUsersStorageKey,
   isRecordingEnabled,
   normalizeInlinePanelWidthMode
 } from '../lib/storageKeys.js';
@@ -31,12 +33,25 @@ import {
   normalizeThumbIntervalMsForHost
 } from '../lib/thumbSettings.js';
 import { mergeNewComments, normalizeCommentText } from '../lib/commentRecord.js';
+import { anonymousNicknameFallback } from '../lib/nicoAnonymousDisplay.js';
+import {
+  applyUserCommentProfileMapToEntries,
+  normalizeUserCommentProfileMap,
+  pruneUserCommentProfileMap,
+  readStorageBagWithRetry,
+  upsertUserCommentProfileFromEntry
+} from '../lib/userCommentProfileCache.js';
+import { mergeGiftUsers } from '../lib/giftRecord.js';
 import {
   COMMENT_SUBMIT_CONFIRM_PROBE_MS,
   waitUntilEditorReflectsSubmit
 } from '../lib/commentSubmitConfirm.js';
 import { collectLoggedInViewerProfile } from '../lib/watchPageViewerProfile.js';
-import { extractCommentsFromNode } from '../lib/nicoliveDom.js';
+import {
+  closestHarvestableNicoCommentRow,
+  extractCommentsFromNode,
+  NICO_USER_ICON_IMG_LAZY_ATTRS
+} from '../lib/nicoliveDom.js';
 import {
   parseLiveViewerCountFromDocument,
   parseViewerCountFromSnapshotMetas
@@ -67,17 +82,22 @@ import {
 } from '../lib/embeddedDataExtract.js';
 import { countRecentActiveUsers } from '../lib/concurrentEstimate.js';
 import { summarizeOfficialCommentHistory } from '../lib/officialStatsWindow.js';
-import { niconicoDefaultUserIconUrl } from '../lib/supportGrowthTileSrc.js';
+import { buildWatchSnapshotOfficialFields } from '../lib/watchSnapshotOfficialFields.js';
+import {
+  niconicoDefaultUserIconUrl,
+  pickStrongestAvatarUrlForUser
+} from '../lib/supportGrowthTileSrc.js';
+import { mergeUserIdForEnrichment } from '../lib/userIdPreference.js';
 
 /**
  * @typedef {{ commentNo: string, text: string, userId: string|null, avatarUrl?: string }} ParsedCommentRow
  */
 
-const DEBOUNCE_MS = 400;
+const DEBOUNCE_MS = 140;
 const LIVE_POLL_MS = 4000;
 const STATS_POLL_MS = 45_000;
 /** 返信サジェスト等と同様に DOM 更新がテキスト差し替えだけのときの取りこぼし防止 */
-const LIVE_PANEL_SCAN_MS = 2000;
+const LIVE_PANEL_SCAN_MS = 800;
 const DEEP_HARVEST_DELAY_MS = 1200;
 const BOOTSTRAP_DELAYS_MS = [400, 2000, 4500];
 const MAX_SELF_POSTED_ITEMS = 48;
@@ -485,7 +505,9 @@ const INTERCEPT_MAP_MAX = 8000;
 let ndgrChatRowsPending = [];
 /** @type {ReturnType<typeof setTimeout>|null} */
 let ndgrChatRowsFlushTimer = null;
-const NDGR_CHAT_ROWS_FLUSH_MS = 120;
+const NDGR_CHAT_ROWS_FLUSH_MS = 150;
+/** バックログが大きいときはタイマーを待たずに flush（高流量時の遅延・競合緩和） */
+const NDGR_PENDING_FLUSH_THRESHOLD = 240;
 
 function clearNdgrChatRowsPending() {
   ndgrChatRowsPending.length = 0;
@@ -528,7 +550,16 @@ async function flushNdgrChatRowsBatch(batch) {
       ...(mNick ? { nickname: mNick } : {})
     });
   }
-  const merged = [...byKey.values()];
+  const merged = [...byKey.values()].map((r) => {
+    const uid = String(r.userId || '').trim();
+    const nick = anonymousNicknameFallback(uid, r.nickname);
+    return nick ? { ...r, nickname: nick } : r;
+  });
+  for (const r of merged) {
+    const u = String(r.userId || '').trim();
+    const n = String(r.nickname || '').trim();
+    if (u && n) interceptedNicknames.set(u, n);
+  }
   await persistCommentRows(merged);
 }
 
@@ -538,6 +569,16 @@ async function flushNdgrChatRowsBatch(batch) {
 function schedulePersistNdgrChatRows(rows) {
   if (!Array.isArray(rows) || !rows.length) return;
   ndgrChatRowsPending.push(...rows);
+  if (ndgrChatRowsPending.length >= NDGR_PENDING_FLUSH_THRESHOLD) {
+    if (ndgrChatRowsFlushTimer != null) {
+      clearTimeout(ndgrChatRowsFlushTimer);
+      ndgrChatRowsFlushTimer = null;
+    }
+    const slice = ndgrChatRowsPending;
+    ndgrChatRowsPending = [];
+    void flushNdgrChatRowsBatch(slice);
+    return;
+  }
   if (ndgrChatRowsFlushTimer != null) return;
   ndgrChatRowsFlushTimer = setTimeout(() => {
     ndgrChatRowsFlushTimer = null;
@@ -567,6 +608,23 @@ function resetOfficialStatsState() {
 function resetOfficialCommentSamplingState() {
   officialCommentHistory.length = 0;
   observedRecordedCommentCount = 0;
+}
+
+/** `#embedded-data` の遅延出現後に programBeginAt を一度だけ埋める（L3 補助） */
+function maybeFillProgramBeginFromEmbeddedData() {
+  if (
+    programBeginAtMs != null &&
+    Number.isFinite(programBeginAtMs) &&
+    programBeginAtMs > 0
+  ) {
+    return;
+  }
+  const props = extractEmbeddedDataProps(document);
+  if (!props) return;
+  const t = pickProgramBeginAt(props);
+  if (t != null && Number.isFinite(t) && t > 0) {
+    programBeginAtMs = t;
+  }
 }
 
 /** @param {number} at */
@@ -710,7 +768,7 @@ window.addEventListener('message', (e) => {
   if (e.data.type === 'NLS_INTERCEPT_CHAT_ROWS') {
     const raw = e.data.rows;
     if (Array.isArray(raw) && raw.length) {
-      /** @type {{ commentNo: string, text: string, userId: string|null, nickname?: string }[]} */
+      /** @type {{ commentNo: string, text: string, userId: string|null, nickname?: string, vpos?: number|null, accountStatus?: number|null, is184?: boolean }[]} */
       const cleaned = [];
       for (const x of raw) {
         if (!x || typeof x !== 'object') continue;
@@ -718,13 +776,39 @@ window.addEventListener('message', (e) => {
         const text = String(x.text ?? '');
         if (!commentNo) continue;
         const uid = String(x.userId ?? '').trim();
-        /** @type {{ commentNo: string, text: string, userId: string|null, nickname?: string }} */
+        /** @type {{ commentNo: string, text: string, userId: string|null, nickname?: string, vpos?: number|null, accountStatus?: number|null, is184?: boolean }} */
         const row = { commentNo, text, userId: uid || null };
         const nick = String(x.nickname ?? '').trim();
         if (nick) row.nickname = nick;
+        if (x.vpos != null) row.vpos = x.vpos;
+        if (x.accountStatus != null) row.accountStatus = x.accountStatus;
+        if (x.is184) row.is184 = true;
         cleaned.push(row);
       }
       if (cleaned.length) schedulePersistNdgrChatRows(cleaned);
+    }
+    return;
+  }
+
+  if (e.data.type === 'NLS_INTERCEPT_GIFT_USERS') {
+    const raw = e.data.users;
+    if (Array.isArray(raw) && raw.length && liveId && hasExtensionContext()) {
+      const key = giftUsersStorageKey(liveId);
+      chrome.storage.local.get(key).then((bag) => {
+        const existing = Array.isArray(bag[key]) ? bag[key] : [];
+        const { next, storageTouched } = mergeGiftUsers(existing, raw);
+        if (storageTouched) {
+          chrome.storage.local.set({ [key]: next }).catch((err) => {
+            if (!isContextInvalidatedError(err) && hasExtensionContext()) {
+              try {
+                chrome.storage.local.set({
+                  [KEY_STORAGE_WRITE_ERROR]: buildStorageWriteErrorPayload(liveId, err)
+                });
+              } catch { /* best-effort */ }
+            }
+          });
+        }
+      }).catch(() => {});
     }
     return;
   }
@@ -966,7 +1050,10 @@ function ensurePageFrameStyle() {
     }
     #${INLINE_POPUP_HOST_ID} iframe {
       width: 100%;
-      height: 820px;
+      /* 応援グリッドが見える高さにしつつ、旧 820px 級の塔は避ける（内側スクロール） */
+      height: min(560px, 58vh);
+      min-height: 240px;
+      max-height: min(720px, 72vh);
       border: none !important;
       border-radius: 0;
       box-shadow: none !important;
@@ -1105,12 +1192,16 @@ function resolvePlayerRowRect(video, insertAfter) {
   }
 
   const ar = insertAfter.getBoundingClientRect();
-  if (ar.width >= vr.width * 1.06 && ar.width >= best.width * 0.95) {
+  /*
+   * comment-data-grid 等と union すると「視聴行」より画面全体級に膨らむことがある。
+   * 挿入アンカー（プレイヤー列ラッパー）の幅を上限に戻し、埋め込みパネルが横に暴れないようにする。
+   */
+  if (ar.width >= 260 && best.width > ar.width + 4) {
     best = {
       left: ar.left,
-      top: ar.top,
+      top: Math.min(best.top, ar.top),
       width: ar.width,
-      height: ar.height
+      height: Math.max(best.height, ar.height)
     };
   }
 
@@ -1329,8 +1420,25 @@ function findWatchFrameTargetElement() {
   return best;
 }
 
+/**
+ * ページ内インラインパネルは最上位フレームだけに出す。
+ * all_frames 注入のサブフレーム（プレイヤー内 iframe 等）にまで挿すと親幅が狭くチラつき二重表示になる。
+ * @returns {boolean}
+ */
+function isWatchInlinePanelTopFrame() {
+  try {
+    return window.self === window.top;
+  } catch {
+    return false;
+  }
+}
+
 /** 視聴ページの動画周り装飾枠（#nls-watch-prikura-frame）は表示しない。インライン用ホストの配置のみ行う。 */
 function renderPageFrameOverlay() {
+  if (!isWatchInlinePanelTopFrame()) {
+    hidePageFrameOverlay();
+    return;
+  }
   if (!isNicoLiveWatchUrl(window.location.href)) {
     hidePageFrameOverlay();
     return;
@@ -1351,6 +1459,7 @@ function renderPageFrameOverlay() {
   const overlay = ensurePageFrameOverlay();
   overlay.style.display = 'none';
   renderInlinePopupHost(target);
+  startPageFrameLoop();
 }
 
 async function loadPageFrameSettings() {
@@ -2076,6 +2185,15 @@ function collectWatchPageSnapshot() {
       wsAge: wsViewerCountUpdatedAt ? Date.now() - wsViewerCountUpdatedAt : -1,
       intercept: interceptedUsers.size,
       embeddedVC: _edProps ? pickViewerCountFromEmbeddedData(_edProps) : null,
+      officialVsRecorded:
+        officialCommentCount != null &&
+        Number.isFinite(officialCommentCount) &&
+        officialCommentCount >= 0
+          ? {
+              officialComments: officialCommentCount,
+              recordedComments: observedRecordedCommentCount
+            }
+          : null,
       programBeginAtMs,
       embeddedBeginAt: _edProps ? pickProgramBeginAt(_edProps) : null,
       startAtText,
@@ -2172,6 +2290,19 @@ function collectWatchPageSnapshot() {
       _debug.fetchOther = docEl.getAttribute('data-nls-fetch-other') || '';
       _debug.piPhase = docEl.getAttribute('data-nls-pi-phase') || '';
       _debug.ndgr = docEl.getAttribute('data-nls-ndgr') || '';
+      _debug.ndgrLdStream = docEl.getAttribute('data-nls-ld-stream') || '';
+    }
+
+    try {
+      /** @type {Record<string, number>} */
+      const ctHist = {};
+      document.querySelectorAll('div.table-row[data-comment-type]').forEach((el) => {
+        const t = el.getAttribute('data-comment-type') || '?';
+        ctHist[t] = (ctHist[t] || 0) + 1;
+      });
+      _debug.commentTypeVisibleSample = ctHist;
+    } catch {
+      // no-op
     }
   } catch { /* no-op */ }
 
@@ -2194,35 +2325,14 @@ function collectWatchPageSnapshot() {
     broadcasterUserId,
     viewerCountFromDom,
     viewerCountSource,
-    officialViewerCount:
-      typeof officialViewerCount === 'number' &&
-      Number.isFinite(officialViewerCount) &&
-      officialViewerCount >= 0
-        ? officialViewerCount
-        : null,
-    officialCommentCount:
-      typeof officialCommentCount === 'number' &&
-      Number.isFinite(officialCommentCount) &&
-      officialCommentCount >= 0
-        ? officialCommentCount
-        : null,
-    officialStatsUpdatedAt: officialStatsUpdatedAt > 0 ? officialStatsUpdatedAt : null,
-    officialStatsFreshnessMs:
-      officialStatsUpdatedAt > 0 ? Math.max(0, Date.now() - officialStatsUpdatedAt) : null,
-    officialViewerIntervalMs:
-      typeof officialViewerIntervalMs === 'number' && officialViewerIntervalMs > 0
-        ? officialViewerIntervalMs
-        : null,
-    officialStatisticsCommentsDelta:
-      officialCommentSummary?.statisticsCommentsDelta ?? null,
-    officialReceivedCommentsDelta:
-      officialCommentSummary?.receivedCommentsDelta ?? null,
-    officialCommentSampleWindowMs:
-      officialCommentSummary?.sampleWindowMs ?? null,
-    officialCaptureRatio:
-      typeof officialCommentSummary?.captureRatio === 'number'
-        ? officialCommentSummary.captureRatio
-        : null,
+    ...buildWatchSnapshotOfficialFields({
+      nowMs: Date.now(),
+      officialViewerCount,
+      officialCommentCount,
+      officialStatsUpdatedAt,
+      officialViewerIntervalMs,
+      officialCommentSummary
+    }),
     totalComments: wsCommentCount,
     streamAgeMin: (() => {
       // Priority 1: WebSocket schedule message
@@ -2427,7 +2537,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           const rows = await harvestVirtualCommentList({
             document,
             extractCommentsFromNode,
-            waitMs: 42
+            waitMs: 42,
+            respectTyping: false
           });
           for (const r of rows) {
             const no = String(r?.commentNo || '').trim();
@@ -2448,8 +2559,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           }
         }
         sendResponse({ ok: true, items: buildInterceptCacheExportItems() });
-      } catch {
-        sendResponse({ ok: true, items: [] });
+      } catch (err) {
+        const msg =
+          err && typeof err === 'object' && 'message' in err
+            ? String(
+                /** @type {{ message?: unknown }} */ (err).message ||
+                  'intercept_export_error'
+              )
+            : 'intercept_export_error';
+        sendResponse({
+          ok: false,
+          error: msg.length > 220 ? `${msg.slice(0, 220)}…` : msg
+        });
       }
     })();
     return true;
@@ -2475,6 +2596,38 @@ async function readRecordingFlag() {
   return isRecordingEnabled(r[KEY_RECORDING]);
 }
 
+/** @param {HTMLImageElement} img */
+function bindCommentRowUserIconLoadOnce(img) {
+  if (!(img instanceof HTMLImageElement)) return;
+  if (img.dataset.nlsCommentAvBound === '1') return;
+  img.dataset.nlsCommentAvBound = '1';
+  img.addEventListener('load', onCommentPanelUserIconLoaded, { passive: true });
+}
+
+/** @param {Event} ev */
+function onCommentPanelUserIconLoaded(ev) {
+  if (!recording || !liveId || !locationAllowsCommentRecording()) return;
+  const t = ev.target;
+  if (!(t instanceof HTMLImageElement)) return;
+  const row = closestHarvestableNicoCommentRow(t);
+  if (row) {
+    pendingRoots.add(row);
+    scheduleFlush();
+  }
+}
+
+/** @param {Element|Document|null} root */
+function bindCommentPanelUserIconLoads(root) {
+  if (!root || !root.querySelectorAll) return;
+  try {
+    root.querySelectorAll('img').forEach((img) => {
+      bindCommentRowUserIconLoadOnce(/** @type {HTMLImageElement} */ (img));
+    });
+  } catch {
+    // no-op
+  }
+}
+
 function reconnectMutationObserver() {
   if (!mutationObserver) return;
   const nextRoot = pickCommentMutationObserverRoot(document);
@@ -2486,14 +2639,9 @@ function reconnectMutationObserver() {
     subtree: true,
     characterData: true,
     attributes: true,
-    attributeFilter: [
-      'src',
-      'data-src',
-      'data-lazy-src',
-      'data-original',
-      'srcset'
-    ]
+    attributeFilter: [...NICO_USER_ICON_IMG_LAZY_ATTRS, 'srcset']
   });
+  bindCommentPanelUserIconLoads(observedMutationRoot);
 }
 
 function detectBroadcasterUserIdFromDom() {
@@ -2522,7 +2670,8 @@ function detectBroadcasterUserIdFromDom() {
 }
 
 /**
- * DOM 抽出結果を interceptedUsers マップで補完（userId + nickname）
+ * DOM 抽出結果を interceptedUsers マップで補完（userId + nickname + av）。
+ * `niconicoDefaultUserIconUrl` による CDN 推定はストレージ上書き時に `mergeNewComments` が DOM 実 URL へ差し替え可能（推定 URL のみ）。
  * @param {ParsedCommentRow[]} rows
  * @returns {{ commentNo: string, text: string, userId: string|null, nickname?: string, avatarUrl?: string }[]}
  */
@@ -2538,10 +2687,12 @@ function enrichRowsWithInterceptedUserIds(rows) {
     const interceptedUid = entry?.uid ? String(entry.uid).trim() : '';
     const rowLikelyContaminated =
       Boolean(rowUid && broadcasterUid && rowUid === broadcasterUid);
-    const userId =
-      (interceptedUid && (!rowUid || rowLikelyContaminated) ? interceptedUid : rowUid) ||
-      interceptedUid ||
-      null;
+    const mergedUid = mergeUserIdForEnrichment(
+      rowUid,
+      interceptedUid,
+      rowLikelyContaminated
+    );
+    const userId = mergedUid;
     const canUseInterceptMeta = Boolean(
       entry &&
         (
@@ -2555,19 +2706,24 @@ function enrichRowsWithInterceptedUserIds(rows) {
       (canUseInterceptMeta ? String(entry?.name || '').trim() : '') ||
       rowNick ||
       (userId ? interceptedNicknames.get(String(userId)) : '') ||
+      anonymousNicknameFallback(userId, '') ||
       '';
     const rowAv = String(r.avatarUrl || '').trim();
-    let av =
-      rowAv ||
-      (canUseInterceptMeta && isHttpAvatarUrl(entry?.av)
+    const interceptEntryAv =
+      canUseInterceptMeta && isHttpAvatarUrl(entry?.av)
         ? String(entry?.av || '').trim()
-        : userId && isHttpAvatarUrl(interceptedAvatars.get(String(userId)))
-          ? String(interceptedAvatars.get(String(userId)) || '').trim()
-        : '');
-    if (!av && userId) {
-      const derivedIcon = niconicoDefaultUserIconUrl(String(userId));
-      if (derivedIcon) av = derivedIcon;
-    }
+        : '';
+    const interceptMapAv =
+      userId && isHttpAvatarUrl(interceptedAvatars.get(String(userId)))
+        ? String(interceptedAvatars.get(String(userId)) || '').trim()
+        : '';
+    const derivedIcon = userId ? niconicoDefaultUserIconUrl(String(userId)) : '';
+    const av = pickStrongestAvatarUrlForUser(userId, [
+      interceptEntryAv,
+      interceptMapAv,
+      rowAv,
+      derivedIcon
+    ]);
     return {
       ...r,
       userId,
@@ -2722,8 +2878,27 @@ function pruneAutoBackupLives(state) {
   return state;
 }
 
+/** NDGR・MutationObserver・deep harvest が同時に来ても storage の merge が壊れないよう直列化 */
+let persistCommentRowsChain = Promise.resolve();
+
 /** @param {ParsedCommentRow[]|null|undefined} rows */
 async function persistCommentRows(rows) {
+  if (
+    !rows?.length ||
+    !recording ||
+    !liveId ||
+    !locationAllowsCommentRecording() ||
+    !hasExtensionContext()
+  ) {
+    return;
+  }
+  const job = persistCommentRowsChain.then(() => persistCommentRowsImpl(rows));
+  persistCommentRowsChain = job.catch(() => {});
+  await job;
+}
+
+/** @param {ParsedCommentRow[]|null|undefined} rows */
+async function persistCommentRowsImpl(rows) {
   if (
     !rows?.length ||
     !recording ||
@@ -2736,12 +2911,17 @@ async function persistCommentRows(rows) {
   const enriched = enrichRowsWithInterceptedUserIds(rows);
   const key = commentsStorageKey(liveId);
   try {
-    const bag = await chrome.storage.local.get([
-      key,
-      KEY_SELF_POSTED_RECENTS,
-      KEY_AUTO_BACKUP_STATE,
-      KEY_LAST_WATCH_URL
-    ]);
+    const bag = await readStorageBagWithRetry(
+      () =>
+        chrome.storage.local.get([
+          key,
+          KEY_SELF_POSTED_RECENTS,
+          KEY_AUTO_BACKUP_STATE,
+          KEY_LAST_WATCH_URL,
+          KEY_USER_COMMENT_PROFILE_CACHE
+        ]),
+      { attempts: 4, delaysMs: [0, 50, 120, 280] }
+    );
     const existing = Array.isArray(bag[key]) ? bag[key] : [];
     const pendingRaw = bag[KEY_SELF_POSTED_RECENTS];
     const pendingItems =
@@ -2773,7 +2953,27 @@ async function persistCommentRows(rows) {
       storageTouched = true;
     }
     const pendingTouched = consumed.changed;
-    if (!storageTouched && !pendingTouched) return;
+
+    let profileMap = normalizeUserCommentProfileMap(
+      bag[KEY_USER_COMMENT_PROFILE_CACHE]
+    );
+    let cacheTouched = false;
+    for (const r of enriched) {
+      if (upsertUserCommentProfileFromEntry(profileMap, r)) cacheTouched = true;
+    }
+    for (const e of next) {
+      if (upsertUserCommentProfileFromEntry(profileMap, e)) cacheTouched = true;
+    }
+    const profileApplied = applyUserCommentProfileMapToEntries(next, profileMap);
+    if (profileApplied.patched > 0) {
+      next = profileApplied.next;
+      storageTouched = true;
+    }
+    const profileKeysBefore = Object.keys(profileMap).length;
+    profileMap = pruneUserCommentProfileMap(profileMap);
+    if (Object.keys(profileMap).length !== profileKeysBefore) cacheTouched = true;
+
+    if (!storageTouched && !pendingTouched && !cacheTouched) return;
     const updatedAt = Date.now();
     const lastCommentAt = Math.max(0, Number(next[next.length - 1]?.capturedAt || 0));
     const rememberedWatchUrl = String(bag[KEY_LAST_WATCH_URL] || '').trim();
@@ -2799,13 +2999,22 @@ async function persistCommentRows(rows) {
       lastBackupCount: Math.max(0, Number(prevBackupMeta.lastBackupCount) || 0)
     };
     pruneAutoBackupLives(autoBackupState);
-    await chrome.storage.local.set({
-      [key]: next,
-      [KEY_AUTO_BACKUP_STATE]: autoBackupState,
-      ...(pendingTouched
-        ? { [KEY_SELF_POSTED_RECENTS]: { items: consumed.remainingItems } }
-        : {})
-    });
+    if (storageTouched || pendingTouched) {
+      await chrome.storage.local.set({
+        [key]: next,
+        [KEY_AUTO_BACKUP_STATE]: autoBackupState,
+        ...(pendingTouched
+          ? { [KEY_SELF_POSTED_RECENTS]: { items: consumed.remainingItems } }
+          : {}),
+        ...(cacheTouched
+          ? { [KEY_USER_COMMENT_PROFILE_CACHE]: profileMap }
+          : {})
+      });
+    } else if (cacheTouched) {
+      await chrome.storage.local.set({
+        [KEY_USER_COMMENT_PROFILE_CACHE]: profileMap
+      });
+    }
     await chrome.storage.local.remove(KEY_STORAGE_WRITE_ERROR);
   } catch (err) {
     if (isContextInvalidatedError(err) || !hasExtensionContext()) return;
@@ -3103,7 +3312,7 @@ function attachCommentScrollHook() {
     () => {
       if (!recording || !liveId) return;
       clearTimeout(t);
-      t = setTimeout(() => scanVisibleCommentsNow(), 550);
+      t = setTimeout(() => scanVisibleCommentsNow(), 380);
     },
     { passive: true }
   );
@@ -3230,9 +3439,13 @@ async function start() {
   if (!hasExtensionContext()) return;
   if (!shouldRunWatchContentInThisFrame()) return;
   recording = await readRecordingFlag();
-  ensurePageFrameStyle();
-  startPageFrameLoop();
-  await loadPageFrameSettings().catch(() => {});
+  if (isWatchInlinePanelTopFrame()) {
+    ensurePageFrameStyle();
+    await loadPageFrameSettings().catch(() => {});
+    if (isNicoLiveWatchUrl(window.location.href)) {
+      startPageFrameLoop();
+    }
+  }
   bindNativeSelfPostedRecorder();
 
   mutationObserver = new MutationObserver((/** @type {MutationRecord[]} */ records) => {
@@ -3245,17 +3458,20 @@ async function start() {
     }
     for (const rec of records) {
       if (rec.type === 'childList') {
-        rec.addedNodes.forEach((/** @type {Node} */ n) => enqueueNode(n));
+        rec.addedNodes.forEach((/** @type {Node} */ n) => {
+          enqueueNode(n);
+          if (n.nodeType === Node.ELEMENT_NODE) {
+            bindCommentPanelUserIconLoads(/** @type {Element} */ (n));
+          }
+        });
       } else if (rec.type === 'characterData' && rec.target?.parentElement) {
-        const row = rec.target.parentElement.closest?.(
-          'div.table-row[data-comment-type="normal"]'
-        );
+        const row = closestHarvestableNicoCommentRow(rec.target.parentElement);
         if (row) pendingRoots.add(row);
         else pendingRoots.add(rec.target.parentElement);
       } else if (rec.type === 'attributes' && rec.target?.nodeType === Node.ELEMENT_NODE) {
         const el = /** @type {Element} */ (rec.target);
         if (el.tagName === 'IMG') {
-          const row = el.closest?.('div.table-row[data-comment-type="normal"]');
+          const row = closestHarvestableNicoCommentRow(el);
           if (row) pendingRoots.add(row);
         }
       }
@@ -3272,14 +3488,18 @@ async function start() {
     if (area !== 'local') return;
 
     if (changes[KEY_POPUP_FRAME] || changes[KEY_POPUP_FRAME_CUSTOM]) {
-      loadPageFrameSettings().catch(() => {});
+      if (isWatchInlinePanelTopFrame()) {
+        loadPageFrameSettings().catch(() => {});
+      }
     }
 
     if (changes[KEY_INLINE_PANEL_WIDTH_MODE]) {
-      inlinePanelWidthMode = normalizeInlinePanelWidthMode(
-        changes[KEY_INLINE_PANEL_WIDTH_MODE].newValue
-      );
-      renderPageFrameOverlay();
+      if (isWatchInlinePanelTopFrame()) {
+        inlinePanelWidthMode = normalizeInlinePanelWidthMode(
+          changes[KEY_INLINE_PANEL_WIDTH_MODE].newValue
+        );
+        renderPageFrameOverlay();
+      }
     }
 
     if (changes[KEY_THUMB_AUTO] || changes[KEY_THUMB_INTERVAL_MS]) {
@@ -3311,6 +3531,7 @@ async function start() {
     for (const ms of BOOTSTRAP_DELAYS_MS) {
       setTimeout(() => {
         if (recording && liveId && locationAllowsCommentRecording()) {
+          maybeFillProgramBeginFromEmbeddedData();
           scanVisibleCommentsNow();
         }
       }, ms);

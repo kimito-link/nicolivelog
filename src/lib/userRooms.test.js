@@ -49,8 +49,9 @@ describe('displayUserLabel', () => {
   });
 
   it('ニックネーム空ならIDのみ', () => {
-    expect(displayUserLabel('12345', '')).toBe('12345');
-    expect(displayUserLabel('12345', undefined)).toBe('12345');
+  expect(displayUserLabel('12345', '')).toBe('12345');
+  expect(displayUserLabel('12345', undefined)).toBe('12345');
+  expect(displayUserLabel('a:ab', '')).toBe('匿名（a:ab）');
   });
 });
 
@@ -151,6 +152,20 @@ describe('aggregateCommentsByUser', () => {
       { userId: 'u1', text: 'b', capturedAt: 200, avatarUrl: '' }
     ]);
     expect(rows[0].avatarUrl).toBe('');
+  });
+
+  it('最新コメントに avatar が無くても、過去の有効 avatarUrl は消さない', () => {
+    const rows = aggregateCommentsByUser([
+      {
+        userId: 'u1',
+        text: 'old',
+        capturedAt: 100,
+        avatarUrl: 'https://example.com/a.png'
+      },
+      { userId: 'u1', text: 'new', capturedAt: 200, avatarUrl: '' }
+    ]);
+    expect(rows[0].lastText).toBe('new');
+    expect(rows[0].avatarUrl).toBe('https://example.com/a.png');
   });
 
   it('ID未取得ルームも avatarUrl キーは空文字', () => {

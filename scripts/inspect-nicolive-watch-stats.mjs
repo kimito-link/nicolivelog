@@ -94,15 +94,6 @@ function tryParseEmbeddedDataProps(html) {
   }
 }
 
-/** @param {unknown} v */
-function summarizeNumberLike(v) {
-  if (v == null) return String(v);
-  if (typeof v === 'number') return v;
-  if (typeof v === 'string' && /^\d+$/.test(v)) return parseInt(v, 10);
-  if (typeof v === 'object') return JSON.stringify(v).slice(0, 120);
-  return String(v);
-}
-
 /**
  * @param {unknown} obj
  * @param {string} prefix

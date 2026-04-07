@@ -4,10 +4,10 @@
  */
 
 const BODY_TEXT =
-  '来場者数はニコ生の配信ページが示す累計視聴者（公式統計の watchCount 相当）で、NicoDB（https://nicodb.net/）の来場者数と同系として比較しやすいです。推定同時接続はコメントからの独自見積もりで、公式の同接表示ではありません。HTMLレポートの「来場（応援コメント）」は別定義です。取得は NDGR／embedded 由来・約30秒更新。';
+  '来場者数は、配信ページに出ている累計（公式のカウント）です。NicoDB（https://nicodb.net/）とも比較しやすい定義です。推定同時接続はコメントなどからこの拡張が出している目安で、公式の同接表示ではありません。HTMLレポートの「来場（応援コメント）」は別の意味です。数字の更新は数十秒おき程度です。';
 
 const TITLE_TEXT =
-  '累計の来場者数は watch ページの statistics.watchCount 等（取得経路: WebSocket → embedded-data → DOM）。推定同時接続はコメンター法（5分ユニーク×動的倍率）と滞留法の複合。ユニークは記録コメントの userId 種類数（未取得時は https アイコン URL 種類数を ≈ 表示）。';
+  '累計来場者はページの公式データから、推定同時接続は記録したコメントなどから計算しています。詳しい式はLPの「推定同時接続」節を参照してください。';
 
 /**
  * @param {{ snapshot: Record<string, unknown>|null|undefined }} params

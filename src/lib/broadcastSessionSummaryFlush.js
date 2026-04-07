@@ -1,0 +1,177 @@
+/**
+ * サマリ IndexedDB への間欠フラッシュ（ポップアップから呼ぶ）
+ */
+
+import {
+  appendBroadcastSessionSummarySample,
+  openBroadcastSessionSummaryDb
+} from './broadcastSessionSummaryDb.js';
+import { resolveConcurrentViewers } from './concurrentEstimate.js';
+import { shouldShowConcurrentEstimate } from './popupConcurrentEstimateGate.js';
+import { summarizeRecordedCommenters } from './liveCommenterStats.js';
+import { giftUsersStorageKey } from './storageKeys.js';
+
+const FLUSH_MIN_INTERVAL_MS = 60_000;
+
+let lastFlushAt = 0;
+
+/**
+ * @param {Record<string, unknown>|null|undefined} snapshot
+ * @returns {number|null}
+ */
+export function peakConcurrentEstimateFromSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  const vcRaw = snapshot.viewerCountFromDom;
+  const vc =
+    typeof vcRaw === 'number' && Number.isFinite(vcRaw) && vcRaw >= 0
+      ? vcRaw
+      : undefined;
+  const recentActive =
+    typeof snapshot.recentActiveUsers === 'number'
+      ? snapshot.recentActiveUsers
+      : 0;
+  const officialVcRaw = snapshot.officialViewerCount;
+  const officialVc =
+    typeof officialVcRaw === 'number' && Number.isFinite(officialVcRaw)
+      ? officialVcRaw
+      : undefined;
+  const liveIdStr =
+    typeof snapshot.liveId === 'string' ? snapshot.liveId : '';
+  const show = shouldShowConcurrentEstimate({
+    recentActiveUsers: recentActive,
+    officialViewerCount: officialVc,
+    viewerCountFromDom: vc,
+    liveId: liveIdStr
+  });
+  if (!show) return null;
+
+  const streamAge =
+    typeof snapshot.streamAgeMin === 'number' && snapshot.streamAgeMin >= 0
+      ? snapshot.streamAgeMin
+      : undefined;
+  const resolved = resolveConcurrentViewers({
+    nowMs: Date.now(),
+    officialViewers:
+      typeof snapshot.officialViewerCount === 'number' &&
+      Number.isFinite(snapshot.officialViewerCount)
+        ? snapshot.officialViewerCount
+        : undefined,
+    officialUpdatedAtMs:
+      typeof snapshot.officialStatsUpdatedAt === 'number' &&
+      Number.isFinite(snapshot.officialStatsUpdatedAt)
+        ? snapshot.officialStatsUpdatedAt
+        : undefined,
+    officialViewerIntervalMs:
+      typeof snapshot.officialViewerIntervalMs === 'number' &&
+      Number.isFinite(snapshot.officialViewerIntervalMs) &&
+      snapshot.officialViewerIntervalMs > 0
+        ? snapshot.officialViewerIntervalMs
+        : undefined,
+    previousStatisticsComments:
+      typeof snapshot.officialCommentCount === 'number' &&
+      Number.isFinite(snapshot.officialCommentCount) &&
+      typeof snapshot.officialStatisticsCommentsDelta === 'number' &&
+      Number.isFinite(snapshot.officialStatisticsCommentsDelta)
+        ? Math.max(
+            0,
+            snapshot.officialCommentCount - snapshot.officialStatisticsCommentsDelta
+          )
+        : undefined,
+    currentStatisticsComments:
+      typeof snapshot.officialCommentCount === 'number' &&
+      Number.isFinite(snapshot.officialCommentCount)
+        ? snapshot.officialCommentCount
+        : undefined,
+    receivedCommentsDelta:
+      typeof snapshot.officialReceivedCommentsDelta === 'number' &&
+      Number.isFinite(snapshot.officialReceivedCommentsDelta)
+        ? snapshot.officialReceivedCommentsDelta
+        : undefined,
+    recentActiveUsers: recentActive,
+    totalVisitors: vc != null && vc > 0 ? vc : undefined,
+    streamAgeMin: streamAge
+  });
+
+  const est = resolved?.estimated;
+  return typeof est === 'number' && Number.isFinite(est) ? Math.round(est) : null;
+}
+
+/**
+ * @param {{
+ *   liveId: string,
+ *   watchUrl: string,
+ *   comments: readonly unknown[],
+ *   snapshot: Record<string, unknown>|null|undefined,
+ *   recording: boolean
+ * }} input
+ * @returns {Promise<void>}
+ */
+export async function maybeFlushBroadcastSessionSummarySample(input) {
+  if (typeof indexedDB === 'undefined') return;
+
+  const lid = String(input.liveId || '').trim().toLowerCase();
+  if (!lid) return;
+
+  const now = Date.now();
+  if (now - lastFlushAt < FLUSH_MIN_INTERVAL_MS) return;
+  lastFlushAt = now;
+
+  const comments = Array.isArray(input.comments) ? input.comments : [];
+  const st = summarizeRecordedCommenters(comments);
+
+  let giftUserCount = 0;
+  try {
+    if (typeof chrome !== 'undefined' && chrome.storage?.local?.get) {
+      const bag = await chrome.storage.local.get(giftUsersStorageKey(lid));
+      const key = giftUsersStorageKey(lid);
+      const raw = bag[key];
+      giftUserCount = Array.isArray(raw) ? raw.length : 0;
+    }
+  } catch {
+    giftUserCount = 0;
+  }
+
+  const snap = input.snapshot;
+  const oc =
+    snap && typeof snap.officialCommentCount === 'number'
+      ? snap.officialCommentCount
+      : null;
+  const ov =
+    snap && typeof snap.officialViewerCount === 'number'
+      ? snap.officialViewerCount
+      : null;
+
+  let officialCaptureRatio = null;
+  if (snap && snap.officialCaptureRatio != null) {
+    const r = Number(snap.officialCaptureRatio);
+    if (Number.isFinite(r)) officialCaptureRatio = r;
+  }
+
+  const row = {
+    liveId: lid,
+    capturedAt: now,
+    watchUrl: String(input.watchUrl || '').trim(),
+    recording: Boolean(input.recording),
+    commentStorageCount: comments.length,
+    uniqueKnownCommenters: st.uniqueKnownUserIds,
+    giftUserCount,
+    peakConcurrentEstimate: peakConcurrentEstimateFromSnapshot(snap),
+    officialCommentCount: oc,
+    officialViewerCount: ov,
+    officialCaptureRatio
+  };
+
+  let db;
+  try {
+    db = await openBroadcastSessionSummaryDb();
+    await appendBroadcastSessionSummarySample(db, row);
+  } catch {
+    // no-op（IDB 不可・容量など）
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // no-op
+    }
+  }
+}

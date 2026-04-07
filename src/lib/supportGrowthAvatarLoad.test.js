@@ -1,8 +1,9 @@
 /** @vitest-environment happy-dom */
 import { describe, it, expect } from 'vitest';
 import { createSupportAvatarLoadGuard } from './supportGrowthAvatarLoad.js';
+import { NICONICO_OFFICIAL_DEFAULT_USERICON_HTTPS } from './supportGrowthTileSrc.js';
 
-const FALLBACK = 'images/nico-retro-tv-placeholder.svg';
+const FALLBACK = NICONICO_OFFICIAL_DEFAULT_USERICON_HTTPS;
 const REMOTE = 'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/1/123456789.jpg';
 
 describe('createSupportAvatarLoadGuard', () => {
@@ -28,7 +29,7 @@ describe('createSupportAvatarLoadGuard', () => {
     img.src = REMOTE;
     g.noteRemoteAttempt(img, REMOTE);
     img.dispatchEvent(new Event('error'));
-    expect(img.src).toContain('nico-retro-tv-placeholder');
+    expect(img.src).toContain('nicoaccount/usericon/defaults');
     expect(g.pickDisplaySrc(REMOTE)).toBe(FALLBACK);
   });
 
@@ -48,7 +49,7 @@ describe('createSupportAvatarLoadGuard', () => {
     img.src = g.pickDisplaySrc(REMOTE);
     g.noteRemoteAttempt(img, REMOTE);
     img.dispatchEvent(new Event('error'));
-    expect(img.src).toContain('nico-retro-tv-placeholder');
+    expect(img.src).toContain('nicoaccount/usericon/defaults');
   });
 
   it('error 時に onFallbackApplied を呼ぶ', () => {

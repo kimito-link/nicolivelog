@@ -100,7 +100,8 @@ export function decodeStatistics(buf, start, end) {
 }
 
 /**
- * @typedef {{ no: number|null, rawUserId: number|null, hashedUserId: string, name: string, content: string }} NdgrChat
+ * @typedef {{ no: number|null, rawUserId: number|null, hashedUserId: string, name: string, content: string, vpos: number|null, accountStatus: number|null, is184: boolean }} NdgrChat
+ * @typedef {{ advertiserUserId: string, advertiserName: string }} NdgrGift
  */
 
 const _dec = typeof TextDecoder !== 'undefined' ? new TextDecoder('utf-8', { fatal: false }) : null;
@@ -118,18 +119,73 @@ function decodeStr(buf, s, e) {
  */
 export function decodeChat(buf, start, end) {
   let no = null, rawUserId = null, hashedUserId = '', name = '', content = '';
+  let vpos = /** @type {number|null} */ (null);
+  let accountStatus = /** @type {number|null} */ (null);
+  let is184 = false;
   pbForEach(buf, start, end, (fn, wt, val, s, e) => {
     if (fn === 8 && wt === 0) no = val;
     if (fn === 5 && wt === 0) rawUserId = val;
     if (fn === 6 && wt === 2) hashedUserId = decodeStr(buf, s, e);
     if (fn === 2 && wt === 2) name = decodeStr(buf, s, e);
     if (fn === 1 && wt === 2) content = decodeStr(buf, s, e);
+    if (fn === 3 && wt === 0) vpos = val;
+    if (fn === 4 && wt === 0) accountStatus = val;
+    if (fn === 7 && wt === 2) {
+      pbForEach(buf, s, e, (mfn, mwt, mval) => {
+        if (mfn === 1 && mwt === 0) is184 = Boolean(mval);
+      });
+    }
   });
-  return { no, rawUserId, hashedUserId, name, content };
+  return { no, rawUserId, hashedUserId, name, content, vpos, accountStatus, is184 };
 }
 
 /**
- * @typedef {{ stats: NdgrStatistics|null, chats: NdgrChat[] }} NdgrDecodeResult
+ * NicoliveMessage oneof の Gift（field 8 想定）を軽量デコード。proto 差異に耐えるため LEN 文字列を走査する。
+ *
+ * @param {Uint8Array} buf
+ * @param {number} start
+ * @param {number} end
+ * @returns {NdgrGift}
+ */
+export function decodeGift(buf, start, end) {
+  let advertiserUserId = '';
+  let advertiserName = '';
+  /** @type {string[]} */
+  const strs = [];
+  pbForEach(buf, start, end, (fn, wt, val, s, e) => {
+    if (wt === 2) {
+      const str = decodeStr(buf, s, e);
+      if (str) strs.push(str);
+      if (fn === 2 && str) advertiserName = advertiserName || str;
+      if (fn === 1 && str && /^\d{5,14}$/.test(str)) {
+        advertiserUserId = advertiserUserId || str;
+      }
+    } else if (wt === 0 && val != null) {
+      const vs = String(val);
+      if (/^\d{5,14}$/.test(vs)) advertiserUserId = advertiserUserId || vs;
+    }
+  });
+  for (const str of strs) {
+    if (!advertiserUserId && /^\d{5,14}$/.test(str)) advertiserUserId = str;
+  }
+  if (!advertiserName) {
+    for (const str of strs) {
+      if (
+        str !== advertiserUserId &&
+        str.length > 0 &&
+        str.length <= 128 &&
+        !/^https?:\/\//i.test(str)
+      ) {
+        advertiserName = str;
+        break;
+      }
+    }
+  }
+  return { advertiserUserId, advertiserName };
+}
+
+/**
+ * @typedef {{ stats: NdgrStatistics|null, chats: NdgrChat[], gifts: NdgrGift[] }} NdgrDecodeResult
  */
 
 /**
@@ -146,6 +202,8 @@ export function decodeChunkedMessage(buf, start, end) {
   let stats = null;
   /** @type {NdgrChat[]} */
   const chats = [];
+  /** @type {NdgrGift[]} */
+  const gifts = [];
 
   pbForEach(buf, s0, e0, (fn, wt, _v, s, e) => {
     if (wt !== 2) return;
@@ -160,14 +218,19 @@ export function decodeChunkedMessage(buf, start, end) {
 
     if (fn === 2) {
       pbForEach(buf, s, e, (mfn, mwt, _mv, ms, me) => {
-        if (mwt !== 2 || (mfn !== 1 && mfn !== 20)) return;
-        const chat = decodeChat(buf, ms, me);
-        if (chat.no != null) chats.push(chat);
+        if (mwt !== 2) return;
+        if (mfn === 1 || mfn === 20) {
+          const chat = decodeChat(buf, ms, me);
+          if (chat.no != null) chats.push(chat);
+        } else if (mfn === 8) {
+          const g = decodeGift(buf, ms, me);
+          if (g.advertiserUserId || g.advertiserName) gifts.push(g);
+        }
       });
     }
   });
 
-  return { stats, chats };
+  return { stats, chats, gifts };
 }
 
 /**

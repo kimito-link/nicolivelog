@@ -4,12 +4,20 @@
   "version": "0.1.0",
   "description": "ニコニコ生放送の応援コメントをこのPCに記録し、応援の可視化につなげます（開発識別子: nicolivelog）。",
   "icons": {
-    "16": "images/logo/kimito-rinku-app-icon-16.png",
-    "32": "images/logo/kimito-rinku-app-icon-32.png",
-    "48": "images/logo/kimito-rinku-app-icon-48.png",
-    "128": "images/logo/kimito-rinku-app-icon-128.png"
+    "16": "images/logo/kimito-rinku-app-icon-256.png",
+    "32": "images/logo/kimito-rinku-app-icon-256.png",
+    "48": "images/logo/kimito-rinku-app-icon-256.png",
+    "128": "images/logo/kimito-rinku-app-icon-256.png"
   },
-  "permissions": ["storage", "scripting", "downloads", "alarms", "tabs"],
+  "permissions": [
+    "storage",
+    "unlimitedStorage",
+    "scripting",
+    "downloads",
+    "alarms",
+    "tabs",
+    "sidePanel"
+  ],
   "host_permissions": [
     "https://*.nicovideo.jp/*",
     "http://127.0.0.1:3456/*",
@@ -18,11 +26,15 @@
   "background": {
     "service_worker": "background.js"
   },
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
   "action": {
+    "default_popup": "popup.html",
     "default_title": "君斗りんくの追憶のきらめき",
     "default_icon": {
-      "16": "images/logo/kimito-rinku-app-icon-16.png",
-      "32": "images/logo/kimito-rinku-app-icon-32.png"
+      "16": "images/logo/kimito-rinku-app-icon-256.png",
+      "32": "images/logo/kimito-rinku-app-icon-256.png"
     }
   },
   "content_scripts": [
@@ -58,7 +70,6 @@
         "popup.html",
         "dist/popup.js",
         "images/toumeilink.png",
-        "images/nico-retro-tv-placeholder.svg",
         "images/yukkuri-charactore-english/*/*.png"
       ],
       "matches": [

@@ -4,13 +4,21 @@ import {
   isNicoLiveWatchUrl,
   watchPageUrlsMatchForSnapshot
 } from '../lib/broadcastUrl.js';
+import { resolveWatchUrlFromTabAndStash } from '../lib/popupWatchUrlResolve.js';
+import {
+  anonymousNicknameFallback,
+  compactNicoLaneUserId
+} from '../lib/nicoAnonymousDisplay.js';
 import {
   KEY_INLINE_PANEL_WIDTH_MODE,
+  KEY_CALM_PANEL_MOTION,
+  EXTENSION_SOFT_CACHE_STORAGE_KEYS,
   KEY_POPUP_FRAME,
   KEY_POPUP_FRAME_CUSTOM,
   KEY_LAST_WATCH_URL,
   KEY_RECORDING,
   KEY_SELF_POSTED_RECENTS,
+  KEY_USER_COMMENT_PROFILE_CACHE,
   KEY_COMMENT_PANEL_STATUS,
   KEY_STORAGE_WRITE_ERROR,
   KEY_THUMB_AUTO,
@@ -21,13 +29,15 @@ import {
   KEY_USAGE_TERMS_ACK,
   KEY_VOICE_AUTOSEND,
   KEY_VOICE_INPUT_DEVICE,
+  KEY_DEV_MONITOR_TREND_PREFIX,
   INLINE_PANEL_WIDTH_PLAYER_ROW,
   INLINE_PANEL_WIDTH_VIDEO,
   commentsStorageKey,
+  giftUsersStorageKey,
   isCommentEnterSendEnabled,
   isRecordingEnabled,
-  isUsageTermsAcknowledged,
-  normalizeInlinePanelWidthMode
+  normalizeInlinePanelWidthMode,
+  normalizeCalmPanelMotion
 } from '../lib/storageKeys.js';
 import { normalizeSupportVisualExpanded } from '../lib/supportVisualExpanded.js';
 import { computeScrollDeltaToRevealInParent } from '../lib/nlMainScrollReveal.js';
@@ -44,6 +54,10 @@ import {
 } from '../lib/commentRecord.js';
 import { summarizeRecordedCommenters } from '../lib/liveCommenterStats.js';
 import { resolveConcurrentViewers } from '../lib/concurrentEstimate.js';
+import {
+  concurrentEstimateIsSparseSignal,
+  shouldShowConcurrentEstimate
+} from '../lib/popupConcurrentEstimateGate.js';
 import { parseViewerCountFromLooseText } from '../lib/liveAudienceDom.js';
 import { pickLatestCommentEntry } from '../lib/pickLatestComment.js';
 import {
@@ -53,18 +67,29 @@ import {
   UNKNOWN_USER_KEY
 } from '../lib/userRooms.js';
 import {
-  accentSlotFromSupportEntry,
-  accentSlotFromUserKey,
-  accentColorForSlot,
   supportOrdinalForIndex,
   supportSameUserTotalInEntries,
   supportUserKeyFromEntry
 } from '../lib/userSupportGridAccent.js';
 import {
+  applyUserCommentProfileMapToEntries,
+  hydrateUserCommentProfileMapFromStorage,
+  normalizeUserCommentProfileMap,
+  pruneUserCommentProfileMap,
+  readStorageBagWithRetry,
+  upsertUserCommentProfileFromEntry,
+  upsertUserCommentProfileFromIntercept
+} from '../lib/userCommentProfileCache.js';
+import {
   resolveSupportGrowthTileSrc,
+  commentEnrichmentAvatarScore,
   isHttpOrHttpsUrl,
-  pickUserLaneDisplayTileSrc,
-  userLaneDedupeKey
+  isAnonymousStyleNicoUserId,
+  isWeakNiconicoUserIconHttpUrl,
+  pickSupportGrowthFallbackTileSrc,
+  userLaneDedupeKey,
+  userLaneResolvedThumbScore,
+  NICONICO_OFFICIAL_DEFAULT_USERICON_HTTPS
 } from '../lib/supportGrowthTileSrc.js';
 import { createSupportAvatarLoadGuard } from '../lib/supportGrowthAvatarLoad.js';
 import { entriesRelatedForStoryDetail } from '../lib/storyDetailRelatedEntries.js';
@@ -74,11 +99,69 @@ import {
   parseCommentPanelStatusPayload
 } from '../lib/commentPanelStatus.js';
 import { escapeHtml, escapeAttr } from '../lib/htmlEscape.js';
+import { topSupportRankLineModels } from '../lib/topSupportRankStripLines.js';
+import { TOP_SUPPORT_RANK_STRIP_MAX } from '../lib/topSupportRankStripConfig.js';
+import { topSupportRankStripStableKey } from '../lib/topSupportRankStripStableKey.js';
+import {
+  SUPPORT_GRID_TIER_KONTA,
+  SUPPORT_GRID_TIER_RINK,
+  supportGridDisplayTier
+} from '../lib/supportGridDisplayTier.js';
+import {
+  bucketStoryUserLanePicks,
+  flattenStoryUserLaneBuckets
+} from '../lib/storyUserLaneBuckets.js';
+import {
+  buildStoryUserLaneGuideFootHtml,
+  buildStoryUserLaneGuideKontaHtml,
+  buildStoryUserLaneGuideTanuHtml,
+  buildStoryUserLaneGuideTopHtml
+} from '../lib/storyUserLaneGuideHtml.js';
 import {
   buildHtmlReportConceptGuideCardHtml,
   buildHtmlReportSaveGuideCardHtml
 } from '../lib/htmlReportConceptGuide.js';
 import { buildWatchAudienceNote } from '../lib/watchAudienceCopy.js';
+import { pickDevMonitorDebugSubset } from '../lib/devMonitorDebugSubset.js';
+import {
+  summarizeStoredCommentAvatarStats,
+  summarizeStoredCommentProfileGaps
+} from '../lib/devMonitorAvatarStats.js';
+import {
+  appendTrendPoint,
+  persistTrendPointChrome,
+  readMergedTrendSeries,
+  readTrendSeries,
+  trendHasCountSamples,
+  trendToSparklineArrays
+} from '../lib/devMonitorTrendSession.js';
+import { aggregateMarketingReport } from '../lib/marketingAggregate.js';
+import { buildMarketingDashboardHtml } from '../lib/marketingChartsHtml.js';
+import {
+  buildDevMonitorDlChartsHtml,
+  commentTypeDistribution,
+  htmlAcquisitionSparklines,
+  htmlCaptureRatioBar,
+  htmlCommentTypeBars,
+  htmlDualCountSparklines,
+  htmlOfficialVsRecordedBar,
+  htmlProfileGapBars,
+  htmlWsStalenessBar,
+  officialVsRecordedBarState,
+  profileGapBarSeries,
+  wsStalenessState
+} from '../lib/devMonitorViz.js';
+import { buildStoryAvatarDiagHtml } from '../lib/storyAvatarDiagLine.js';
+import { pickStrongerUserId } from '../lib/userIdPreference.js';
+import {
+  countCommentsInWindowMs,
+  commentsPerMinuteFromWindow
+} from '../lib/commentVelocityWindow.js';
+import { maybeFlushBroadcastSessionSummarySample } from '../lib/broadcastSessionSummaryFlush.js';
+import {
+  listBroadcastSessionSummaryForLive,
+  openBroadcastSessionSummaryDb
+} from '../lib/broadcastSessionSummaryDb.js';
 
 /**
  * @typedef {{
@@ -125,7 +208,8 @@ import { buildWatchAudienceNote } from '../lib/watchAudienceCopy.js';
  *   officialCaptureRatio?: number|null,
  *   totalComments?: number|null,
  *   streamAgeMin?: number|null,
- *   recentActiveUsers?: number
+ *   recentActiveUsers?: number,
+ *   _debug?: Record<string, unknown>
  * }} WatchPageSnapshot
  */
 
@@ -160,6 +244,26 @@ const INLINE_MODE = (() => {
   }
 })();
 
+/** watch ページ埋め込み iframe（サイドパネル用 `dock=sidepanel` とは UI を分ける） */
+const INLINE_EMBED_WATCH = (() => {
+  if (!INLINE_MODE) return false;
+  try {
+    return new URLSearchParams(window.location.search).get('dock') !== 'sidepanel';
+  } catch {
+    return true;
+  }
+})();
+
+/** サイドパネル iframe（`popup.html?inline=1&dock=sidepanel`） */
+const INLINE_SIDE_PANEL = (() => {
+  if (!INLINE_MODE) return false;
+  try {
+    return new URLSearchParams(window.location.search).get('dock') === 'sidepanel';
+  } catch {
+    return false;
+  }
+})();
+
 function applyResponsivePopupLayout() {
   const root = document.documentElement;
   const body = document.body;
@@ -167,20 +271,18 @@ function applyResponsivePopupLayout() {
 
   root.classList.toggle('nl-inline', INLINE_MODE);
   body.classList.toggle('nl-inline', INLINE_MODE);
+  root.classList.toggle('nl-inline-embed-watch', INLINE_EMBED_WATCH);
+  body.classList.toggle('nl-inline-embed-watch', INLINE_EMBED_WATCH);
+  root.classList.toggle('nl-skin-panel-dark', !INLINE_MODE || INLINE_SIDE_PANEL);
+  body.classList.toggle('nl-skin-panel-dark', !INLINE_MODE || INLINE_SIDE_PANEL);
 
   if (INLINE_MODE) {
-    const width = Math.max(640, Math.round(window.innerWidth || 640));
-    const header = /** @type {HTMLElement|null} */ (
-      document.querySelector('.nl-header')
-    );
-    const main = /** @type {HTMLElement|null} */ (
-      document.querySelector('.nl-main')
-    );
-    const contentHeight =
-      header && main ? Math.ceil(header.scrollHeight + main.scrollHeight + 6) : 760;
-    const height = Math.max(720, Math.min(1400, contentHeight));
+    const iw = Math.round(window.innerWidth || 360);
+    const ih = Math.round(window.innerHeight || 400);
+    const width = Math.max(260, iw);
+    const height = Math.max(180, ih);
     const baseFont =
-      width >= 1600 ? 17.25 : width >= 1200 ? 16.5 : width >= 900 ? 15.75 : 15;
+      width >= 900 ? 15.5 : width >= 720 ? 15.25 : width >= 520 ? 15 : 14.5;
 
     root.style.setProperty('--nl-pop-width', `${width}px`);
     root.style.setProperty('--nl-pop-height', `${height}px`);
@@ -296,6 +398,9 @@ function triggerCharaReaction(iconEl, { delta, thresholds, images }) {
 
 let _prevSupportCount = /** @type {number|null} */ (null);
 
+/** @type {string|null} */
+let _lastTopSupportRankStripStableKey = null;
+
 /**
  * @param {string} value
  * @param {WatchPageSnapshot|null} [watchSnapshot] 公式コメント数の併記用
@@ -314,10 +419,22 @@ function setCountDisplay(value, watchSnapshot = null) {
     const oc = watchSnapshot?.officialCommentCount;
     if (typeof oc === 'number' && Number.isFinite(oc) && oc >= 0) {
       officialEl.hidden = false;
-      officialEl.textContent = `公式 ${oc.toLocaleString('ja-JP')} 件`;
+      const recorded = parseInt(value, 10);
+      let line = `公式 ${oc.toLocaleString('ja-JP')} 件`;
+      if (!Number.isNaN(recorded) && recorded >= 0 && oc > 0) {
+        if (recorded <= oc) {
+          line += ` · 記録は公式の約${Math.round((recorded / oc) * 100)}%`;
+        } else {
+          line += ' · 記録が先行（公式表示の更新待ちのことがあります）';
+        }
+      }
+      officialEl.textContent = line;
+      officialEl.title =
+        '公式はニコ生が表示する累計コメント件数です。左の大きい数字は、このPCのストレージに残っている行数だけです。コメント欄は仮想リストのため画面上に載っている行しか取り込めず、記録OFFの時間・ページ非表示・タイムシフト開始前・システム行の扱いの差でも件数は並びません。';
     } else {
       officialEl.hidden = true;
       officialEl.textContent = '';
+      officialEl.removeAttribute('title');
     }
   }
 
@@ -532,6 +649,173 @@ const watchMetaCache = {
   key: '',
   snapshot: null
 };
+
+/** 遅延フェーズの描画が直近の refresh に属するか判定する */
+let watchPopupRefreshGeneration = 0;
+
+/** E2E / 体感計測用: メインコンテンツの初回ペイントが終わった印 */
+function markPopupRefreshContentPainted() {
+  try {
+    document.documentElement.setAttribute('data-nl-popup-content-painted', '1');
+  } catch {
+    // no-op
+  }
+}
+
+function hideCommentVelocityLine() {
+  const el = $('commentVelocityLine');
+  if (!el) return;
+  el.setAttribute('hidden', '');
+  el.textContent = '';
+}
+
+/**
+ * @param {PopupCommentEntry[]} displayEntries
+ */
+function updateCommentVelocityLine(displayEntries) {
+  const el = $('commentVelocityLine');
+  if (!el) return;
+  const windowMs = 60_000;
+  const now = Date.now();
+  const list = Array.isArray(displayEntries) ? displayEntries : [];
+  const n = countCommentsInWindowMs(list, now, windowMs);
+  if (n <= 0) {
+    el.setAttribute('hidden', '');
+    el.textContent = '';
+    return;
+  }
+  el.removeAttribute('hidden');
+  const perMin = commentsPerMinuteFromWindow(n, windowMs);
+  el.textContent = `直近1分: 約 ${perMin.toFixed(1)} 件/分（${n}件）`;
+}
+
+/**
+ * @param {string} liveId
+ */
+async function renderSessionSummaryComparePanel(liveId) {
+  const mount = $('sessionSummaryCompareMount');
+  if (!mount) return;
+  const lid = String(liveId || '').trim().toLowerCase();
+  if (!lid || typeof indexedDB === 'undefined') {
+    mount.innerHTML =
+      '<p class="nl-sub">視聴ページを開くと、ここにサマリの推移が出ます。</p>';
+    return;
+  }
+  /** @type {IDBDatabase|undefined} */
+  let db;
+  try {
+    db = await openBroadcastSessionSummaryDb();
+    const rows = await listBroadcastSessionSummaryForLive(db, lid, 24);
+    if (!rows.length) {
+      mount.innerHTML =
+        '<p class="nl-sub">まだサンプルがありません（更新が進むと溜まります）。</p>';
+      return;
+    }
+    const header =
+      '<table class="nl-session-summary-table"><thead><tr>' +
+      '<th>時刻</th><th>記録コメント</th><th>ユニークUID</th><th>ギフトユーザー</th><th>同接推定</th><th>公式コメ</th>' +
+      '</tr></thead><tbody>';
+    const body = rows
+      .map((r) => {
+        const t = new Date(r.capturedAt).toLocaleString('ja-JP');
+        const peak =
+          r.peakConcurrentEstimate != null && Number.isFinite(r.peakConcurrentEstimate)
+            ? String(r.peakConcurrentEstimate)
+            : '—';
+        const oc =
+          r.officialCommentCount != null && Number.isFinite(r.officialCommentCount)
+            ? String(r.officialCommentCount)
+            : '—';
+        return `<tr><td>${escapeHtml(t)}</td><td>${r.commentStorageCount}</td><td>${r.uniqueKnownCommenters}</td><td>${r.giftUserCount}</td><td>${escapeHtml(peak)}</td><td>${escapeHtml(oc)}</td></tr>`;
+      })
+      .join('');
+    mount.innerHTML = `${header}${body}</tbody></table>`;
+  } catch {
+    mount.innerHTML =
+      '<p class="nl-sub">IndexedDB の読み込みに失敗しました。</p>';
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // no-op
+    }
+  }
+}
+
+/**
+ * @param {string} liveId
+ */
+async function renderGiftQuickStatsPanel(liveId) {
+  const mount = $('giftQuickStatsMount');
+  if (!mount) return;
+  const lid = String(liveId || '').trim().toLowerCase();
+  if (!lid) {
+    mount.innerHTML = '';
+    return;
+  }
+  try {
+    const gk = giftUsersStorageKey(lid);
+    const bag = await chrome.storage.local.get(gk);
+    const raw = bag[gk];
+    const users = Array.isArray(raw) ? raw : [];
+    if (!users.length) {
+      mount.innerHTML =
+        '<p class="nl-sub">まだギフト・広告ユーザーが記録されていません。</p>';
+      return;
+    }
+    const sorted = [...users].sort(
+      (a, b) => (b.capturedAt || 0) - (a.capturedAt || 0)
+    );
+    const top = sorted.slice(0, 15);
+    mount.innerHTML =
+      `<p class="nl-sub">${users.length} 名を記録中（直近順に最大15件）</p><ul class="nl-gift-quick-list">` +
+      top
+        .map((u) => {
+          const nick = escapeHtml(String(u.nickname || '').trim() || '(noname)');
+          const uid = escapeHtml(String(u.userId || '').trim());
+          return `<li><span class="nl-gift-nick">${nick}</span> <code class="nl-gift-uid">${uid}</code></li>`;
+        })
+        .join('') +
+      '</ul>';
+  } catch {
+    mount.textContent = '読み込みに失敗しました。';
+  }
+}
+
+/**
+ * @param {string} liveId
+ */
+async function downloadSessionSummaryJson(liveId) {
+  const lid = String(liveId || '').trim().toLowerCase();
+  if (!lid || typeof indexedDB === 'undefined') return;
+  /** @type {IDBDatabase|undefined} */
+  let db;
+  try {
+    db = await openBroadcastSessionSummaryDb();
+    const rows = await listBroadcastSessionSummaryForLive(db, lid, 500);
+    const json = JSON.stringify(rows, null, 2);
+    const blob = new Blob([json], { type: 'application/json;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    try {
+      await chrome.downloads.download({
+        url,
+        filename: `nicolivelog-session-summary-${lid}-${Date.now()}.json`,
+        saveAs: true,
+        conflictAction: 'uniquify'
+      });
+    } finally {
+      window.setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    }
+  } catch {
+    // no-op
+  } finally {
+    try {
+      db?.close();
+    } catch {
+      // no-op
+    }
+  }
+}
 
 const INTERCEPT_BACKFILL_STATE = {
   liveId: '',
@@ -891,15 +1175,41 @@ const STORY_RINK_FACE_IMG = 'images/toumeilink.png';
  */
 const STORY_GRID_DEFAULT_TILE_IMG =
   'images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-closed.png';
+/** ユーザーレーン案内（りんく・こん太・たぬ姉） */
+const STORY_GUIDE_FACE_RINK =
+  'images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-closed.png';
+const STORY_GUIDE_FACE_KONTA =
+  'images/yukkuri-charactore-english/konta/kitsune-yukkuri-half-eyes-mouth-closed.png';
+const STORY_GUIDE_FACE_TANU =
+  'images/yukkuri-charactore-english/tanunee/tanuki-yukkuri-half-eyes-mouth-closed.png';
 /**
- * https のサムネを試みたが 404 等で取れなかったときだけ（識別済みユーザー・URLありだが画像未取得）
+ * 匿名・404 等のフォールバック。拡張内 SVG ではなくニコ公式 defaults（視聴ページの見え方に寄せる）
  */
-const STORY_REMOTE_FAILED_PLACEHOLDER_IMG =
-  'images/nico-retro-tv-placeholder.svg';
+const STORY_REMOTE_FAILED_PLACEHOLDER_IMG = NICONICO_OFFICIAL_DEFAULT_USERICON_HTTPS;
+
+/**
+ * ゆっくり既定タイル向けの「枠付き」スタイル。公式 usericon / defaults には付けない。
+ * @param {string} requestedSrc
+ * @param {string} displaySrc
+ */
+function storyTileUsesYukkuriTvStyle(requestedSrc, displaySrc) {
+  const r = String(requestedSrc || '');
+  const d = String(displaySrc || '');
+  return (
+    r.includes('yukkuri-charactore-english') ||
+    d.includes('yukkuri-charactore-english')
+  );
+}
 
 /** @param {HTMLImageElement} img */
 function applyStoryAvatarTvFallbackClass(img) {
   if (!(img instanceof HTMLImageElement)) return;
+  try {
+    const s = String(img.currentSrc || img.src || '');
+    if (/nicoaccount\/usericon\/defaults\//i.test(s)) return;
+  } catch {
+    // no-op
+  }
   if (img.classList.contains('nl-story-userlane-avatar')) {
     img.classList.add('nl-avatar--tv-fallback');
     return;
@@ -1003,9 +1313,11 @@ function getOwnPostedMatchedIdSet(entries, liveId) {
   return matchedIds;
 }
 
-async function loadSelfPostedRecentsIntoCache() {
+/**
+ * @param {Record<string, unknown>} bag
+ */
+function applySelfPostedRecentsFromBag(bag) {
   try {
-    const bag = await chrome.storage.local.get(KEY_SELF_POSTED_RECENTS);
     const raw = bag[KEY_SELF_POSTED_RECENTS];
     const items =
       raw && typeof raw === 'object' && Array.isArray(raw.items)
@@ -1118,6 +1430,101 @@ function isOwnPostedSupportComment(entry, liveId, entries = STORY_SOURCE_STATE.e
   return false;
 }
 
+/** 永続プロファイルキャッシュ（refresh ごとに再読込） */
+let popupUserCommentProfileMap = /** @type {null|Record<string, { nickname?: string, avatarUrl?: string, updatedAt: number }>} */ (
+  null
+);
+
+/**
+ * 永続 userId プロファイルキャッシュを arr と同期（学習・欠損補完・prune）
+ * @param {PopupCommentEntry[]} arr
+ * @returns {{ arr: PopupCommentEntry[], commentsPatched: boolean, cacheTouched: boolean }}
+ */
+function popupMergeUserCommentProfileCache(arr) {
+  if (!popupUserCommentProfileMap) {
+    return { arr, commentsPatched: false, cacheTouched: false };
+  }
+  let cacheTouched = false;
+  for (const e of arr) {
+    if (upsertUserCommentProfileFromEntry(popupUserCommentProfileMap, e)) {
+      cacheTouched = true;
+    }
+  }
+  const ap = applyUserCommentProfileMapToEntries(arr, popupUserCommentProfileMap);
+  const nextArr = ap.patched > 0 ? ap.next : arr;
+  const beforeK = Object.keys(popupUserCommentProfileMap).length;
+  popupUserCommentProfileMap = pruneUserCommentProfileMap(popupUserCommentProfileMap);
+  if (Object.keys(popupUserCommentProfileMap).length !== beforeK) {
+    cacheTouched = true;
+  }
+  return {
+    arr: nextArr,
+    commentsPatched: ap.patched > 0,
+    cacheTouched
+  };
+}
+
+/**
+ * @param {{
+ *   refreshGen: number,
+ *   commentsKey: string,
+ *   getArr: () => PopupCommentEntry[],
+ *   setArr: (next: PopupCommentEntry[]) => void,
+ *   paint: () => void
+ * }} ctx
+ */
+async function runDeferredUserCommentProfileHydrate(ctx) {
+  const { refreshGen, commentsKey, getArr, setArr, paint } = ctx;
+  try {
+    if (!hasExtensionContext()) return;
+    if (refreshGen !== watchPopupRefreshGeneration) return;
+    const bag = await readStorageBagWithRetry(
+      () => chrome.storage.local.get(KEY_USER_COMMENT_PROFILE_CACHE),
+      { attempts: 4, delaysMs: [0, 60, 150, 300] }
+    );
+    if (refreshGen !== watchPopupRefreshGeneration) return;
+    if (!popupUserCommentProfileMap) return;
+    const late = normalizeUserCommentProfileMap(
+      bag[KEY_USER_COMMENT_PROFILE_CACHE]
+    );
+    if (!Object.keys(late).length) return;
+    const hydrated = hydrateUserCommentProfileMapFromStorage(
+      popupUserCommentProfileMap,
+      late
+    );
+    if (!hydrated) return;
+    const prof = popupMergeUserCommentProfileCache(getArr());
+    setArr(prof.arr);
+    const save = {};
+    if (prof.commentsPatched) save[commentsKey] = prof.arr;
+    if (prof.cacheTouched || hydrated) {
+      save[KEY_USER_COMMENT_PROFILE_CACHE] = popupUserCommentProfileMap;
+    }
+    if (Object.keys(save).length) {
+      await storageSetSafe(save);
+    }
+    if (refreshGen !== watchPopupRefreshGeneration) return;
+    paint();
+  } catch (e) {
+    if (isExtensionContextInvalidatedError(e)) return;
+  }
+}
+
+/**
+ * 初回 paint 後にアイドル時間でプロファイルキャッシュを再読込（ストレージ反映の遅れを吸収）
+ * @param {Parameters<typeof runDeferredUserCommentProfileHydrate>[0]} ctx
+ */
+function scheduleDeferredUserCommentProfileHydrate(ctx) {
+  const run = () => {
+    void runDeferredUserCommentProfileHydrate(ctx);
+  };
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(run, { timeout: 900 });
+  } else {
+    setTimeout(run, 200);
+  }
+}
+
 /**
  * 同一 userId で過去に取れた avatarUrl を再利用する（仮想スクロールの欠落補完）
  * @param {unknown} userId
@@ -1125,13 +1532,29 @@ function isOwnPostedSupportComment(entry, liveId, entries = STORY_SOURCE_STATE.e
 function rememberedAvatarUrlForUserId(userId) {
   const uid = String(userId || '').trim();
   if (!uid) return '';
+  const fromCache = String(
+    popupUserCommentProfileMap?.[uid]?.avatarUrl || ''
+  ).trim();
+  if (
+    fromCache &&
+    isHttpOrHttpsUrl(fromCache) &&
+    !isWeakNiconicoUserIconHttpUrl(fromCache)
+  ) {
+    return fromCache;
+  }
   const list = STORY_SOURCE_STATE?.entries;
   if (!Array.isArray(list) || list.length === 0) return '';
   for (let i = list.length - 1; i >= 0; i -= 1) {
     const e = list[i];
     if (String(e?.userId || '').trim() !== uid) continue;
     const av = String(e?.avatarUrl || '').trim();
-    if (isHttpOrHttpsUrl(av)) return av;
+    if (
+      av &&
+      isHttpOrHttpsUrl(av) &&
+      !isWeakNiconicoUserIconHttpUrl(av)
+    ) {
+      return av;
+    }
   }
   return '';
 }
@@ -1471,10 +1894,87 @@ function storyGrowthAvatarSrcCandidate(entry, liveId, entries = STORY_SOURCE_STA
  * @param {PopupCommentEntry[]|null|undefined} [entries]
  */
 function storyGrowthTileSrcForEntry(entry, liveId, entries = STORY_SOURCE_STATE.entries) {
-  return (
-    storyGrowthAvatarSrcCandidate(entry, liveId, entries) ||
-    STORY_GRID_DEFAULT_TILE_IMG
+  const candidate = storyGrowthAvatarSrcCandidate(entry, liveId, entries);
+  if (candidate) return candidate;
+  return pickSupportGrowthFallbackTileSrc(
+    entry?.userId,
+    '',
+    STORY_GRID_DEFAULT_TILE_IMG,
+    STORY_REMOTE_FAILED_PLACEHOLDER_IMG
   );
+}
+
+/**
+ * 応援ユーザーレーンの並び順。大きいほど「個人サムネ＋強い表示名」に近い（supportGridDisplayTier と一致）。
+ * @param {PopupCommentEntry|null|undefined} entry
+ * @param {string} httpCandidate storyGrowthAvatarSrcCandidate
+ * @returns {0|1|2|3}
+ */
+function userLaneProfileCompletenessTier(entry, httpCandidate) {
+  const uid = String(entry?.userId || '').trim();
+  if (!uid) return 0;
+  const nick = String(entry?.nickname || '').trim();
+  const rawAv = String(entry?.avatarUrl || '').trim();
+  const t = supportGridDisplayTier({
+    userId: uid,
+    nickname: nick,
+    httpAvatarCandidate: httpCandidate,
+    storedAvatarUrl: rawAv
+  });
+  if (t === SUPPORT_GRID_TIER_RINK) return 3;
+  if (t === SUPPORT_GRID_TIER_KONTA) return 2;
+  return 1;
+}
+
+/**
+ * ユーザーレーンの ID 行・名前行（プランの文言ルール）
+ * @param {PopupCommentEntry|null|undefined} entry
+ * @param {unknown} httpCandidate storyGrowthAvatarSrcCandidate の戻り
+ * @param {string} [userLaneDedupeKey] userLaneDedupeKey の戻り（t: / s: は userId 無しでも列に載る理由の表示用）
+ */
+function storyUserLaneMetaLines(entry, httpCandidate, userLaneDedupeKey = '') {
+  const uid = String(entry?.userId || '').trim();
+  const nick = String(entry?.nickname || '').trim();
+  const hasHttp = isHttpOrHttpsUrl(httpCandidate);
+  const dk = String(userLaneDedupeKey || '');
+
+  if (!uid) {
+    if (dk.startsWith('t:')) {
+      return {
+        idLine: '—',
+        nameLine: 'ユーザーID未取得（サムネURLで区別）'
+      };
+    }
+    if (dk.startsWith('s:')) {
+      return {
+        idLine: '—',
+        nameLine: 'ユーザーID未取得（行IDで区別）'
+      };
+    }
+    return { idLine: '—', nameLine: 'ID未取得' };
+  }
+
+  if (isAnonymousStyleNicoUserId(uid)) {
+    const idLine = compactNicoLaneUserId(uid);
+    const nameLine = anonymousNicknameFallback(uid, nick);
+    return {
+      idLine: idLine || '—',
+      nameLine: nameLine || '—'
+    };
+  }
+
+  const idLine = shortUserKeyDisplay(uid) || uid;
+  const numeric = /^\d{5,14}$/.test(uid);
+  if (numeric && hasHttp && nick) {
+    return { idLine, nameLine: nick };
+  }
+  if (numeric && !nick) {
+    return { idLine, nameLine: '（未取得）' };
+  }
+  if (nick) {
+    return { idLine, nameLine: nick };
+  }
+  return { idLine, nameLine: '（未取得）' };
 }
 
 const STORY_HOP_STATE = {
@@ -1645,6 +2145,9 @@ const STORY_SOURCE_STATE = {
   entries: /** @type {PopupCommentEntry[]} */ ([])
 };
 
+/** 開発監視エクスポート用・直近の render 引数 */
+let lastDevMonitorPanelParams = /** @type {null|object} */ (null);
+
 const STORY_AVATAR_DIAG_STATE = {
   total: 0,
   withUid: 0,
@@ -1661,8 +2164,19 @@ const STORY_AVATAR_DIAG_STATE = {
   interceptWithAvatar: 0,
   mergedPatched: 0,
   mergedUidReplaced: 0,
-  stripped: 0
+  stripped: 0,
+  /** watch ページ content の interceptedUsers サイズ（スナップショット _debug.intercept）。未取得は -1 */
+  interceptMapOnPage: -1,
+  /** 直近の NLS_EXPORT_INTERCEPT_CACHE 成功時の export 行数（マージ前の配列長） */
+  interceptExportRows: 0,
+  /** 直近 export 試行の理由コード（no_watch_tab / export_rejected / message_failed / ok_empty / ok 等） */
+  interceptExportCode: '',
+  /** export 失敗時の短い補足（PII なし） */
+  interceptExportDetail: ''
 };
+
+/** renderStoryUserLane の見た目が同じなら DOM を付け直さない（高流量時のちらつき抑制） */
+let storyUserLaneLastRenderSig = '';
 
 /** @param {PopupCommentEntry|null|undefined} entry */
 function commentStableId(entry) {
@@ -1839,125 +2353,307 @@ function bindStoryDetailHoverBridge() {
   });
 }
 
+/**
+ * @param {string} liveId
+ * @param {'light'|'dark'} colorScheme
+ * @param {Array<{ displaySrc: string, meta: { idLine: string, nameLine: string }, profileTier: number, entry: PopupCommentEntry }>} picked
+ * @param {number} sourceEntryCount STORY_SOURCE_STATE.entries の長さ（picked=0 でもリスト更新で再描画するため）
+ */
+function storyUserLaneRenderSignature(
+  liveId,
+  colorScheme,
+  picked,
+  sourceEntryCount
+) {
+  const lid = String(liveId || '').trim().toLowerCase();
+  const scheme = String(colorScheme || 'light');
+  if (!picked.length) {
+    const n = Math.max(0, Math.floor(Number(sourceEntryCount) || 0));
+    return `${lid}|${scheme}|0|src:${n}`;
+  }
+  const parts = picked.map((p) => {
+    const sid = commentStableId(p.entry);
+    return [
+      sid,
+      p.displaySrc,
+      p.meta.idLine,
+      p.meta.nameLine,
+      String(p.profileTier)
+    ].join('\u001f');
+  });
+  return `${lid}|${scheme}|${picked.length}\u001e${parts.join('\u001e')}`;
+}
+
 function renderStoryUserLane() {
-  const lane = /** @type {HTMLElement|null} */ ($('sceneStoryUserLane'));
-  const guide = /** @type {HTMLElement|null} */ ($('sceneStoryUserLaneGuide'));
-  const guideBubble = $('sceneStoryUserLaneGuideBubble');
-  if (!lane) return;
+  const stack = /** @type {HTMLElement|null} */ ($('sceneStoryUserLaneStack'));
+  const laneRink = /** @type {HTMLElement|null} */ ($('sceneStoryUserLaneRink'));
+  const laneKonta = /** @type {HTMLElement|null} */ ($('sceneStoryUserLaneKonta'));
+  const laneTanu = /** @type {HTMLElement|null} */ ($('sceneStoryUserLaneTanu'));
+  const hintRink = /** @type {HTMLElement|null} */ ($('sceneStoryUserLaneRinkHint'));
+  const rinkWrap = /** @type {HTMLElement|null} */ ($('sceneStoryUserLaneRinkWrap'));
+  const guideTop = /** @type {HTMLElement|null} */ ($('sceneStoryUserLaneGuideTop'));
+  const guideLinesTop = /** @type {HTMLElement|null} */ ($('sceneStoryUserLaneGuideLinesTop'));
+  const guideMidKonta = /** @type {HTMLElement|null} */ ($('sceneStoryUserLaneGuideMidKonta'));
+  const guideLinesMidKonta = /** @type {HTMLElement|null} */ ($('sceneStoryUserLaneGuideLinesMidKonta'));
+  const guideMidTanu = /** @type {HTMLElement|null} */ ($('sceneStoryUserLaneGuideMidTanu'));
+  const guideLinesMidTanu = /** @type {HTMLElement|null} */ ($('sceneStoryUserLaneGuideLinesMidTanu'));
+  const guideBottom = /** @type {HTMLElement|null} */ ($('sceneStoryUserLaneGuideBottom'));
+  const guideLinesBottom = /** @type {HTMLElement|null} */ ($('sceneStoryUserLaneGuideLinesBottom'));
+  if (!stack || !laneRink || !laneKonta || !laneTanu) return;
+
+  const clearMidGuides = () => {
+    if (guideMidKonta) guideMidKonta.hidden = true;
+    if (guideLinesMidKonta) guideLinesMidKonta.innerHTML = '';
+    if (guideMidTanu) guideMidTanu.hidden = true;
+    if (guideLinesMidTanu) guideLinesMidTanu.innerHTML = '';
+  };
+
+  const resetLaneTierCells = () => {
+    laneRink.innerHTML = '';
+    laneKonta.innerHTML = '';
+    laneTanu.innerHTML = '';
+    laneRink.hidden = true;
+    laneKonta.hidden = true;
+    laneTanu.hidden = true;
+    if (hintRink) hintRink.hidden = true;
+    if (rinkWrap) rinkWrap.hidden = true;
+  };
+
+  const hideUserLaneStackFully = () => {
+    resetLaneTierCells();
+    clearMidGuides();
+    stack.hidden = true;
+  };
+
   const entries = Array.isArray(STORY_SOURCE_STATE.entries)
     ? STORY_SOURCE_STATE.entries
     : [];
   if (!entries.length) {
-    lane.innerHTML = '';
-    lane.hidden = true;
-    if (guide) guide.hidden = true;
+    storyUserLaneLastRenderSig = '';
+    hideUserLaneStackFully();
+    if (guideTop) guideTop.hidden = true;
+    if (guideLinesTop) guideLinesTop.innerHTML = '';
+    if (guideBottom) guideBottom.hidden = true;
+    if (guideLinesBottom) guideLinesBottom.innerHTML = '';
     return;
   }
 
   const limit = INLINE_MODE ? 48 : 24;
-  /** @type {{ displaySrc: string, title: string, entry: PopupCommentEntry }[]} */
-  const picked = [];
   const seen = new Set();
   const liveId = String(STORY_SOURCE_STATE.liveId || '');
   const laneScheme = getStoryColorScheme();
-  for (let i = entries.length - 1; i >= 0 && picked.length < limit; i -= 1) {
+
+  /** @type {{ entryIndex: number, profileTier: number, thumbScore: number, displaySrc: string, title: string, entry: PopupCommentEntry, meta: { idLine: string, nameLine: string } }[]} */
+  const candidates = [];
+  for (let i = entries.length - 1; i >= 0; i -= 1) {
     const e = entries[i];
+    const uidRaw = String(e?.userId || '').trim();
+    if (!uidRaw) continue;
     const httpCandidate = storyGrowthAvatarSrcCandidate(e, liveId);
     const dedupeKey = userLaneDedupeKey({
-      userId: e?.userId,
-      avatarHttpCandidate: httpCandidate,
-      stableId: commentStableId(e)
+      userId: uidRaw,
+      avatarHttpCandidate: '',
+      stableId: ''
     });
     if (!dedupeKey) continue;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
-    const displaySrc = pickUserLaneDisplayTileSrc(httpCandidate, STORY_GRID_DEFAULT_TILE_IMG);
+    const displaySrc = pickSupportGrowthFallbackTileSrc(
+      e?.userId,
+      httpCandidate,
+      STORY_GRID_DEFAULT_TILE_IMG,
+      STORY_REMOTE_FAILED_PLACEHOLDER_IMG
+    );
     if (!displaySrc) continue;
     const label = storyGrowthDisplayLabel(e, liveId) || 'ユーザー';
-    picked.push({ displaySrc, title: label, entry: e });
+    const meta = storyUserLaneMetaLines(e, httpCandidate, dedupeKey);
+    const thumbScore = userLaneResolvedThumbScore(e?.userId, httpCandidate);
+    const profileTier = userLaneProfileCompletenessTier(e, httpCandidate);
+    candidates.push({
+      entryIndex: i,
+      profileTier,
+      thumbScore,
+      displaySrc,
+      title: label,
+      entry: e,
+      meta
+    });
   }
 
-  lane.innerHTML = '';
+  const laneUidSortRank = (uidRaw) => {
+    const s = String(uidRaw || '').trim();
+    if (/^\d{5,14}$/.test(s)) return 0;
+    if (/^a:/i.test(s)) return 1;
+    return 2;
+  };
+
+  candidates.sort((a, b) => {
+    if (b.profileTier !== a.profileTier) return b.profileTier - a.profileTier;
+    if (b.thumbScore !== a.thumbScore) return b.thumbScore - a.thumbScore;
+    const ua = String(a.entry?.userId || '').trim();
+    const ub = String(b.entry?.userId || '').trim();
+    const ra = laneUidSortRank(ua);
+    const rb = laneUidSortRank(ub);
+    if (ra !== rb) return ra - rb;
+    if (ua !== ub) return ua < ub ? -1 : ua > ub ? 1 : 0;
+    return b.entryIndex - a.entryIndex;
+  });
+
+  const buckets = bucketStoryUserLanePicks(candidates, limit);
+  const picked = flattenStoryUserLaneBuckets(buckets);
+
+  const laneSig = storyUserLaneRenderSignature(
+    liveId,
+    laneScheme,
+    picked,
+    entries.length
+  );
+  if (laneSig === storyUserLaneLastRenderSig) {
+    return;
+  }
+  storyUserLaneLastRenderSig = laneSig;
+
   if (!picked.length) {
-    lane.hidden = true;
-    if (guide) guide.hidden = true;
+    resetLaneTierCells();
+    stack.hidden = false;
+    if (guideLinesTop) {
+      guideLinesTop.innerHTML = buildStoryUserLaneGuideTopHtml(
+        STORY_GUIDE_FACE_RINK
+      );
+    }
+    if (guideTop) guideTop.hidden = false;
+    if (guideLinesMidKonta) {
+      guideLinesMidKonta.innerHTML = buildStoryUserLaneGuideKontaHtml(
+        STORY_GUIDE_FACE_KONTA
+      );
+    }
+    if (guideMidKonta) guideMidKonta.hidden = false;
+    if (guideLinesMidTanu) {
+      guideLinesMidTanu.innerHTML = buildStoryUserLaneGuideTanuHtml(
+        STORY_GUIDE_FACE_TANU
+      );
+    }
+    if (guideMidTanu) guideMidTanu.hidden = false;
+    if (guideLinesBottom) {
+      guideLinesBottom.innerHTML = buildStoryUserLaneGuideFootHtml(0);
+    }
+    if (guideBottom) guideBottom.hidden = false;
     return;
   }
 
-  const frag = document.createDocumentFragment();
-  for (const p of picked) {
-    const cell = document.createElement('span');
-    cell.className = 'nl-story-userlane-cell';
-
-    const img = document.createElement('img');
-    img.className = 'nl-story-userlane-avatar';
-    const requestedLane = p.displaySrc;
-    const displayLane = storyAvatarLoadGuard.pickDisplaySrc(requestedLane);
-    img.src = displayLane;
-    storyAvatarLoadGuard.noteRemoteAttempt(img, requestedLane);
-    img.classList.toggle(
-      'nl-avatar--tv-fallback',
-      displayLane === STORY_REMOTE_FAILED_PLACEHOLDER_IMG
-    );
-    img.alt = '';
-    img.title = p.title;
-    img.decoding = 'async';
-    if (isHttpOrHttpsUrl(img.src)) {
-      img.referrerPolicy = 'no-referrer';
+  /**
+   * @param {HTMLElement} el
+   * @param {typeof candidates[number][]} items
+   */
+  const fillLaneTier = (el, items) => {
+    el.innerHTML = '';
+    if (!items.length) {
+      el.hidden = true;
+      return;
     }
+    el.hidden = false;
+    const frag = document.createDocumentFragment();
+    for (const p of items) {
+      const cell = document.createElement('span');
+      cell.className = 'nl-story-userlane-cell';
 
-    const stable = commentStableId(p.entry);
-    const requestedTile = storyGrowthTileSrcForEntry(p.entry, liveId);
-    const slot = accentSlotFromSupportEntry(p.entry, {
-      tileSrc: requestedTile,
-      stableId: stable || '',
-      defaultTileSrc: STORY_GRID_DEFAULT_TILE_IMG
-    });
-    const accentCss = slot != null ? accentColorForSlot(slot, laneScheme) : null;
-    if (accentCss) {
-      cell.classList.add('nl-story-userlane-cell--accent');
-      cell.style.setProperty('--nl-user-accent', accentCss);
+      const img = document.createElement('img');
+      img.className = 'nl-story-userlane-avatar';
+      const requestedLane = p.displaySrc;
+      const displayLane = storyAvatarLoadGuard.pickDisplaySrc(requestedLane);
+      img.src = displayLane;
+      storyAvatarLoadGuard.noteRemoteAttempt(img, requestedLane);
+      img.classList.toggle(
+        'nl-avatar--tv-fallback',
+        storyTileUsesYukkuriTvStyle(requestedLane, displayLane)
+      );
+      img.alt = '';
+      const fullUid = String(p.entry?.userId || '').trim();
+      const tip =
+        fullUid && fullUid !== p.meta.idLine
+          ? `${p.title} | ${fullUid}`
+          : p.title;
+      img.title = tip;
+      cell.title = tip;
+      img.decoding = 'async';
+      if (isHttpOrHttpsUrl(img.src)) {
+        img.referrerPolicy = 'no-referrer';
+      }
+
+      const metaEl = document.createElement('span');
+      metaEl.className = 'nl-story-userlane-meta';
+      const idRow = document.createElement('span');
+      idRow.className = 'nl-story-userlane-meta__id';
+      idRow.textContent = p.meta.idLine;
+      const nameRow = document.createElement('span');
+      nameRow.className = 'nl-story-userlane-meta__name';
+      nameRow.textContent = p.meta.nameLine;
+      metaEl.appendChild(idRow);
+      metaEl.appendChild(nameRow);
+
+      cell.appendChild(img);
+      cell.appendChild(metaEl);
+      frag.appendChild(cell);
     }
+    el.appendChild(frag);
+  };
 
-    cell.appendChild(img);
-    frag.appendChild(cell);
+  fillLaneTier(laneRink, buckets.rink);
+  fillLaneTier(laneKonta, buckets.konta);
+  fillLaneTier(laneTanu, buckets.tanu);
+
+  if (hintRink) {
+    const showRinkHint =
+      buckets.rink.length === 0 &&
+      (buckets.konta.length > 0 || buckets.tanu.length > 0);
+    hintRink.hidden = !showRinkHint;
   }
-  lane.appendChild(frag);
-  lane.setAttribute(
+
+  if (rinkWrap) {
+    const showRinkWrap = !laneRink.hidden || (hintRink && !hintRink.hidden);
+    rinkWrap.hidden = !showRinkWrap;
+  }
+
+  stack.setAttribute(
     'aria-label',
-    `最近の応援ユーザーサムネイル ${picked.length}件`
+    `最近の応援ユーザーサムネイル 合計${picked.length}件`
   );
-  if (guideBubble) {
-    guideBubble.innerHTML =
-      `こん太: ここは識別できた応援ユーザーの列だよ ` +
-      `<span class="nl-story-userlane-guide__count">${picked.length}人</span>`;
+  stack.hidden = false;
+
+  if (guideLinesTop) {
+    guideLinesTop.innerHTML = buildStoryUserLaneGuideTopHtml(
+      STORY_GUIDE_FACE_RINK
+    );
   }
-  if (guide) guide.hidden = false;
-  lane.hidden = false;
+  if (guideTop) guideTop.hidden = false;
+  if (guideLinesMidKonta) {
+    guideLinesMidKonta.innerHTML = buildStoryUserLaneGuideKontaHtml(
+      STORY_GUIDE_FACE_KONTA
+    );
+  }
+  if (guideMidKonta) guideMidKonta.hidden = false;
+  if (guideLinesMidTanu) {
+    guideLinesMidTanu.innerHTML = buildStoryUserLaneGuideTanuHtml(
+      STORY_GUIDE_FACE_TANU
+    );
+  }
+  if (guideMidTanu) guideMidTanu.hidden = false;
+  if (guideLinesBottom) {
+    guideLinesBottom.innerHTML = buildStoryUserLaneGuideFootHtml(picked.length);
+  }
+  if (guideBottom) guideBottom.hidden = false;
 }
 
 function renderStoryAvatarDiag() {
   const el = /** @type {HTMLElement|null} */ ($('storyAvatarDiag'));
   if (!el) return;
-  const s = STORY_AVATAR_DIAG_STATE;
-  const severe =
-    s.total >= 50 &&
-    (s.withAvatar <= Math.max(2, Math.floor(s.total * 0.02)) ||
-      s.uniqueAvatar <= 2);
-  if (!severe) {
+  const html = buildStoryAvatarDiagHtml(STORY_AVATAR_DIAG_STATE);
+  if (html == null) {
     el.hidden = true;
-    el.textContent = '';
+    el.innerHTML = '';
     return;
   }
-  el.textContent =
-    `診断: avatar保存 ${s.withAvatar}/${s.total}（種類 ${s.uniqueAvatar}）` +
-    ` / avatar表示 ${s.resolvedAvatar}/${s.total}（種類 ${s.resolvedUniqueAvatar}）` +
-    ` / uid ${s.withUid}/${s.total}` +
-    ` / self ${s.selfShown}件（保存 ${s.selfSaved}, 保留 ${s.selfPending}, 一致 ${s.selfPendingMatched}）` +
-    ` / intercept ${s.interceptItems}件（uid ${s.interceptWithUid}, avatar ${s.interceptWithAvatar}）` +
-    ` / 補完 ${s.mergedPatched}件` +
-    (s.mergedUidReplaced > 0 ? `（UID置換 ${s.mergedUidReplaced}）` : '') +
-    (s.stripped > 0 ? ` / 汚染除去 ${s.stripped}件` : '');
+  el.innerHTML = html;
   el.hidden = false;
 }
 
@@ -1978,7 +2674,23 @@ function resetStoryAvatarDiagState() {
   STORY_AVATAR_DIAG_STATE.mergedPatched = 0;
   STORY_AVATAR_DIAG_STATE.mergedUidReplaced = 0;
   STORY_AVATAR_DIAG_STATE.stripped = 0;
+  STORY_AVATAR_DIAG_STATE.interceptMapOnPage = -1;
+  STORY_AVATAR_DIAG_STATE.interceptExportRows = 0;
+  STORY_AVATAR_DIAG_STATE.interceptExportCode = '';
+  STORY_AVATAR_DIAG_STATE.interceptExportDetail = '';
   renderStoryAvatarDiag();
+}
+
+/** @param {WatchPageSnapshot|null|undefined} snap */
+function syncInterceptMapDiagFromSnapshot(snap) {
+  const d = snap?._debug;
+  STORY_AVATAR_DIAG_STATE.interceptMapOnPage =
+    d &&
+    typeof d.intercept === 'number' &&
+    Number.isFinite(d.intercept) &&
+    d.intercept >= 0
+      ? Math.floor(d.intercept)
+      : -1;
 }
 
 /**
@@ -2088,7 +2800,7 @@ function renderStoryCommentDetailPanel() {
     storyAvatarLoadGuard.noteRemoteAttempt(img, requestedDetail);
     img.classList.toggle(
       'nl-story-detail-img--tv-fallback',
-      displayDetail === STORY_REMOTE_FAILED_PLACEHOLDER_IMG
+      storyTileUsesYukkuriTvStyle(requestedDetail, displayDetail)
     );
     if (isHttpOrHttpsUrl(img.src)) {
       img.referrerPolicy = 'no-referrer';
@@ -2447,12 +3159,16 @@ function clearStoryGrowthTimer() {
 /** @returns {number} */
 function storyGrowthStepDelayMs() {
   const remain = STORY_GROWTH_STATE.targetCount - STORY_GROWTH_STATE.renderedCount;
-  if (remain > 1500) return 1;
-  if (remain > 700) return 2;
-  if (remain > 300) return 4;
-  if (remain > 120) return 8;
-  if (remain > 40) return 14;
-  return 26;
+  /*
+   * 1〜4ms/個は「勝手に凄いスピードで動く」原因になる（storage 連打で再開するとさらに酷い）。
+   * 人間が追える程度に抑える（大量件数は時間がかかってよい）。
+   */
+  if (remain > 800) return 22;
+  if (remain > 400) return 28;
+  if (remain > 200) return 34;
+  if (remain > 80) return 42;
+  if (remain > 30) return 55;
+  return 72;
 }
 
 /** @param {number} count */
@@ -2511,6 +3227,24 @@ function storyGrowthDisplayLabel(entry, liveId) {
  * @param {number} index
  * @param {boolean} isNew
  */
+function storyGrowthImgAssignSrc(img, nextSrc) {
+  const next = String(nextSrc || '').trim();
+  if (!next) {
+    if (!img.hasAttribute('src')) return;
+    img.removeAttribute('src');
+    return;
+  }
+  const attr = img.getAttribute('src');
+  if (attr === next) return;
+  try {
+    const resolvedNext = new URL(next, document.baseURI).href;
+    if (img.src === resolvedNext) return;
+  } catch {
+    /* 相対パス等で解決できないときは従来どおり代入 */
+  }
+  img.src = next;
+}
+
 function applyStoryGrowthIconAttributes(img, index, isNew) {
   const entry = getStoryEntryByIndex(index);
   const stable = commentStableId(entry);
@@ -2520,11 +3254,11 @@ function applyStoryGrowthIconAttributes(img, index, isNew) {
   if (selected) img.classList.add('is-selected');
   const requestedTile = storyGrowthTileSrcForEntry(entry, STORY_SOURCE_STATE.liveId);
   const displayTile = storyAvatarLoadGuard.pickDisplaySrc(requestedTile);
-  img.src = displayTile;
+  storyGrowthImgAssignSrc(img, displayTile);
   storyAvatarLoadGuard.noteRemoteAttempt(img, requestedTile);
   img.classList.toggle(
     'nl-story-growth-icon--tv-fallback',
-    displayTile === STORY_REMOTE_FAILED_PLACEHOLDER_IMG
+    storyTileUsesYukkuriTvStyle(requestedTile, displayTile)
   );
   if (isHttpOrHttpsUrl(img.src)) {
     img.referrerPolicy = 'no-referrer';
@@ -2537,27 +3271,13 @@ function applyStoryGrowthIconAttributes(img, index, isNew) {
   const entries = STORY_SOURCE_STATE.entries;
   const storyKey = entry ? supportUserKeyFromEntry(entry) : UNKNOWN_USER_KEY;
   const ordinal = supportOrdinalForIndex(entries, index);
-  const slot = accentSlotFromSupportEntry(entry, {
-    tileSrc: requestedTile,
-    stableId: stable || '',
-    defaultTileSrc: STORY_GRID_DEFAULT_TILE_IMG
-  });
-  const scheme = getStoryColorScheme();
-  const accentCss = slot != null ? accentColorForSlot(slot, scheme) : null;
-  if (accentCss) img.classList.add('nl-story-growth-icon--user-accent');
-  else img.classList.remove('nl-story-growth-icon--user-accent');
+  img.classList.remove('nl-story-growth-icon--user-accent');
 
   const cell = img.closest('.nl-story-growth-cell');
   if (cell instanceof HTMLElement) {
-    if (accentCss) {
-      cell.style.setProperty('--nl-user-accent', accentCss);
-      cell.classList.add('nl-story-growth-cell--accent');
-      cell.classList.add('nl-story-growth-cell--user-accent');
-    } else {
-      cell.style.removeProperty('--nl-user-accent');
-      cell.classList.remove('nl-story-growth-cell--accent');
-      cell.classList.remove('nl-story-growth-cell--user-accent');
-    }
+    cell.style.removeProperty('--nl-user-accent');
+    cell.classList.remove('nl-story-growth-cell--accent');
+    cell.classList.remove('nl-story-growth-cell--user-accent');
     if (ordinal > 1) {
       cell.classList.add('nl-story-growth-cell--repeat');
       cell.setAttribute('data-support-ordinal', String(ordinal));
@@ -2656,7 +3376,11 @@ function runStoryGrowthTick() {
   if (STORY_GROWTH_STATE.renderedCount >= STORY_GROWTH_STATE.targetCount) return;
   const nextIndex = STORY_GROWTH_STATE.renderedCount;
   STORY_GROWTH_STATE.renderedCount += 1;
-  root.appendChild(createStoryGrowthCell(true, nextIndex));
+  try {
+    root.appendChild(createStoryGrowthCell(true, nextIndex));
+  } catch {
+    /* 1件の DOM 生成失敗でタイマー列が止まらないように */
+  }
   if (STORY_GROWTH_STATE.renderedCount >= STORY_GROWTH_STATE.targetCount) return;
   STORY_GROWTH_STATE.timer = window.setTimeout(runStoryGrowthTick, storyGrowthStepDelayMs());
 }
@@ -2931,11 +3655,20 @@ function renderWatchMetaCard(snapshot, commentEntries = []) {
     : 0;
   if (concurrentEstEl) {
     const nowMs = Date.now();
-    if (
-      recentActive > 0 ||
-      (typeof snapshot.officialViewerCount === 'number' &&
-        Number.isFinite(snapshot.officialViewerCount))
-    ) {
+    const showConcurrent = shouldShowConcurrentEstimate({
+      recentActiveUsers: recentActive,
+      officialViewerCount: snapshot.officialViewerCount,
+      viewerCountFromDom: vc,
+      liveId: snapshot.liveId
+    });
+    const sparseConcurrent = concurrentEstimateIsSparseSignal({
+      recentActiveUsers: recentActive,
+      officialViewerCount: snapshot.officialViewerCount,
+      viewerCountFromDom: vc
+    });
+    // shouldShowConcurrentEstimate が false のときは下の else でスピナー継続（aria-busy）。
+    // 条件は popupConcurrentEstimateGate.js と単体テストを参照（liveId のみ true・指標皆無は false 等）。
+    if (showConcurrent) {
       if (concurrentLoadingEl) concurrentLoadingEl.hidden = true;
       if (concurrentReadyEl) concurrentReadyEl.hidden = false;
       if (concurrentCard) concurrentCard.removeAttribute('aria-busy');
@@ -3034,6 +3767,9 @@ function renderWatchMetaCard(snapshot, commentEntries = []) {
         parts.push(`base:${baseMethod}`);
       }
       parts.push(`信頼度 ${Math.round(resolved.confidence * 100)}%`);
+      if (sparseConcurrent) {
+        parts.push('来場者・統計が未取得のため推定は参考値');
+      }
       concurrentEstEl.title = parts.join(' | ');
       if (concurrentSubEl) {
         if (resolved.method === 'official') {
@@ -3088,12 +3824,11 @@ function renderWatchMetaCard(snapshot, commentEntries = []) {
 }
 
 /** @param {string} viewerLiveId 現在表示中の lv（小文字想定）・無ければ空 */
-async function renderStorageErrorBanner(viewerLiveId = '') {
+function applyStorageErrorBannerFromBag(bag, viewerLiveId = '') {
   const banner = $('storageErrorBanner');
   const detail = $('storageErrorDetail');
   if (!banner || !detail) return;
 
-  const bag = await chrome.storage.local.get(KEY_STORAGE_WRITE_ERROR);
   const raw = bag[KEY_STORAGE_WRITE_ERROR];
   if (
     raw &&
@@ -3119,12 +3854,11 @@ async function renderStorageErrorBanner(viewerLiveId = '') {
 }
 
 /** @param {string} viewerLiveId */
-async function renderCommentHarvestBanner(viewerLiveId = '') {
+function applyCommentHarvestBannerFromBag(bag, viewerLiveId = '') {
   const banner = $('commentHarvestBanner');
   const detail = $('commentHarvestBannerDetail');
   if (!banner || !detail) return;
 
-  const bag = await chrome.storage.local.get(KEY_COMMENT_PANEL_STATUS);
   const payload = parseCommentPanelStatusPayload(bag[KEY_COMMENT_PANEL_STATUS]);
   if (
     payload &&
@@ -3179,44 +3913,34 @@ function renderTopSupportRankStrip(stripRooms) {
     '記録した応援コメントをユーザー別に数えた件数の多い順'
   );
   const rankScheme = getStoryColorScheme();
-  let knownRank = 0;
-  const html = stripRooms
-    .map((r) => {
-      const label = displayUserLabel(r.userKey, r.nickname);
-      const isUnknown = r.userKey === UNKNOWN_USER_KEY;
-      if (!isUnknown) knownRank += 1;
-      const placeHtml = !isUnknown
-        ? `<span class="nl-top-support-rank__place" aria-hidden="true">${knownRank}</span>`
-        : `<span class="nl-top-support-rank__place nl-top-support-rank__place--empty" aria-hidden="true"></span>`;
-      const full = escapeAttr(label);
-      const rawAv = String(r.avatarUrl || '').trim();
-      const thumbSrc = isHttpOrHttpsUrl(rawAv)
-        ? rawAv
-        : STORY_GRID_DEFAULT_TILE_IMG;
-      const thumbRp = isHttpOrHttpsUrl(thumbSrc) ? ' referrerpolicy="no-referrer"' : '';
-      const idText = isUnknown
-        ? '—'
-        : escapeHtml(shortUserKeyDisplay(r.userKey) || String(r.userKey));
-      const nickRaw = String(r.nickname || '').trim();
-      const nameText = isUnknown
-        ? '—'
-        : escapeHtml(nickRaw || '（未取得）');
-      const idTitle = isUnknown ? '' : escapeAttr(String(r.userKey));
-      let lineClass = `nl-top-support-rank__line${isUnknown ? ' nl-top-support-rank__line--unknown' : ''}`;
+  const models = topSupportRankLineModels(stripRooms, {
+    defaultThumbSrc: STORY_GRID_DEFAULT_TILE_IMG,
+    colorScheme: rankScheme
+  });
+  const html = models
+    .map((m) => {
+      const placeHtml =
+        m.placeNumber != null
+          ? `<span class="nl-top-support-rank__place" aria-hidden="true">${m.placeNumber}</span>`
+          : `<span class="nl-top-support-rank__place nl-top-support-rank__place--empty" aria-hidden="true"></span>`;
+      const full = escapeAttr(m.fullLabelForTitle);
+      const thumbRp = m.thumbNeedsNoReferrer
+        ? ' referrerpolicy="no-referrer"'
+        : '';
+      const idText = escapeHtml(m.idShort);
+      const nameText = escapeHtml(m.nameLine);
+      const idTitle = m.isUnknown ? '' : escapeAttr(m.idTitle);
+      let lineClass = `nl-top-support-rank__line${m.isUnknown ? ' nl-top-support-rank__line--unknown' : ''}`;
       let lineStyle = '';
-      if (!isUnknown) {
-        const slot = accentSlotFromUserKey(r.userKey);
-        const col = slot != null ? accentColorForSlot(slot, rankScheme) : null;
-        if (col) {
-          lineClass += ' nl-top-support-rank__line--has-accent';
-          lineStyle = ` style="--nl-rank-accent:${escapeAttr(col)}"`;
-        }
+      if (m.hasAccent && m.accentColorCss) {
+        lineClass += ' nl-top-support-rank__line--has-accent';
+        lineStyle = ` style="--nl-rank-accent:${escapeAttr(m.accentColorCss)}"`;
       }
       return `<div class="${lineClass}"${lineStyle} role="listitem" title="${full}">
         ${placeHtml}
-        <span class="nl-top-support-rank__count">${r.count}件</span>
+        <span class="nl-top-support-rank__count">${m.count}件</span>
         <span class="nl-top-support-rank__thumb-wrap">
-          <img class="nl-top-support-rank__thumb" src="${escapeAttr(thumbSrc)}" alt="" decoding="async"${thumbRp} />
+          <img class="nl-top-support-rank__thumb" src="${escapeAttr(m.thumbSrc)}" alt="" decoding="async"${thumbRp} />
         </span>
         <span class="nl-top-support-rank__id" title="${idTitle}">${idText}</span>
         <span class="nl-top-support-rank__name">${nameText}</span>
@@ -3226,8 +3950,11 @@ function renderTopSupportRankStrip(stripRooms) {
   strip.innerHTML = `<p class="nl-top-support-rank__note">記録内・ユーザー別の応援件数が多い順です。</p><div class="nl-top-support-rank__list" role="list">${html}</div>`;
 }
 
-/** @param {PopupCommentEntry[]} entries */
-function renderUserRooms(entries) {
+/**
+ * @param {PopupCommentEntry[]} entries
+ * @param {string} [liveId] ランキングストリップの再描画キー用
+ */
+function renderUserRooms(entries, liveId = '') {
   const ul = /** @type {HTMLUListElement} */ ($('userRoomList'));
   if (!ul) return;
 
@@ -3265,6 +3992,7 @@ function renderUserRooms(entries) {
   ul.innerHTML = '';
 
   if (!rooms.length) {
+    _lastTopSupportRankStripStableKey = null;
     renderTopSupportRankStrip([]);
     const li = document.createElement('li');
     li.className = 'empty-hint';
@@ -3280,6 +4008,11 @@ function renderUserRooms(entries) {
     }))
     .sort((a, b) => {
       if (b.count !== a.count) return b.count - a.count;
+      const uidA = a.userKey === UNKNOWN_USER_KEY ? '' : a.userKey;
+      const uidB = b.userKey === UNKNOWN_USER_KEY ? '' : b.userKey;
+      const scoreA = userLaneResolvedThumbScore(uidA, a.avatarUrl);
+      const scoreB = userLaneResolvedThumbScore(uidB, b.avatarUrl);
+      if (scoreB !== scoreA) return scoreB - scoreA;
       if (b.recentCount !== a.recentCount) return b.recentCount - a.recentCount;
       return b.lastAt - a.lastAt;
     });
@@ -3289,8 +4022,12 @@ function renderUserRooms(entries) {
     document.body?.classList.contains('nl-compact');
   const compactRooms = !INLINE_MODE;
   const MAX_VISIBLE_ROOMS = compactRooms ? 1 : denseLayout ? 2 : 3;
-  const stripMax = denseLayout ? 2 : 3;
-  renderTopSupportRankStrip(rankedRooms.slice(0, stripMax));
+  const stripSlice = rankedRooms.slice(0, TOP_SUPPORT_RANK_STRIP_MAX);
+  const stripKey = topSupportRankStripStableKey(liveId, list.length, stripSlice);
+  if (stripKey !== _lastTopSupportRankStripStableKey) {
+    _lastTopSupportRankStripStableKey = stripKey;
+    renderTopSupportRankStrip(stripSlice);
+  }
   const visibleRooms = rankedRooms.slice(0, MAX_VISIBLE_ROOMS);
   const maxTotal = Math.max(1, ...visibleRooms.map((v) => v.count));
   const maxRecent = Math.max(1, ...visibleRooms.map((v) => v.recentCount));
@@ -3300,6 +4037,15 @@ function renderUserRooms(entries) {
     li.classList.add('room-card');
     const label = displayUserLabel(r.userKey, r.nickname);
     const isUnknown = r.userKey === UNKNOWN_USER_KEY;
+    const uidForThumb = isUnknown ? '' : r.userKey;
+    const thumbSrc = pickSupportGrowthFallbackTileSrc(
+      uidForThumb,
+      r.avatarUrl,
+      STORY_GRID_DEFAULT_TILE_IMG,
+      STORY_REMOTE_FAILED_PLACEHOLDER_IMG
+    );
+    const thumbRp = isHttpOrHttpsUrl(thumbSrc) ? ' referrerpolicy="no-referrer"' : '';
+    const avatarHtml = `<img class="nl-ticker-latest__avatar room-card__avatar" alt="" src="${escapeAttr(thumbSrc)}" decoding="async"${thumbRp}>`;
     const totalPercent = Math.max(6, Math.min(100, (r.count / maxTotal) * 100));
     const recentPercent =
       r.recentCount > 0 ? Math.max(4, Math.min(100, (r.recentCount / maxRecent) * 100)) : 0;
@@ -3309,32 +4055,38 @@ function renderUserRooms(entries) {
       : '';
     li.innerHTML = compactRooms
       ? `
-      <div class="room-main">
-        <div class="room-name-row">
-          <span class="room-name" title="${escapeHtml(r.userKey)}">${escapeHtml(label)}</span>
+      <div class="room-card__row">
+        ${avatarHtml}
+        <div class="room-main">
+          <div class="room-name-row">
+            <span class="room-name" title="${escapeHtml(r.userKey)}">${escapeHtml(label)}</span>
+          </div>
+          ${r.lastText ? `<div class="room-preview">${escapeHtml(r.lastText)}</div>` : ''}
+          ${hint}
         </div>
-        ${r.lastText ? `<div class="room-preview">${escapeHtml(r.lastText)}</div>` : ''}
-        ${hint}
       </div>
     `
       : `
-      <div class="room-main">
-        <div class="room-name-row">
-          <span class="room-name" title="${escapeHtml(r.userKey)}">${escapeHtml(label)}</span>
-        </div>
-        <div class="room-bar-row">
-          <div class="room-bar-track">
-            <div class="room-bar-total" style="width:${totalPercent.toFixed(2)}%"></div>
-            <div class="room-bar-recent" style="width:${recentPercent.toFixed(2)}%"></div>
+      <div class="room-card__row">
+        ${avatarHtml}
+        <div class="room-main">
+          <div class="room-name-row">
+            <span class="room-name" title="${escapeHtml(r.userKey)}">${escapeHtml(label)}</span>
           </div>
-          <span class="room-delta ${r.recentCount > 0 ? 'up' : ''}">${deltaLabel}</span>
+          <div class="room-bar-row">
+            <div class="room-bar-track">
+              <div class="room-bar-total" style="width:${totalPercent.toFixed(2)}%"></div>
+              <div class="room-bar-recent" style="width:${recentPercent.toFixed(2)}%"></div>
+            </div>
+            <span class="room-delta ${r.recentCount > 0 ? 'up' : ''}">${deltaLabel}</span>
+          </div>
+          ${
+            r.lastText
+              ? `<div class="room-preview">${escapeHtml(r.lastText)}</div>`
+              : ''
+          }
+          ${hint}
         </div>
-        ${
-          r.lastText
-            ? `<div class="room-preview">${escapeHtml(r.lastText)}</div>`
-            : ''
-        }
-        ${hint}
       </div>
     `;
     ul.appendChild(li);
@@ -3425,14 +4177,23 @@ function mergeInterceptCacheItems(items) {
 /**
  * @param {string} watchUrl
  * @param {{ deep?: boolean }} [opts]
- * @returns {Promise<{ no: string, uid: string, name: string, av: string }[]>}
+ * @returns {Promise<{ items: { no: string, uid: string, name: string, av: string }[], diag: { code: string, detail: string } }>}
  */
 async function requestInterceptCacheFromOpenTab(watchUrl, opts = {}) {
+  /** @type {{ code: string, detail: string }} */
+  const diag = { code: 'no_watch_tab', detail: '' };
   const candidates = await collectWatchTabCandidates(watchUrl);
-  if (!candidates.length) return [];
+  if (!candidates.length) {
+    return { items: [], diag };
+  }
 
   /** @type {{ no: string, uid: string, name: string, av: string }[]} */
   const merged = [];
+  let sawOkTrue = false;
+  let sawOkFalse = false;
+  let lastRejectError = '';
+  let sawSendError = false;
+
   for (const candidate of candidates) {
     try {
       const ranked = await listWatchFramesWithInnerText(candidate.id);
@@ -3442,7 +4203,7 @@ async function requestInterceptCacheFromOpenTab(watchUrl, opts = {}) {
         if (tried.has(fid)) continue;
         tried.add(fid);
         try {
-          const res = /** @type {{ ok?: boolean, items?: unknown }|null} */ (
+          const res = /** @type {{ ok?: boolean, items?: unknown, error?: unknown }|null} */ (
             await tabsSendMessageWithRetry(
               candidate.id,
               {
@@ -3452,17 +4213,49 @@ async function requestInterceptCacheFromOpenTab(watchUrl, opts = {}) {
               { frameId: fid, maxAttempts: 5, delayMs: 90 }
             )
           );
-          if (!res || res.ok !== true) continue;
-          merged.push(...normalizeInterceptCacheItems(res.items));
+          if (!res) continue;
+          if (res.ok === true) {
+            sawOkTrue = true;
+            const chunk = normalizeInterceptCacheItems(res.items);
+            merged.push(...chunk);
+            continue;
+          }
+          if (res.ok === false) {
+            sawOkFalse = true;
+            const er = String(res.error || '').trim();
+            if (er) lastRejectError = er;
+          }
         } catch {
-          // 次の frameId を試す
+          sawSendError = true;
         }
       }
     } catch {
-      // 次の candidate tab を試す
+      sawSendError = true;
     }
   }
-  return mergeInterceptCacheItems(merged);
+
+  const items = mergeInterceptCacheItems(merged);
+  if (items.length > 0) {
+    diag.code = 'ok';
+    diag.detail = '';
+  } else if (sawOkTrue) {
+    diag.code = 'ok_empty';
+    diag.detail =
+      '取り込みは成功しましたが0件でした。watchを開いたままポップアップを更新するか、ページを再読み込みしてください。';
+  } else if (sawOkFalse) {
+    diag.code = 'export_rejected';
+    diag.detail = lastRejectError
+      ? lastRejectError.slice(0, 120)
+      : 'ページ側が取り込みを拒否しました';
+  } else if (sawSendError) {
+    diag.code = 'message_failed';
+    diag.detail = 'ページとの通信に失敗しました（タブの再読み込みを試してください）';
+  } else {
+    diag.code = 'no_success_response';
+    diag.detail = 'ページから応答がありません（対象のwatchタブが開いているか確認してください）';
+  }
+
+  return { items, diag };
 }
 
 /**
@@ -3545,18 +4338,28 @@ function mergeCommentsWithInterceptCache(entries, items, opts = {}) {
     /** @type {PopupCommentEntry} */
     let out = e;
 
-    if (hit.uid && (!curUid || shouldReplaceUid(curUid))) {
-      if (curUid && curUid !== hit.uid) uidReplaced += 1;
-      out = { ...out, userId: hit.uid };
-      changed = true;
+    if (hit.uid) {
+      const tie = shouldReplaceUid(curUid) ? 'incoming' : 'existing';
+      const chosen = pickStrongerUserId(curUid, hit.uid, tie);
+      if (chosen && chosen !== curUid) {
+        if (curUid) uidReplaced += 1;
+        out = { ...out, userId: chosen };
+        changed = true;
+      }
     }
     if (hit.name && !curName) {
       out = { ...out, nickname: hit.name };
       changed = true;
     }
-    if (hit.av && !curAv) {
-      out = { ...out, avatarUrl: hit.av };
-      changed = true;
+    const uidForAv = String(out.userId || '').trim();
+    const hitAv = String(hit.av || '').trim();
+    if (hitAv && isHttpOrHttpsUrl(hitAv)) {
+      const curSc = commentEnrichmentAvatarScore(uidForAv, curAv);
+      const hitSc = commentEnrichmentAvatarScore(uidForAv, hitAv);
+      if (hitSc > curSc) {
+        out = { ...out, avatarUrl: hitAv };
+        changed = true;
+      }
     }
 
     if (changed) patched += 1;
@@ -3755,36 +4558,27 @@ function cleanupSupportVisualScrollObserver() {
   }
 }
 
-let usageTermsGateWired = false;
-
 function setUsageTermsGateDismissedUi() {
   document.documentElement.setAttribute('data-nl-usage-terms-ack', '1');
 }
 
+function writeUsageTermsAckToLocalMirror() {
+  try {
+    globalThis.localStorage?.setItem(KEY_USAGE_TERMS_ACK, '1');
+  } catch {
+    // no-op
+  }
+}
+
+/** 利用条件オーバーレイは出さず、同意済みとして storage に同期する（本文は popup.html に残し参照用） */
 async function applyUsageTermsGateState() {
-  if (!hasExtensionContext()) {
-    setUsageTermsGateDismissedUi();
-    return;
-  }
-  const gate = $('usageTermsGate');
-  const chk = /** @type {HTMLInputElement|null} */ ($('usageTermsAckCheckbox'));
-  const btn = /** @type {HTMLButtonElement|null} */ ($('usageTermsContinueBtn'));
-  if (!usageTermsGateWired && gate && chk && btn) {
-    usageTermsGateWired = true;
-    const syncBtn = () => {
-      btn.disabled = !chk.checked;
-    };
-    chk.addEventListener('change', syncBtn);
-    btn.addEventListener('click', async () => {
-      if (!chk.checked || !hasExtensionContext()) return;
-      const ok = await storageSetSafe({ [KEY_USAGE_TERMS_ACK]: true });
-      if (!ok) return;
-      setUsageTermsGateDismissedUi();
-    });
-  }
-  const bag = await storageGetSafe(KEY_USAGE_TERMS_ACK, {});
-  if (isUsageTermsAcknowledged(bag[KEY_USAGE_TERMS_ACK])) {
-    setUsageTermsGateDismissedUi();
+  setUsageTermsGateDismissedUi();
+  if (!hasExtensionContext()) return;
+  writeUsageTermsAckToLocalMirror();
+  try {
+    await storageSetSafe({ [KEY_USAGE_TERMS_ACK]: true });
+  } catch {
+    // no-op
   }
 }
 
@@ -3889,19 +4683,448 @@ async function refreshVoiceInputDeviceList() {
   }
 }
 
-/** @returns {Promise<{ url: string, fromActiveTab: boolean }>} */
-async function resolveWatchContextUrl() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const url = tab?.url || '';
-  if (isNicoLiveWatchUrl(url)) {
-    return { url, fromActiveTab: true };
+/**
+ * 開発監視向け: サムネ・ID・表示名・コメント（公式比）の取得率をチャートで表示。
+ *
+ * @param {{
+ *   snapshot: WatchPageSnapshot|null,
+ *   liveId: string,
+ *   displayCount: number,
+ *   storageCount: number,
+ *   avatarStats?: import('../lib/devMonitorAvatarStats.js').StoredCommentAvatarStats|null,
+ * }} p
+ */
+function renderAcquisitionDashboard(p) {
+  const host = $('devMonitorAcquisition');
+  if (!host) return;
+
+  const liveId = String(p.liveId || '').trim();
+  if (!liveId) {
+    host.innerHTML =
+      '<section class="nl-acquisition nl-acquisition--empty" aria-label="データ取得率">' +
+      '<p class="nl-acquisition__empty">ニコ生 watch を開いた状態でポップアップを開くと、取得率チャートが表示されます（記録0件でも表示）。</p>' +
+      '</section>';
+    return;
   }
-  const stash = await chrome.storage.local.get(KEY_LAST_WATCH_URL);
-  const last = stash[KEY_LAST_WATCH_URL];
-  if (typeof last === 'string' && isNicoLiveWatchUrl(last)) {
-    return { url: last, fromActiveTab: false };
+
+  const avs = p.avatarStats;
+  const t = avs && typeof avs.total === 'number' ? Math.max(0, avs.total) : 0;
+  const thumb = t > 0 ? (avs.withHttpAvatar / t) * 100 : 0;
+  const idPct = t > 0 ? ((t - avs.missingUserId) / t) * 100 : 0;
+  const nick = t > 0 ? (avs.withNickname / t) * 100 : 0;
+  const oc =
+    p.snapshot &&
+    typeof p.snapshot.officialCommentCount === 'number' &&
+    Number.isFinite(p.snapshot.officialCommentCount)
+      ? p.snapshot.officialCommentCount
+      : null;
+  /** @type {number|null} */
+  let commentPct = null;
+  if (oc != null && oc > 0) {
+    commentPct = Math.min(100, (p.displayCount / oc) * 100);
   }
-  return { url: '', fromActiveTab: true };
+  const radarComment = commentPct != null ? commentPct : 0;
+
+  const cx = 60;
+  const cy = 60;
+  const R = 44;
+  const vals = [thumb, idPct, nick, radarComment];
+  const polyPts = vals
+    .map((pct, i) => {
+      const th = -Math.PI / 2 + (i * Math.PI) / 2;
+      const rr = (Math.max(0, Math.min(100, pct)) / 100) * R;
+      const x = cx + rr * Math.cos(th);
+      const y = cy + rr * Math.sin(th);
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(' ');
+  const ringPts = [0, 1, 2, 3]
+    .map((i) => {
+      const th = -Math.PI / 2 + (i * Math.PI) / 2;
+      const x = cx + R * Math.cos(th);
+      const y = cy + R * Math.sin(th);
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(' ');
+  const midR = R * 0.5;
+  const midPts = [0, 1, 2, 3]
+    .map((i) => {
+      const th = -Math.PI / 2 + (i * Math.PI) / 2;
+      const x = cx + midR * Math.cos(th);
+      const y = cy + midR * Math.sin(th);
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    })
+    .join(' ');
+  const axisLines = [0, 1, 2, 3]
+    .map((i) => {
+      const th = -Math.PI / 2 + (i * Math.PI) / 2;
+      const x2 = cx + R * Math.cos(th);
+      const y2 = cy + R * Math.sin(th);
+      return `<line x1="${cx}" y1="${cy}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(
+        2
+      )}" stroke="#94a3b8" stroke-width="0.45" opacity="0.4"/>`;
+    })
+    .join('');
+
+  const fmt = (n) => `${n.toFixed(1)}%`;
+  const commentBar = commentPct != null ? fmt(commentPct) : '—';
+
+  const wThumb = Math.max(0, thumb);
+  const wId = Math.max(0, idPct);
+  const wNick = Math.max(0, nick);
+  const wComm = commentPct != null ? Math.max(0, commentPct) : 0;
+  const wSum = wThumb + wId + wNick + wComm;
+  /** @type {string} */
+  let pieDiskBackground = '#94a3b8';
+  if (wSum > 0.001) {
+    let a = 0;
+    /** @type {string[]} */
+    const segs = [];
+    const pushSeg = (frac, color) => {
+      const deg = (frac / wSum) * 360;
+      const b = a + deg;
+      segs.push(`${color} ${a}deg ${b}deg`);
+      a = b;
+    };
+    pushSeg(wThumb, '#0f8fd8');
+    pushSeg(wId, '#6366f1');
+    pushSeg(wNick, '#ea580c');
+    pushSeg(wComm, '#0d9488');
+    pieDiskBackground = `conic-gradient(${segs.join(',')})`;
+  }
+
+  const footExtra =
+    t <= 0
+      ? '記録0件のためサムネ・ID・名前は0%。ログイン不要で表示します。'
+      : '';
+  const footMain =
+    commentPct != null
+      ? 'コメント＝記録の表示件数÷公式コメント数（上限100%）。'
+      : 'コメント率は公式件数が無いとき「—」（レーダー・円のコメント分は0扱い）。';
+  const foot = escapeHtml(footExtra ? `${footMain} ${footExtra}` : footMain);
+
+  host.innerHTML =
+    '<section class="nl-acquisition" aria-label="データ取得率">' +
+    '<h3 class="nl-acquisition__title">現在のデータ取得率</h3>' +
+    '<div class="nl-acquisition__charts">' +
+    '<div class="nl-acquisition__radar">' +
+    '<svg viewBox="0 0 120 120" aria-hidden="true">' +
+    axisLines +
+    `<polygon fill="none" stroke="#94a3b8" stroke-width="0.55" opacity="0.45" points="${ringPts}" />` +
+    `<polygon fill="none" stroke="#94a3b8" stroke-width="0.45" opacity="0.32" points="${midPts}" />` +
+    `<polygon fill="rgb(15 143 216 / 22%)" stroke="#0f8fd8" stroke-width="1.2" points="${polyPts}" />` +
+    '</svg>' +
+    '<span class="nl-acquisition__cap">4項目バランス（レーダー）</span>' +
+    '</div>' +
+    '<div class="nl-acquisition__bars">' +
+    `<div class="nl-acquisition__bar-row"><p class="nl-acquisition__bar-label">サムネ</p><div class="nl-acquisition__bar-track"><div class="nl-acquisition__bar-fill nl-acquisition__bar-fill--thumb" style="width:${Math.min(
+      100,
+      thumb
+    )}%"></div></div><p class="nl-acquisition__bar-pct">${escapeHtml(
+      fmt(thumb)
+    )}</p></div>` +
+    `<div class="nl-acquisition__bar-row"><p class="nl-acquisition__bar-label">ID</p><div class="nl-acquisition__bar-track"><div class="nl-acquisition__bar-fill nl-acquisition__bar-fill--id" style="width:${Math.min(
+      100,
+      idPct
+    )}%"></div></div><p class="nl-acquisition__bar-pct">${escapeHtml(
+      fmt(idPct)
+    )}</p></div>` +
+    `<div class="nl-acquisition__bar-row"><p class="nl-acquisition__bar-label">名前</p><div class="nl-acquisition__bar-track"><div class="nl-acquisition__bar-fill nl-acquisition__bar-fill--nick" style="width:${Math.min(
+      100,
+      nick
+    )}%"></div></div><p class="nl-acquisition__bar-pct">${escapeHtml(
+      fmt(nick)
+    )}</p></div>` +
+    `<div class="nl-acquisition__bar-row"><p class="nl-acquisition__bar-label">コメ</p><div class="nl-acquisition__bar-track"><div class="nl-acquisition__bar-fill nl-acquisition__bar-fill--comment" style="width:${commentPct != null ? Math.min(100, commentPct) : 0}%"></div></div><p class="nl-acquisition__bar-pct">${escapeHtml(
+      commentBar
+    )}</p></div>` +
+    '</div>' +
+    '<div class="nl-acquisition__pie">' +
+    '<div class="nl-acquisition__pie-disk"></div>' +
+    '<span class="nl-acquisition__cap">構成比（円）</span>' +
+    '</div>' +
+    '</div>' +
+    '<ul class="nl-acquisition__legend">' +
+    `<li><span class="nl-acquisition__dot nl-acquisition__dot--thumb" aria-hidden="true"></span>アイコン画像のURL（取れている割合）</li>` +
+    `<li><span class="nl-acquisition__dot nl-acquisition__dot--id" aria-hidden="true"></span>ユーザーID（取れている割合）</li>` +
+    `<li><span class="nl-acquisition__dot nl-acquisition__dot--nick" aria-hidden="true"></span>表示名・ニックネーム（付いている割合）</li>` +
+    `<li><span class="nl-acquisition__dot nl-acquisition__dot--comment" aria-hidden="true"></span>コメント（記録÷公式）</li>` +
+    '</ul>' +
+    `<p class="nl-acquisition__footnote">${foot}</p>` +
+    '</section>';
+
+  const disk = host.querySelector('.nl-acquisition__pie-disk');
+  if (disk instanceof HTMLElement) {
+    disk.style.background = pieDiskBackground;
+  }
+
+  const win = typeof globalThis !== 'undefined' ? globalThis : window;
+  appendTrendPoint(win, liveId, {
+    thumb,
+    idPct,
+    nick,
+    commentPct,
+    displayCount: p.displayCount,
+    storageCount: p.storageCount
+  });
+  void persistTrendPointChrome(liveId, {
+    thumb,
+    idPct,
+    nick,
+    commentPct,
+    displayCount: p.displayCount,
+    storageCount: p.storageCount
+  });
+}
+
+/**
+ * @param {{
+ *   snapshot: WatchPageSnapshot|null,
+ *   liveId: string,
+ *   displayCount: number,
+ *   storageCount: number,
+ *   avatarStats?: import('../lib/devMonitorAvatarStats.js').StoredCommentAvatarStats|null,
+ *   profileGaps?: import('../lib/devMonitorAvatarStats.js').StoredCommentProfileGaps|null
+ * }} p
+ */
+function renderDevMonitorSecondaryViz(p, opts = {}) {
+  const vizHost = $('devMonitorViz');
+  if (!vizHost) return;
+  const liveId = String(p.liveId || '').trim();
+  if (!liveId) {
+    vizHost.innerHTML =
+      '<div class="nl-dev-monitor-viz">' +
+      '<p class="nl-viz-block__empty">ニコ生の視聴ページ（watch）を開くと、件数の比較や推移のグラフが表示されます。</p>' +
+      '</div>';
+    return;
+  }
+
+  const win = typeof globalThis !== 'undefined' ? globalThis : window;
+  const trend =
+    opts.mergedTrend != null ? opts.mergedTrend : readTrendSeries(win, liveId);
+  const persisted = Boolean(opts.mergedTrend);
+
+  const snap = p.snapshot;
+  const oc =
+    snap &&
+    typeof snap.officialCommentCount === 'number' &&
+    Number.isFinite(snap.officialCommentCount)
+      ? snap.officialCommentCount
+      : null;
+
+  /** @type {string[]} */
+  const parts = [];
+  parts.push(
+    htmlOfficialVsRecordedBar(
+      officialVsRecordedBarState({
+        displayCount: p.displayCount,
+        officialCount: oc
+      })
+    )
+  );
+  if (
+    snap &&
+    typeof snap.officialCaptureRatio === 'number' &&
+    Number.isFinite(snap.officialCaptureRatio)
+  ) {
+    parts.push(htmlCaptureRatioBar(snap.officialCaptureRatio));
+  }
+  const gaps = p.profileGaps;
+  if (gaps && p.storageCount > 0) {
+    parts.push(htmlProfileGapBars(profileGapBarSeries(gaps)));
+  }
+  const dbg =
+    snap?._debug && typeof snap._debug === 'object'
+      ? /** @type {Record<string, unknown>} */ (snap._debug)
+      : null;
+  if (
+    dbg &&
+    dbg.commentTypeVisibleSample != null &&
+    typeof dbg.commentTypeVisibleSample === 'object'
+  ) {
+    parts.push(
+      htmlCommentTypeBars(
+        commentTypeDistribution(
+          /** @type {Record<string, unknown>} */ (dbg.commentTypeVisibleSample)
+        )
+      )
+    );
+  }
+  if (dbg && typeof dbg.wsAge === 'number') {
+    parts.push(htmlWsStalenessBar(wsStalenessState(dbg.wsAge)));
+  }
+  if (trend.length >= 1) {
+    const series = trendToSparklineArrays(trend);
+    parts.push(htmlAcquisitionSparklines(series, { persisted }));
+    if (trendHasCountSamples(trend)) {
+      parts.push(htmlDualCountSparklines(series.displaySeries, series.storageSeries));
+    }
+  }
+  vizHost.innerHTML = `<div class="nl-dev-monitor-viz">${parts.filter(Boolean).join('')}</div>`;
+}
+
+/**
+ * @param {{
+ *   snapshot: WatchPageSnapshot|null,
+ *   liveId: string,
+ *   displayCount: number,
+ *   storageCount: number,
+ *   avatarStats?: import('../lib/devMonitorAvatarStats.js').StoredCommentAvatarStats|null,
+ *   profileGaps?: import('../lib/devMonitorAvatarStats.js').StoredCommentProfileGaps|null
+ * }} p
+ */
+function renderDevMonitorPanel(p) {
+  lastDevMonitorPanelParams = p;
+  const mktBtn = /** @type {HTMLButtonElement|null} */ ($('devMonitorExportMarketingBtn'));
+  if (mktBtn) mktBtn.disabled = !String(p.liveId || '').trim();
+  const statsEl = $('devMonitorStats');
+  const jsonEl = $('devMonitorJson');
+  const dlChartsEl = $('devMonitorDlCharts');
+  renderAcquisitionDashboard(p);
+  renderDevMonitorSecondaryViz(p);
+  if (dlChartsEl) {
+    dlChartsEl.innerHTML = buildDevMonitorDlChartsHtml(p);
+  }
+  if (!statsEl || !jsonEl) return;
+
+  const win = typeof globalThis !== 'undefined' ? globalThis : window;
+  const lid = String(p.liveId || '').trim();
+  if (lid) {
+    void readMergedTrendSeries(win, lid).then((merged) => {
+      renderDevMonitorSecondaryViz(p, { mergedTrend: merged });
+    });
+  }
+
+  const snap = p.snapshot;
+  const oc =
+    snap &&
+    typeof snap.officialCommentCount === 'number' &&
+    Number.isFinite(snap.officialCommentCount)
+      ? snap.officialCommentCount
+      : null;
+  const gap =
+    oc != null && p.liveId ? oc - p.displayCount : null;
+
+  /** @type {[string, string][]} */
+  const rows = [];
+  rows.push(['配信ID（lv…）', p.liveId || '—']);
+  rows.push(['このPCに保存した件数', String(p.storageCount)]);
+  rows.push(['一覧に出している件数', String(p.displayCount)]);
+  rows.push(['公式の累計コメント数', oc != null ? String(oc) : '—']);
+  rows.push(['公式との差（公式−一覧）', gap != null ? String(gap) : '—']);
+  rows.push([
+    '差が出る主な理由（参考）',
+    '画面に載っていないコメントは取り込めません。種類の扱いの違い・通信の切れ・サイトの作り変わりなどが重なり得ます（下の「種類の内訳」も参照）。'
+  ]);
+  rows.push([
+    '公式と「記録」のちがい',
+    '公式は放送の累計です。記録は、このPCの拡張が実際に取れた行だけです（タイムシフト・別タブ・高流量・仕様変更で差が出ます）。'
+  ]);
+
+  const avs = p.avatarStats;
+  if (avs && avs.total > 0) {
+    rows.push(['アイコンURLが残っている件数', String(avs.withHttpAvatar)]);
+    rows.push(['アイコンURLが無い件数', String(avs.withoutHttpAvatar)]);
+    rows.push([
+      'アイコンURLがある割合',
+      `${((avs.withHttpAvatar / avs.total) * 100).toFixed(1)}%`
+    ]);
+    rows.push(['既定アイコン相当のみの件数', String(avs.syntheticDefaultAvatar)]);
+    rows.push(['表示名（ニックネーム）がある件数', String(avs.withNickname)]);
+    rows.push(['表示名が無い件数', String(avs.withoutNickname)]);
+    rows.push(['ユーザーIDが数字の件数', String(avs.numericUserId)]);
+    rows.push(['ユーザーIDが匿名風などの件数', String(avs.nonNumericUserId)]);
+    rows.push(['ユーザーIDが取れていない件数', String(avs.missingUserId)]);
+  }
+
+  const gaps = p.profileGaps;
+  if (gaps && p.storageCount > 0) {
+    rows.push(['── 利用者の種類別（IDがある行だけ）', '──']);
+    rows.push(['数字ID・アイコンあり', String(gaps.numericUidWithHttpAvatar)]);
+    rows.push(['数字ID・アイコンなし', String(gaps.numericUidWithoutHttpAvatar)]);
+    rows.push(['匿名風ID・アイコンあり', String(gaps.anonStyleUidWithHttpAvatar)]);
+    rows.push(['匿名風ID・アイコンなし', String(gaps.anonStyleUidWithoutHttpAvatar)]);
+    rows.push(['数字ID・名前あり', String(gaps.numericWithNickname)]);
+    rows.push(['数字ID・名前なし', String(gaps.numericWithoutNickname)]);
+    rows.push(['匿名風・名前あり', String(gaps.anonWithNickname)]);
+    rows.push(['匿名風・名前なし', String(gaps.anonWithoutNickname)]);
+  }
+
+  if (snap?._debug && typeof snap._debug === 'object') {
+    const d = /** @type {Record<string, unknown>} */ (snap._debug);
+    if (typeof d.wsAge === 'number')
+      rows.push(['配信ページの更新からの経過（ms・参考）', String(d.wsAge)]);
+    if (d.intercept != null)
+      rows.push(['視聴ページ内の利用者メモ（件数）', String(d.intercept)]);
+    if (d.ndgr != null && String(d.ndgr).trim())
+      rows.push(['配信データの内部状態（記号・開発向け）', String(d.ndgr)]);
+    if (d.ndgrLdStream != null && String(d.ndgrLdStream).trim()) {
+      rows.push(['配信データの受信状況（記号・開発向け）', String(d.ndgrLdStream)]);
+    }
+    if (
+      d.commentTypeVisibleSample != null &&
+      typeof d.commentTypeVisibleSample === 'object' &&
+      Object.keys(d.commentTypeVisibleSample).length
+    ) {
+      rows.push([
+        'いま画面に出ているコメントの種類（内部キー）',
+        JSON.stringify(d.commentTypeVisibleSample)
+      ]);
+    }
+    if (d.piPost != null) {
+      rows.push(['ページが受け取った取り込み指示（件数）', String(d.piPost)]);
+    }
+    if (d.piEnq != null) {
+      rows.push(['ページが処理待ちにした件数', String(d.piEnq)]);
+    }
+  }
+
+  {
+    const st = STORY_AVATAR_DIAG_STATE;
+    if (p.liveId && (st.interceptMapOnPage >= 0 || st.interceptExportCode || st.interceptExportRows > 0)) {
+      rows.push(['── 直近の取り込み（ポップアップから）', '──']);
+      rows.push([
+        'watchタブ内の一時対応表（件数）',
+        st.interceptMapOnPage >= 0 ? String(st.interceptMapOnPage) : '—'
+      ]);
+      rows.push(['取り込んだ行数', String(st.interceptExportRows)]);
+      rows.push(['結果コード', st.interceptExportCode || '—']);
+      if (String(st.interceptExportDetail || '').trim()) {
+        rows.push(['補足メッセージ', String(st.interceptExportDetail).trim()]);
+      }
+    }
+  }
+
+  statsEl.innerHTML = rows
+    .map(
+      ([dt, dd]) =>
+        `<div class="nl-dev-monitor__row"><dt>${escapeHtml(dt)}</dt><dd>${escapeHtml(dd)}</dd></div>`
+    )
+    .join('');
+
+  if (!p.liveId) {
+    jsonEl.textContent =
+      'watch を開いているときにスナップショットが入ります。本文は出しません。';
+    return;
+  }
+  const debugSub = pickDevMonitorDebugSubset(
+    snap?._debug && typeof snap._debug === 'object'
+      ? /** @type {Record<string, unknown>} */ (snap._debug)
+      : undefined
+  );
+  const outJson = { ...debugSub };
+  if (avs && avs.total > 0) {
+    outJson.avatarStats = avs;
+  }
+  if (gaps && p.storageCount > 0) {
+    outJson.profileGaps = gaps;
+  }
+  jsonEl.textContent = JSON.stringify(outJson, null, 2);
+}
+
+/** 収録・スクショ向け: `html.nl-calm-motion` でループアニメ等を止める */
+function applyCalmPanelMotionClass(enabled) {
+  document.documentElement.classList.toggle('nl-calm-motion', Boolean(enabled));
 }
 
 async function refresh() {
@@ -3918,27 +5141,43 @@ async function refresh() {
   const thumbCountEl = $('thumbCount');
   const commentInput = /** @type {HTMLTextAreaElement} */ ($('commentInput'));
   const postBtn = /** @type {HTMLButtonElement} */ ($('postCommentBtn'));
-  const reloadWatchBtn = /** @type {HTMLButtonElement|null} */ ($('reloadWatchTabBtn'));
 
   try {
-  await loadSelfPostedRecentsIntoCache();
-
-  const { url, fromActiveTab } = await resolveWatchContextUrl();
+  document.documentElement.removeAttribute('data-nl-popup-content-painted');
+  const [tabs, openBag] = await Promise.all([
+    chrome.tabs.query({ active: true, currentWindow: true }),
+    chrome.storage.local.get([
+      KEY_SELF_POSTED_RECENTS,
+      KEY_LAST_WATCH_URL,
+      KEY_RECORDING,
+      KEY_INLINE_PANEL_WIDTH_MODE,
+      KEY_CALM_PANEL_MOTION,
+      KEY_STORAGE_WRITE_ERROR,
+      KEY_COMMENT_PANEL_STATUS
+    ])
+  ]);
+  applySelfPostedRecentsFromBag(openBag);
+  const calmOn = normalizeCalmPanelMotion(openBag[KEY_CALM_PANEL_MOTION], {
+    inlineDefault: INLINE_MODE
+  });
+  applyCalmPanelMotionClass(calmOn);
+  const calmMotionElHydrate = /** @type {HTMLInputElement|null} */ ($('calmPanelMotion'));
+  if (calmMotionElHydrate) calmMotionElHydrate.checked = calmOn;
+  const { url, fromActiveTab } = resolveWatchUrlFromTabAndStash(
+    tabs[0],
+    openBag[KEY_LAST_WATCH_URL]
+  );
   const resolvedLv = extractLiveIdFromUrl(url);
   const viewerLvForError =
     isNicoLiveWatchUrl(url) && resolvedLv ? resolvedLv : '';
-  await renderStorageErrorBanner(viewerLvForError);
-  await renderCommentHarvestBanner(viewerLvForError);
+  applyStorageErrorBannerFromBag(openBag, viewerLvForError);
+  applyCommentHarvestBannerFromBag(openBag, viewerLvForError);
 
-  const bagRec = await chrome.storage.local.get([
-    KEY_RECORDING,
-    KEY_INLINE_PANEL_WIDTH_MODE
-  ]);
-  toggle.checked = isRecordingEnabled(bagRec[KEY_RECORDING]);
+  toggle.checked = isRecordingEnabled(openBag[KEY_RECORDING]);
   toggle.disabled = false;
 
   const panelMode = normalizeInlinePanelWidthMode(
-    bagRec[KEY_INLINE_PANEL_WIDTH_MODE]
+    openBag[KEY_INLINE_PANEL_WIDTH_MODE]
   );
   const radioPlayerRow = /** @type {HTMLInputElement|null} */ (
     $('inlinePanelWidthPlayerRow')
@@ -3966,6 +5205,7 @@ async function refresh() {
     watchMetaCache.key = '';
     watchMetaCache.snapshot = null;
     clearWatchMetaCard();
+    popupUserCommentProfileMap = null;
     syncStorySourceEntries('', []);
     resetStoryAvatarDiagState();
     renderCharacterScene({
@@ -3976,12 +5216,24 @@ async function refresh() {
       snapshot: null
     });
     if (postBtn) postBtn.disabled = true;
-    if (reloadWatchBtn) reloadWatchBtn.disabled = true;
+    setReloadWatchTabUiDisabled(true);
     syncVoiceCommentButton();
     if (commentInput) {
       commentInput.placeholder = 'watchページを開くとコメント送信できます';
     }
-    renderUserRooms([]);
+    renderUserRooms([], '');
+    renderDevMonitorPanel({
+      snapshot: null,
+      liveId: '',
+      displayCount: 0,
+      storageCount: 0,
+      avatarStats: null,
+      profileGaps: null
+    });
+    hideCommentVelocityLine();
+    void renderSessionSummaryComparePanel('');
+    void renderGiftQuickStatsPanel('');
+    markPopupRefreshContentPainted();
     return;
   }
 
@@ -4003,6 +5255,7 @@ async function refresh() {
     watchMetaCache.key = '';
     watchMetaCache.snapshot = null;
     clearWatchMetaCard();
+    popupUserCommentProfileMap = null;
     syncStorySourceEntries('', []);
     resetStoryAvatarDiagState();
     renderCharacterScene({
@@ -4013,32 +5266,71 @@ async function refresh() {
       snapshot: null
     });
     if (postBtn) postBtn.disabled = true;
-    if (reloadWatchBtn) reloadWatchBtn.disabled = true;
+    setReloadWatchTabUiDisabled(true);
     syncVoiceCommentButton();
     if (commentInput) {
       commentInput.placeholder = 'コメントを入力して送信';
     }
-    renderUserRooms([]);
+    renderUserRooms([], '');
+    renderDevMonitorPanel({
+      snapshot: null,
+      liveId: '',
+      displayCount: 0,
+      storageCount: 0,
+      avatarStats: null,
+      profileGaps: null
+    });
+    hideCommentVelocityLine();
+    void renderSessionSummaryComparePanel('');
+    void renderGiftQuickStatsPanel('');
+    markPopupRefreshContentPainted();
     return;
   }
 
   const snapshotKey = `${lv}|${url}|s17`;
-  if (watchMetaCache.key !== snapshotKey || !watchMetaCache.snapshot) {
-    watchMetaCache.key = snapshotKey;
-    const { snapshot } = await requestWatchPageSnapshotFromOpenTab(url);
-    watchMetaCache.snapshot = snapshot;
-  }
-  const watchSnapshot = watchMetaCache.snapshot;
-
   const key = commentsStorageKey(lv);
-  const data = await chrome.storage.local.get(key);
+  const snapshotCacheHit =
+    watchMetaCache.key === snapshotKey && watchMetaCache.snapshot != null;
+  let watchSnapshot = snapshotCacheHit ? watchMetaCache.snapshot : null;
+
+  if (!snapshotCacheHit) {
+    watchMetaCache.key = snapshotKey;
+    watchMetaCache.snapshot = null;
+  }
+
+  /** @type {Record<string, unknown>} */
+  const data = await readStorageBagWithRetry(
+    () =>
+      chrome.storage.local.get([key, KEY_USER_COMMENT_PROFILE_CACHE]),
+    { attempts: 4, delaysMs: [0, 50, 120, 280] }
+  );
   let arr = Array.isArray(data[key]) ? data[key] : [];
+  popupUserCommentProfileMap = normalizeUserCommentProfileMap(
+    data[KEY_USER_COMMENT_PROFILE_CACHE]
+  );
   const normalizedStored = normalizeStoredCommentEntries(
     /** @type {PopupCommentEntry[]} */ (arr)
   );
   if (normalizedStored.changed) {
     arr = normalizedStored.next;
-    await storageSetSafe({ [key]: arr });
+  }
+  const profAfterNormalize = popupMergeUserCommentProfileCache(arr);
+  arr = profAfterNormalize.arr;
+  if (
+    normalizedStored.changed ||
+    profAfterNormalize.commentsPatched ||
+    profAfterNormalize.cacheTouched
+  ) {
+    const save = {};
+    if (normalizedStored.changed || profAfterNormalize.commentsPatched) {
+      save[key] = arr;
+    }
+    if (profAfterNormalize.cacheTouched) {
+      save[KEY_USER_COMMENT_PROFILE_CACHE] = popupUserCommentProfileMap;
+    }
+    if (Object.keys(save).length) {
+      await storageSetSafe(save);
+    }
   }
   STORY_AVATAR_DIAG_STATE.total = arr.length;
   STORY_AVATAR_DIAG_STATE.withUid = countEntriesWithUserId(arr);
@@ -4059,6 +5351,10 @@ async function refresh() {
   STORY_AVATAR_DIAG_STATE.mergedPatched = 0;
   STORY_AVATAR_DIAG_STATE.mergedUidReplaced = 0;
   STORY_AVATAR_DIAG_STATE.stripped = 0;
+  STORY_AVATAR_DIAG_STATE.interceptExportRows = 0;
+  STORY_AVATAR_DIAG_STATE.interceptExportCode = '';
+  STORY_AVATAR_DIAG_STATE.interceptExportDetail = '';
+  syncInterceptMapDiagFromSnapshot(watchSnapshot);
   const strippedViewerAvatar = stripViewerAvatarContamination(
     arr,
     lv,
@@ -4066,7 +5362,13 @@ async function refresh() {
   );
   if (strippedViewerAvatar.patched > 0) {
     arr = strippedViewerAvatar.next;
-    await storageSetSafe({ [key]: arr });
+    const profAfterStrip = popupMergeUserCommentProfileCache(arr);
+    arr = profAfterStrip.arr;
+    const saveStrip = { [key]: arr };
+    if (profAfterStrip.cacheTouched) {
+      saveStrip[KEY_USER_COMMENT_PROFILE_CACHE] = popupUserCommentProfileMap;
+    }
+    await storageSetSafe(saveStrip);
   }
   STORY_AVATAR_DIAG_STATE.stripped = strippedViewerAvatar.patched;
   if (INTERCEPT_BACKFILL_STATE.liveId !== lv) {
@@ -4081,107 +5383,212 @@ async function refresh() {
     !INTERCEPT_BACKFILL_STATE.deepTried &&
     arr.length >= 30 &&
     missingIdCount >= Math.ceil(arr.length * 0.4);
-  const interceptItems = await requestInterceptCacheFromOpenTab(url, {
-    deep: shouldDeep
-  });
-  if (shouldDeep) {
-    INTERCEPT_BACKFILL_STATE.deepTried = true;
-  }
-  if (interceptItems.length > 0) {
-    STORY_AVATAR_DIAG_STATE.interceptItems = interceptItems.length;
-    STORY_AVATAR_DIAG_STATE.interceptWithUid = interceptItems.reduce(
-      (sum, it) => (it.uid ? sum + 1 : sum),
-      0
-    );
-    STORY_AVATAR_DIAG_STATE.interceptWithAvatar = interceptItems.reduce(
-      (sum, it) => (it.av ? sum + 1 : sum),
-      0
-    );
-    const suspectUidSet = new Set(
-      [
-        String(watchSnapshot?.viewerUserId || '').trim(),
-        String(watchSnapshot?.broadcasterUserId || '').trim()
-      ].filter(Boolean)
-    );
-    const merged = mergeCommentsWithInterceptCache(arr, interceptItems, {
-      preferInterceptUidSet: suspectUidSet
+
+  function paintWatchPopupUi() {
+    syncInterceptMapDiagFromSnapshot(watchSnapshot);
+    STORY_AVATAR_DIAG_STATE.total = arr.length;
+    STORY_AVATAR_DIAG_STATE.withUid = countEntriesWithUserId(arr);
+    STORY_AVATAR_DIAG_STATE.withAvatar = countEntriesWithAvatar(arr);
+    STORY_AVATAR_DIAG_STATE.uniqueAvatar = countUniqueAvatarEntries(arr);
+    {
+      const resolvedAvatar = countResolvedAvatarEntries(arr, lv);
+      STORY_AVATAR_DIAG_STATE.resolvedAvatar = resolvedAvatar.total;
+      STORY_AVATAR_DIAG_STATE.resolvedUniqueAvatar = resolvedAvatar.unique;
+    }
+    STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(arr, lv);
+    STORY_AVATAR_DIAG_STATE.selfSaved = countSavedOwnPostedEntries(arr);
+    STORY_AVATAR_DIAG_STATE.selfPending = countPendingSelfPostedRecentsForLive(lv);
+    STORY_AVATAR_DIAG_STATE.selfPendingMatched = getOwnPostedMatchedIdSet(arr, lv).size;
+    const displayEntries = buildDisplayCommentEntries(arr, lv);
+    STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(displayEntries, lv);
+    setCountDisplay(String(displayEntries.length), watchSnapshot);
+    renderCommentTicker(/** @type {PopupCommentEntry[]} */ (displayEntries));
+    exportBtn.disabled = false;
+    exportBtn.dataset.liveId = lv;
+    exportBtn.dataset.storageKey = key;
+    exportBtn.dataset.watchUrl = url;
+    if (captureBtn) {
+      captureBtn.disabled = false;
+      captureBtn.dataset.watchUrl = url;
+    }
+    if (postBtn) postBtn.disabled = COMMENT_POST_UI_STATE.submitting;
+    setReloadWatchTabUiDisabled(false);
+    syncVoiceCommentButton();
+    if (commentInput) {
+      commentInput.placeholder = 'コメントを入力して送信';
+    }
+    syncStorySourceEntries(lv, displayEntries);
+    renderUserRooms(arr, lv);
+    renderCharacterScene({
+      hasWatch: true,
+      recording: toggle.checked,
+      commentCount: displayEntries.length,
+      liveId: lv,
+      snapshot: watchSnapshot
     });
-    STORY_AVATAR_DIAG_STATE.mergedPatched = merged.patched;
-    STORY_AVATAR_DIAG_STATE.mergedUidReplaced = merged.uidReplaced;
-    if (merged.patched > 0) {
-      arr = merged.next;
+    renderWatchMetaCard(watchSnapshot, arr);
+    const growthEl = /** @type {HTMLElement|null} */ ($('sceneStoryGrowth'));
+    if (growthEl) patchStoryGrowthIconsFromSource(growthEl);
+
+    renderDevMonitorPanel({
+      snapshot: watchSnapshot,
+      liveId: lv,
+      displayCount: displayEntries.length,
+      storageCount: arr.length,
+      avatarStats: summarizeStoredCommentAvatarStats(arr),
+      profileGaps: summarizeStoredCommentProfileGaps(arr)
+    });
+    updateCommentVelocityLine(
+      /** @type {PopupCommentEntry[]} */ (displayEntries)
+    );
+  }
+
+  if (!snapshotCacheHit) {
+    paintWatchPopupUi();
+    markPopupRefreshContentPainted();
+    const snapResult = await requestWatchPageSnapshotFromOpenTab(url);
+    watchMetaCache.snapshot = snapResult.snapshot;
+    watchSnapshot = watchMetaCache.snapshot;
+    const strippedAfterSnap = stripViewerAvatarContamination(
+      arr,
+      lv,
+      watchSnapshot
+    );
+    if (strippedAfterSnap.patched > 0) {
+      arr = strippedAfterSnap.next;
       await storageSetSafe({ [key]: arr });
     }
+    STORY_AVATAR_DIAG_STATE.stripped += strippedAfterSnap.patched;
   }
-  const reconciledOwnPosted = reconcileStoredOwnPostedEntries(arr, lv);
-  if (reconciledOwnPosted.changed || reconciledOwnPosted.pendingChanged) {
-    arr = reconciledOwnPosted.next;
-    selfPostedRecentsCache = reconciledOwnPosted.remaining;
-    await storageSetSafe({
-      [key]: arr,
-      [KEY_SELF_POSTED_RECENTS]: { items: selfPostedRecentsCache }
-    });
-  }
-  STORY_AVATAR_DIAG_STATE.total = arr.length;
-  STORY_AVATAR_DIAG_STATE.withUid = countEntriesWithUserId(arr);
-  STORY_AVATAR_DIAG_STATE.withAvatar = countEntriesWithAvatar(arr);
-  STORY_AVATAR_DIAG_STATE.uniqueAvatar = countUniqueAvatarEntries(arr);
-  {
-    const resolvedAvatar = countResolvedAvatarEntries(arr, lv);
-    STORY_AVATAR_DIAG_STATE.resolvedAvatar = resolvedAvatar.total;
-    STORY_AVATAR_DIAG_STATE.resolvedUniqueAvatar = resolvedAvatar.unique;
-  }
-  STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(arr, lv);
-  STORY_AVATAR_DIAG_STATE.selfSaved = countSavedOwnPostedEntries(arr);
-  STORY_AVATAR_DIAG_STATE.selfPending = countPendingSelfPostedRecentsForLive(lv);
-  STORY_AVATAR_DIAG_STATE.selfPendingMatched = getOwnPostedMatchedIdSet(arr, lv).size;
-  const displayEntries = buildDisplayCommentEntries(arr, lv);
-  STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(displayEntries, lv);
-  setCountDisplay(String(displayEntries.length), watchSnapshot);
-  renderCommentTicker(/** @type {PopupCommentEntry[]} */ (displayEntries));
-  exportBtn.disabled = false;
-  exportBtn.dataset.liveId = lv;
-  exportBtn.dataset.storageKey = key;
-  exportBtn.dataset.watchUrl = url;
-  if (captureBtn) {
-    captureBtn.disabled = false;
-    captureBtn.dataset.watchUrl = url;
-  }
-  const stats = /** @type {{ ok?: boolean, count?: number }|null} */ (
-    await sendMessageToWatchTabs(url, { type: 'NLS_THUMB_STATS' })
-  );
-  if (thumbCountEl) {
-    thumbCountEl.textContent =
-      stats && stats.ok === true && typeof stats.count === 'number'
-        ? String(stats.count)
-        : '0';
-  }
-  if (postBtn) postBtn.disabled = COMMENT_POST_UI_STATE.submitting;
-  if (reloadWatchBtn) reloadWatchBtn.disabled = false;
-  syncVoiceCommentButton();
-  if (commentInput) {
-    commentInput.placeholder = 'コメントを入力して送信';
-  }
-  syncStorySourceEntries(lv, displayEntries);
-  renderUserRooms(arr);
-  renderCharacterScene({
-    hasWatch: true,
-    recording: toggle.checked,
-    commentCount: displayEntries.length,
-    liveId: lv,
-    snapshot: watchSnapshot
+
+  const refreshGen = ++watchPopupRefreshGeneration;
+
+  if (thumbCountEl) thumbCountEl.textContent = '…';
+  paintWatchPopupUi();
+  markPopupRefreshContentPainted();
+  scheduleDeferredUserCommentProfileHydrate({
+    refreshGen,
+    commentsKey: key,
+    getArr: () => arr,
+    setArr: (next) => {
+      arr = next;
+    },
+    paint: () => paintWatchPopupUi()
   });
-  renderWatchMetaCard(watchSnapshot, arr);
-  renderStoryUserLane();
-  renderCharacterScene({
-    hasWatch: true,
-    recording: toggle.checked,
-    commentCount: displayEntries.length,
+  void maybeFlushBroadcastSessionSummarySample({
     liveId: lv,
-    snapshot: watchSnapshot
+    watchUrl: url,
+    comments: arr,
+    snapshot: watchSnapshot,
+    recording: toggle.checked
   });
-  const growthEl = /** @type {HTMLElement|null} */ ($('sceneStoryGrowth'));
-  if (growthEl) patchStoryGrowthIconsFromSource(growthEl);
+  void renderSessionSummaryComparePanel(lv);
+  void renderGiftQuickStatsPanel(lv);
+
+  void (async () => {
+    try {
+      if (refreshGen !== watchPopupRefreshGeneration) return;
+      const interceptResult = await requestInterceptCacheFromOpenTab(url, {
+        deep: shouldDeep
+      });
+      const interceptItems = interceptResult.items;
+      const interceptDiag = interceptResult.diag;
+      if (refreshGen !== watchPopupRefreshGeneration) return;
+      if (shouldDeep) {
+        INTERCEPT_BACKFILL_STATE.deepTried = true;
+      }
+      STORY_AVATAR_DIAG_STATE.interceptExportRows = interceptItems.length;
+      STORY_AVATAR_DIAG_STATE.interceptExportCode = interceptDiag.code;
+      STORY_AVATAR_DIAG_STATE.interceptExportDetail = interceptDiag.detail || '';
+      syncInterceptMapDiagFromSnapshot(watchSnapshot);
+      if (interceptItems.length > 0) {
+        STORY_AVATAR_DIAG_STATE.interceptItems = interceptItems.length;
+        STORY_AVATAR_DIAG_STATE.interceptWithUid = interceptItems.reduce(
+          (sum, it) => (it.uid ? sum + 1 : sum),
+          0
+        );
+        STORY_AVATAR_DIAG_STATE.interceptWithAvatar = interceptItems.reduce(
+          (sum, it) => (it.av ? sum + 1 : sum),
+          0
+        );
+        const suspectUidSet = new Set(
+          [
+            String(watchSnapshot?.viewerUserId || '').trim(),
+            String(watchSnapshot?.broadcasterUserId || '').trim()
+          ].filter(Boolean)
+        );
+        const merged = mergeCommentsWithInterceptCache(arr, interceptItems, {
+          preferInterceptUidSet: suspectUidSet
+        });
+        STORY_AVATAR_DIAG_STATE.mergedPatched = merged.patched;
+        STORY_AVATAR_DIAG_STATE.mergedUidReplaced = merged.uidReplaced;
+        if (merged.patched > 0) {
+          arr = merged.next;
+        }
+        let interceptCacheTouched = false;
+        for (const it of interceptItems) {
+          if (upsertUserCommentProfileFromIntercept(popupUserCommentProfileMap, it)) {
+            interceptCacheTouched = true;
+          }
+        }
+        const profAfterIntercept = popupMergeUserCommentProfileCache(arr);
+        arr = profAfterIntercept.arr;
+        if (
+          merged.patched > 0 ||
+          profAfterIntercept.commentsPatched ||
+          profAfterIntercept.cacheTouched ||
+          interceptCacheTouched
+        ) {
+          const saveIc = {};
+          if (merged.patched > 0 || profAfterIntercept.commentsPatched) {
+            saveIc[key] = arr;
+          }
+          if (
+            profAfterIntercept.cacheTouched ||
+            interceptCacheTouched
+          ) {
+            saveIc[KEY_USER_COMMENT_PROFILE_CACHE] = popupUserCommentProfileMap;
+          }
+          if (Object.keys(saveIc).length) {
+            await storageSetSafe(saveIc);
+          }
+        }
+      } else {
+        STORY_AVATAR_DIAG_STATE.interceptItems = 0;
+        STORY_AVATAR_DIAG_STATE.interceptWithUid = 0;
+        STORY_AVATAR_DIAG_STATE.interceptWithAvatar = 0;
+      }
+      const reconciledOwnPosted = reconcileStoredOwnPostedEntries(arr, lv);
+      if (reconciledOwnPosted.changed || reconciledOwnPosted.pendingChanged) {
+        arr = reconciledOwnPosted.next;
+        selfPostedRecentsCache = reconciledOwnPosted.remaining;
+        await storageSetSafe({
+          [key]: arr,
+          [KEY_SELF_POSTED_RECENTS]: { items: selfPostedRecentsCache }
+        });
+      }
+      if (refreshGen !== watchPopupRefreshGeneration) return;
+      const stats = /** @type {{ ok?: boolean, count?: number }|null} */ (
+        await sendMessageToWatchTabs(url, { type: 'NLS_THUMB_STATS' })
+      );
+      if (refreshGen !== watchPopupRefreshGeneration) return;
+      if (thumbCountEl) {
+        thumbCountEl.textContent =
+          stats && stats.ok === true && typeof stats.count === 'number'
+            ? String(stats.count)
+            : '0';
+      }
+      paintWatchPopupUi();
+    } catch (e) {
+      if (isExtensionContextInvalidatedError(e)) {
+        renderExtensionContextBanner(true);
+        return;
+      }
+      if (thumbCountEl && refreshGen === watchPopupRefreshGeneration) {
+        thumbCountEl.textContent = '0';
+      }
+    }
+  })();
   } catch (e) {
     if (isExtensionContextInvalidatedError(e)) {
       renderExtensionContextBanner(true);
@@ -4301,6 +5708,51 @@ async function reloadWatchTabForUrl(watchUrl) {
     ok: false,
     error: 'watchタブの再読み込みに失敗しました。タブを手動で更新してください。'
   };
+}
+
+/** メイン送信横とパネル内の再読み込みボタンを同じ disabled にそろえる */
+function setReloadWatchTabUiDisabled(disabled) {
+  const v = Boolean(disabled);
+  const main = /** @type {HTMLButtonElement|null} */ ($('reloadWatchTabBtn'));
+  const panel = /** @type {HTMLButtonElement|null} */ ($('reloadWatchTabPanelBtn'));
+  if (main) main.disabled = v;
+  if (panel) panel.disabled = v;
+}
+
+let _reloadWatchTabFromPopupInFlight = false;
+
+/**
+ * watch タブ再読み込み（UI 共通。dataset.watchUrl が空なら何もしない）
+ */
+async function triggerReloadWatchTabFromPopup() {
+  const exportBtnEl = /** @type {HTMLButtonElement|null} */ ($('exportJson'));
+  const watchUrl = exportBtnEl?.dataset.watchUrl || '';
+  if (!watchUrl || _reloadWatchTabFromPopupInFlight) return;
+  _reloadWatchTabFromPopupInFlight = true;
+  setReloadWatchTabUiDisabled(true);
+  setPostStatus('watchページを再読み込みしています…', 'idle');
+  try {
+    const r = await reloadWatchTabForUrl(watchUrl);
+    if (r.ok) {
+      setPostStatus(
+        '再読み込みを実行しました。数秒後にポップアップを開き直すと反映されます。',
+        'success'
+      );
+    } else {
+      setPostStatus(
+        withCommentSendTroubleshootHint(r.error || '再読み込みに失敗しました。'),
+        'error'
+      );
+    }
+  } catch {
+    setPostStatus(
+      withCommentSendTroubleshootHint('再読み込みに失敗しました。'),
+      'error'
+    );
+  } finally {
+    _reloadWatchTabFromPopupInFlight = false;
+    setReloadWatchTabUiDisabled(false);
+  }
 }
 
 /**
@@ -5344,8 +6796,76 @@ async function downloadCommentsHtml(liveId, storageKey, watchUrl) {
   URL.revokeObjectURL(blobUrl);
 }
 
+/** コメント・ギフト・トレンド等の storage 連打で refresh が毎回走り、応援レーンが激しくちらつくのを防ぐ */
+let storageRefreshCoalesceTimer = null;
+/** コメント連打で onChanged が途切れないとき、デバウンスだけだと refresh が永遠に遅延するのを防ぐ */
+let storageRefreshMaxWaitTimer = null;
+const STORAGE_REFRESH_COALESCE_MS = 550;
+const STORAGE_REFRESH_MAX_WAIT_MS = 2200;
+
+/** @param {string} key */
+function isHighFrequencyCommentRelatedStorageKey(key) {
+  const k = String(key || '');
+  if (/^nls_comments_/i.test(k)) return true;
+  if (/^nls_gift_users_/i.test(k)) return true;
+  if (k === KEY_SELF_POSTED_RECENTS) return true;
+  if (k.startsWith(KEY_DEV_MONITOR_TREND_PREFIX)) return true;
+  return false;
+}
+
+/**
+ * @param {Record<string, chrome.storage.StorageChange>} changes
+ * @param {() => void} runRefresh
+ */
+function scheduleCoalescedStorageRefresh(changes, runRefresh) {
+  const keys = Object.keys(changes || {});
+  if (!keys.length) return;
+  const allHighFreq = keys.every((k) =>
+    isHighFrequencyCommentRelatedStorageKey(k)
+  );
+  if (!allHighFreq) {
+    if (storageRefreshCoalesceTimer) {
+      clearTimeout(storageRefreshCoalesceTimer);
+      storageRefreshCoalesceTimer = null;
+    }
+    if (storageRefreshMaxWaitTimer) {
+      clearTimeout(storageRefreshMaxWaitTimer);
+      storageRefreshMaxWaitTimer = null;
+    }
+    runRefresh();
+    return;
+  }
+  if (storageRefreshCoalesceTimer) clearTimeout(storageRefreshCoalesceTimer);
+  storageRefreshCoalesceTimer = setTimeout(() => {
+    storageRefreshCoalesceTimer = null;
+    if (storageRefreshMaxWaitTimer) {
+      clearTimeout(storageRefreshMaxWaitTimer);
+      storageRefreshMaxWaitTimer = null;
+    }
+    runRefresh();
+  }, STORAGE_REFRESH_COALESCE_MS);
+
+  if (!storageRefreshMaxWaitTimer) {
+    storageRefreshMaxWaitTimer = setTimeout(() => {
+      storageRefreshMaxWaitTimer = null;
+      if (storageRefreshCoalesceTimer) {
+        clearTimeout(storageRefreshCoalesceTimer);
+        storageRefreshCoalesceTimer = null;
+      }
+      runRefresh();
+    }, STORAGE_REFRESH_MAX_WAIT_MS);
+  }
+}
+
 function initPopup() {
   installExtensionContextErrorGuard();
+  void chrome.storage.local.get(KEY_CALM_PANEL_MOTION).then((b) => {
+    applyCalmPanelMotionClass(
+      normalizeCalmPanelMotion(b[KEY_CALM_PANEL_MOTION], {
+        inlineDefault: INLINE_MODE
+      })
+    );
+  });
   ensureStoryGrowthColorSchemeListener();
   applyResponsivePopupLayout();
   void applyUsageTermsGateState();
@@ -5367,7 +6887,6 @@ function initPopup() {
   const captureStatus = $('captureStatus');
   const thumbIntervalSel = /** @type {HTMLSelectElement|null} */ ($('thumbInterval'));
   const postBtn = /** @type {HTMLButtonElement} */ ($('postCommentBtn'));
-  const reloadWatchBtn = /** @type {HTMLButtonElement|null} */ ($('reloadWatchTabBtn'));
   const voiceBtn = /** @type {HTMLButtonElement|null} */ ($('voiceCommentBtn'));
   const voiceAutoSend = /** @type {HTMLInputElement|null} */ ($('voiceAutoSend'));
   const commentEnterSend = /** @type {HTMLInputElement|null} */ ($('commentEnterSend'));
@@ -5391,8 +6910,8 @@ function initPopup() {
   const applyFrameCodeBtn = $('applyFrameCode');
 
   const safeRefresh = () => {
-    if (!hasExtensionContext()) return;
-    refresh()
+    if (!hasExtensionContext()) return Promise.resolve();
+    return refresh()
       .catch((e) => {
         if (!isExtensionContextInvalidatedError(e)) {
           // no-op
@@ -5405,6 +6924,80 @@ function initPopup() {
         });
       });
   };
+
+  $('devMonitorRefresh')?.addEventListener('click', () => {
+    watchMetaCache.key = '';
+    watchMetaCache.snapshot = null;
+    safeRefresh();
+  });
+
+  $('devMonitorExportTrendBtn')?.addEventListener('click', async () => {
+    const prm = lastDevMonitorPanelParams;
+    const stEl = /** @type {HTMLElement|null} */ ($('devMonitorExportTrendStatus'));
+    if (!prm || !String(prm.liveId || '').trim()) {
+      if (stEl) stEl.textContent = 'liveId なし';
+      return;
+    }
+    try {
+      const w = typeof globalThis !== 'undefined' ? globalThis : window;
+      const trend = await readMergedTrendSeries(w, String(prm.liveId));
+      const out = {
+        exportedAt: new Date().toISOString(),
+        liveId: prm.liveId,
+        displayCount: prm.displayCount,
+        storageCount: prm.storageCount,
+        trendPointCount: trend.length,
+        trend
+      };
+      await navigator.clipboard.writeText(JSON.stringify(out, null, 2));
+      if (stEl) stEl.textContent = `コピー済み（${trend.length} 点）`;
+    } catch {
+      if (stEl) stEl.textContent = 'コピーに失敗しました';
+    }
+  });
+
+  $('devMonitorExportMarketingBtn')?.addEventListener('click', async () => {
+    const prm = lastDevMonitorPanelParams;
+    const stEl = /** @type {HTMLElement|null} */ ($('devMonitorExportTrendStatus'));
+    const btn = /** @type {HTMLButtonElement|null} */ ($('devMonitorExportMarketingBtn'));
+    const lid = String(prm?.liveId || '').trim();
+    if (!lid) {
+      if (stEl) stEl.textContent = 'liveId なし';
+      return;
+    }
+    if (btn) btn.disabled = true;
+    if (stEl) stEl.textContent = '分析中…';
+    try {
+      const sKey = commentsStorageKey(lid);
+      const data = await chrome.storage.local.get(sKey);
+      const comments = /** @type {import('../lib/commentRecord.js').StoredComment[]} */ (
+        Array.isArray(data[sKey]) ? data[sKey] : []
+      );
+      if (comments.length === 0) {
+        if (stEl) stEl.textContent = 'コメントが0件です';
+        if (btn) btn.disabled = false;
+        return;
+      }
+      const report = aggregateMarketingReport(comments, lid);
+      const html = buildMarketingDashboardHtml(report);
+      const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `nicolivelog-marketing-${lid}-${Date.now()}.html`;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        URL.revokeObjectURL(url);
+        a.remove();
+      }, 1000);
+      if (stEl) stEl.textContent = `DL完了（${report.totalComments}件 / ${report.uniqueUsers}人）`;
+    } catch (e) {
+      if (stEl) stEl.textContent = 'エラー: ' + String(e?.message || e);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  });
 
   const readCustomFrameInputs = () =>
     sanitizeCustomFrame({
@@ -5449,6 +7042,35 @@ function initPopup() {
     }
   });
 
+  $('extensionCacheClearBtn')?.addEventListener('click', async () => {
+    const statusEl = $('extensionCacheClearStatus');
+    if (statusEl) statusEl.textContent = '';
+    const confirmMsg =
+      '「表示キャッシュ」を消すと、このPCが覚えたユーザー名・アイコンURLだけを忘れます。\n' +
+      '記録した応援コメント・設定・定期サムネは消えません。\n' +
+      'まず試していないなら、キャンセルして上の「watch を再読み込み」だけでも構いません。\n' +
+      '消しますか？';
+    if (!window.confirm(confirmMsg)) return;
+    try {
+      const keys = /** @type {string[]} */ ([...EXTENSION_SOFT_CACHE_STORAGE_KEYS]);
+      const ok = await storageRemoveSafe(keys);
+      if (!ok) {
+        if (statusEl) {
+          statusEl.textContent =
+            '削除できませんでした。chrome://extensions で拡張を更新してからお試しください。';
+        }
+        return;
+      }
+      if (statusEl) {
+        statusEl.textContent =
+          '消しました。続けて「watch を再読み込み」を押すか、watch タブを F5 で更新してください。';
+      }
+      safeRefresh();
+    } catch {
+      if (statusEl) statusEl.textContent = '削除に失敗しました。';
+    }
+  });
+
   toggle.addEventListener('change', async () => {
     try {
       const ok = await storageSetSafe({ [KEY_RECORDING]: toggle.checked });
@@ -5483,6 +7105,17 @@ function initPopup() {
     const t = e.target;
     if (t instanceof HTMLInputElement && t.checked) {
       void saveInlinePanelWidthMode(INLINE_PANEL_WIDTH_VIDEO);
+    }
+  });
+
+  const calmMotionEl = /** @type {HTMLInputElement|null} */ ($('calmPanelMotion'));
+  calmMotionEl?.addEventListener('change', async () => {
+    try {
+      const on = Boolean(calmMotionEl.checked);
+      applyCalmPanelMotionClass(on);
+      await storageSetSafe({ [KEY_CALM_PANEL_MOTION]: on });
+    } catch {
+      //
     }
   });
 
@@ -5630,6 +7263,16 @@ function initPopup() {
     if (!lv || !key || exportBtn.disabled) return;
     try {
       await downloadCommentsHtml(lv, key, watchUrl);
+    } catch {
+      // no-op
+    }
+  });
+
+  $('exportSessionSummaryJsonBtn')?.addEventListener('click', async () => {
+    const lv = exportBtn.dataset.liveId;
+    if (!lv || exportBtn.disabled) return;
+    try {
+      await downloadSessionSummaryJson(lv);
     } catch {
       // no-op
     }
@@ -6025,29 +7668,11 @@ function initPopup() {
     })();
   });
 
-  reloadWatchBtn?.addEventListener('click', async () => {
-    const watchUrl = exportBtn.dataset.watchUrl || '';
-    if (!watchUrl || reloadWatchBtn.disabled) return;
-    reloadWatchBtn.disabled = true;
-    setPostStatus('watchページを再読み込みしています…', 'idle');
-    try {
-      const r = await reloadWatchTabForUrl(watchUrl);
-      if (r.ok) {
-        setPostStatus('再読み込みを実行しました。数秒後にポップアップを開き直すと反映されます。', 'success');
-      } else {
-        setPostStatus(
-          withCommentSendTroubleshootHint(r.error || '再読み込みに失敗しました。'),
-          'error'
-        );
-      }
-    } catch {
-      setPostStatus(
-        withCommentSendTroubleshootHint('再読み込みに失敗しました。'),
-        'error'
-      );
-    } finally {
-      reloadWatchBtn.disabled = false;
-    }
+  $('reloadWatchTabBtn')?.addEventListener('click', () => {
+    void triggerReloadWatchTabFromPopup();
+  });
+  $('reloadWatchTabPanelBtn')?.addEventListener('click', () => {
+    void triggerReloadWatchTabFromPopup();
   });
 
   postBtn?.addEventListener('click', () => {
@@ -6088,15 +7713,16 @@ function initPopup() {
     })
     .finally(() => {
       void (async () => {
+        const refreshDone = safeRefresh();
         await applySupportVisualExpandedFromStorage().catch(() => {});
         wireSupportVisualUi();
         document.documentElement.setAttribute('data-nl-support-wired', '');
-        applyThumbSelectFromStorage().catch(() => {});
-        applyVoiceAutosendFromStorage().catch(() => {});
-        applyCommentEnterSendFromStorage().catch(() => {});
-        applyStoryGrowthCollapsedFromStorage().catch(() => {});
-        refreshVoiceInputDeviceList().catch(() => {});
-        safeRefresh();
+        void applyThumbSelectFromStorage().catch(() => {});
+        void applyVoiceAutosendFromStorage().catch(() => {});
+        void applyCommentEnterSendFromStorage().catch(() => {});
+        void applyStoryGrowthCollapsedFromStorage().catch(() => {});
+        void refreshVoiceInputDeviceList().catch(() => {});
+        await refreshDone;
       })();
     });
 
@@ -6130,7 +7756,9 @@ function initPopup() {
         const changedKeys = Object.keys(changes);
         const onlyVisualExpanded =
           changedKeys.length === 1 && changedKeys[0] === KEY_SUPPORT_VISUAL_EXPANDED;
-        if (!skipVisualExternalSync || !onlyVisualExpanded) safeRefresh();
+        if (!skipVisualExternalSync || !onlyVisualExpanded) {
+          scheduleCoalescedStorageRefresh(changes, () => safeRefresh());
+        }
       });
     }
   } catch {

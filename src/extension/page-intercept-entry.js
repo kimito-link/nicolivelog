@@ -2,10 +2,18 @@
 /**
  * MAIN world エントリ（esbuild で単一 IIFE にバンドルされる）
  */
-import { splitLengthDelimitedMessages } from '../lib/lengthDelimitedStream.js';
+import {
+  createLengthDelimitedStreamAccumulator,
+  splitLengthDelimitedMessagesWithTail
+} from '../lib/lengthDelimitedStream.js';
 import { extractPairsFromBinaryUtf8 } from '../lib/interceptBinaryTextExtract.js';
 import { decodeChunkedMessage, decodePackedSegment } from '../lib/ndgrDecode.js';
 import { ndgrChatsToMergeRows } from '../lib/ndgrChatRows.js';
+import { anonymousNicknameFallback } from '../lib/nicoAnonymousDisplay.js';
+import {
+  collectInterceptSignalsFromObject,
+  extractLearnUsersFromNicoUserIconUrlsInString
+} from '../lib/niconicoInterceptLearn.js';
 
 (() => {
   'use strict';
@@ -51,12 +59,33 @@ import { ndgrChatsToMergeRows } from '../lib/ndgrChatRows.js';
   const MSG_STATISTICS = 'NLS_INTERCEPT_STATISTICS';
   const MSG_SCHEDULE = 'NLS_INTERCEPT_SCHEDULE';
   const MSG_CHAT_ROWS = 'NLS_INTERCEPT_CHAT_ROWS';
+  const MSG_GIFT_USERS = 'NLS_INTERCEPT_GIFT_USERS';
 
   /** @type {{ commentNo: string, text: string, userId: string, nickname?: string }[]} */
   let ndgrChatRowsBatch = [];
   /** @type {ReturnType<typeof setTimeout>|null} */
   let ndgrChatRowsTimer = null;
-  const NDGR_CHAT_ROWS_BATCH_MS = 150;
+  const NDGR_CHAT_ROWS_BATCH_MS = 120;
+  /** 1 メッセージが巨大になりすぎないよう分割（高流量・structured clone 負荷対策） */
+  const NDGR_CHAT_ROWS_POST_CHUNK = 220;
+
+  function postNdgrChatRowsChunks(all) {
+    if (!all.length) return;
+    const w = typeof window !== 'undefined' ? window : null;
+    const schedule =
+      w && typeof w.queueMicrotask === 'function'
+        ? (fn) => w.queueMicrotask(fn)
+        : (fn) => setTimeout(fn, 0);
+    let i = 0;
+    const pump = () => {
+      if (i >= all.length) return;
+      const payload = all.slice(i, i + NDGR_CHAT_ROWS_POST_CHUNK);
+      i += payload.length;
+      window.postMessage({ type: MSG_CHAT_ROWS, rows: payload }, '*');
+      if (i < all.length) schedule(pump);
+    };
+    pump();
+  }
 
   function scheduleNdgrChatRowsPost(rows) {
     if (!rows?.length) return;
@@ -66,9 +95,7 @@ import { ndgrChatsToMergeRows } from '../lib/ndgrChatRows.js';
       ndgrChatRowsTimer = null;
       const payload = ndgrChatRowsBatch;
       ndgrChatRowsBatch = [];
-      if (payload.length) {
-        window.postMessage({ type: MSG_CHAT_ROWS, rows: payload }, '*');
-      }
+      if (payload.length) postNdgrChatRowsChunks(payload);
     }, NDGR_CHAT_ROWS_BATCH_MS);
   }
 
@@ -209,36 +236,6 @@ import { ndgrChatsToMergeRows } from '../lib/ndgrChatRows.js';
     if (!timer) timer = setTimeout(() => { timer = null; flush(); }, 150);
   }
 
-  const NO_KEYS = ['no', 'commentNo', 'comment_no', 'number', 'vpos_no'];
-  const UID_KEYS = [
-    'user_id',
-    'userId',
-    'uid',
-    'raw_user_id',
-    'hashedUserId',
-    'hashed_user_id',
-    'senderUserId',
-    'accountId'
-  ];
-  const NAME_KEYS = [
-    'name',
-    'nickname',
-    'userName',
-    'user_name',
-    'displayName',
-    'display_name'
-  ];
-  const AVATAR_KEYS = [
-    'iconUrl',
-    'icon_url',
-    'avatarUrl',
-    'avatar_url',
-    'userIconUrl',
-    'user_icon_url',
-    'thumbnailUrl',
-    'thumbnail_url'
-  ];
-
   /** @param {unknown} obj */
   function dig(obj, depth) {
     if (!obj || typeof obj !== 'object' || depth > 5) return;
@@ -246,96 +243,44 @@ import { ndgrChatsToMergeRows } from '../lib/ndgrChatRows.js';
       for (let i = 0; i < obj.length && i < 500; i++) dig(obj[i], depth + 1);
       return;
     }
-    let no = null;
-    let uid = null;
-    let name = null;
-    let av = '';
-    for (const k of NO_KEYS) {
-      if (obj[k] != null) {
-        no = obj[k];
-        break;
-      }
+    const { enqueues, learnUsers } = collectInterceptSignalsFromObject(obj);
+    for (const e of enqueues) {
+      enqueue(e.no, e.uid, e.name, e.av);
     }
-    for (const k of UID_KEYS) {
-      if (obj[k] != null) {
-        uid = obj[k];
-        break;
-      }
-    }
-    for (const k of NAME_KEYS) {
-      if (obj[k] != null && typeof obj[k] === 'string') {
-        name = obj[k];
-        break;
-      }
-    }
-    for (const k of AVATAR_KEYS) {
-      if (obj[k] != null && typeof obj[k] === 'string') {
-        av = normalizeAvatarUrl(obj[k]);
-        if (av) break;
-      }
-    }
-
-    const NESTED = ['chat', 'comment', 'data', 'message', 'body', 'user', 'sender'];
-    if (no == null || uid == null || name == null || !av) {
-      for (const sub of NESTED) {
-        const child = obj[sub];
-        if (!child || typeof child !== 'object' || Array.isArray(child)) continue;
-        if (no == null) {
-          for (const k of NO_KEYS) {
-            if (child[k] != null) {
-              no = child[k];
-              break;
-            }
-          }
-        }
-        if (uid == null) {
-          for (const k of UID_KEYS) {
-            if (child[k] != null) {
-              uid = child[k];
-              break;
-            }
-          }
-        }
-        if (name == null) {
-          for (const k of NAME_KEYS) {
-            if (child[k] != null && typeof child[k] === 'string') {
-              name = child[k];
-              break;
-            }
-          }
-        }
-        if (!av) {
-          for (const k of AVATAR_KEYS) {
-            if (child[k] != null && typeof child[k] === 'string') {
-              av = normalizeAvatarUrl(child[k]);
-              if (av) break;
-            }
-          }
-        }
-      }
-    }
-
-    if (no != null && (uid != null || name != null || av)) {
-      enqueue(no, uid, name, av);
-    } else if (uid != null && name != null) {
-      learnUser(uid, name, av);
+    for (const u of learnUsers) {
+      learnUser(u.uid, u.name, u.av);
     }
 
     const keys = Object.keys(obj);
     for (let i = 0; i < keys.length && i < 30; i++) {
       const v = obj[keys[i]];
-      if (v && typeof v === 'object') dig(v, depth + 1);
+      if (typeof v === 'string') {
+        for (const u of extractLearnUsersFromNicoUserIconUrlsInString(v)) {
+          learnUser(u.uid, u.name, u.av);
+        }
+      } else if (v && typeof v === 'object') dig(v, depth + 1);
     }
   }
 
   /** @param {string} text */
   function extractFromBinaryText(text) {
     for (const p of extractPairsFromBinaryUtf8(text)) {
-      enqueue(p.no, p.uid, '', '');
+      enqueue(p.no, p.uid, anonymousNicknameFallback(String(p.uid), ''), '');
     }
   }
 
-  const _ndgr = { stats: 0, chats: 0, decoded: 0 };
+  const _ndgr = { stats: 0, chats: 0, gifts: 0, decoded: 0 };
+  /** @type {{ pendingBytes: number, droppedBytes: number, totalFrames: number }|null} */
+  let _ldStreamStats = null;
+
+  function publishLdStreamDiag() {
+    const root = document.documentElement;
+    if (!root || !_ldStreamStats) return;
+    root.setAttribute(
+      'data-nls-ld-stream',
+      `p=${_ldStreamStats.pendingBytes} d=${_ldStreamStats.droppedBytes} f=${_ldStreamStats.totalFrames}`
+    );
+  }
 
   function handleNdgrResult(result) {
     if (!result) return;
@@ -347,36 +292,87 @@ import { ndgrChatsToMergeRows } from '../lib/ndgrChatRows.js';
       const uid = chat.rawUserId ? String(chat.rawUserId) : chat.hashedUserId;
       if (chat.no != null && uid) {
         _ndgr.chats++;
-        enqueue(String(chat.no), uid, chat.name, '');
+        enqueue(
+          String(chat.no),
+          uid,
+          anonymousNicknameFallback(String(uid), chat.name),
+          ''
+        );
       }
+    }
+    const giftList = result.gifts || [];
+    /** @type {{ userId: string, nickname: string }[]} */
+    const giftUsers = [];
+    for (const g of giftList) {
+      const uid = String(g.advertiserUserId || '').trim();
+      const name = String(g.advertiserName || '').trim();
+      if (uid) {
+        _ndgr.gifts++;
+        learnUser(uid, name, '');
+        giftUsers.push({ userId: uid, nickname: name });
+      }
+    }
+    if (giftUsers.length) {
+      window.postMessage({ type: MSG_GIFT_USERS, users: giftUsers }, '*');
     }
     scheduleNdgrChatRowsPost(ndgrChatsToMergeRows(result.chats));
   }
 
-  /** @param {Uint8Array} u8 */
-  function tryProcessBinaryBuffer(u8) {
+  /** @param {Uint8Array} frame */
+  function processLengthDelimitedNdgrFrame(frame) {
+    const dec = new TextDecoder('utf-8', { fatal: false });
+    extractFromBinaryText(dec.decode(frame));
+    let handled = false;
+    try {
+      const r = decodeChunkedMessage(frame);
+      if (r.stats || r.chats.length || (r.gifts && r.gifts.length)) {
+        handleNdgrResult(r);
+        handled = true;
+      }
+    } catch { /* no-op */ }
+    if (!handled) {
+      try {
+        for (const r of decodePackedSegment(frame)) handleNdgrResult(r);
+      } catch { /* no-op */ }
+    }
+  }
+
+  /**
+   * @param {Uint8Array} u8
+   * @param {ReturnType<typeof createLengthDelimitedStreamAccumulator>|null} [streamAcc]
+   */
+  function tryProcessBinaryBuffer(u8, streamAcc) {
     if (u8.byteLength < 4 || u8.byteLength > 2_000_000) return;
-    const chunks = splitLengthDelimitedMessages(u8);
     const dec = new TextDecoder('utf-8', { fatal: false });
 
-    if (chunks.length > 0) {
-      for (const ch of chunks) {
-        try { handleNdgrResult(decodeChunkedMessage(ch)); } catch { /* no-op */ }
-        extractFromBinaryText(dec.decode(ch));
-      }
-      try {
-        for (const r of decodePackedSegment(u8)) handleNdgrResult(r);
-      } catch { /* no-op */ }
+    if (streamAcc) {
+      streamAcc.push(u8, processLengthDelimitedNdgrFrame);
+      _ldStreamStats = streamAcc.getStats();
+      publishLdStreamDiag();
       _ndgr.decoded++;
     } else {
-      try { handleNdgrResult(decodeChunkedMessage(u8)); } catch { /* no-op */ }
+      const { frames, tail } = splitLengthDelimitedMessagesWithTail(u8);
+      if (frames.length > 0) {
+        for (const ch of frames) processLengthDelimitedNdgrFrame(ch);
+        _ndgr.decoded++;
+      } else {
+        processLengthDelimitedNdgrFrame(u8);
+        _ndgr.decoded++;
+      }
+      extractFromBinaryText(dec.decode(u8));
+      if (tail.length) {
+        try {
+          extractFromBinaryText(dec.decode(tail));
+        } catch { /* no-op */ }
+      }
     }
 
-    extractFromBinaryText(dec.decode(u8));
-
     const root = document.documentElement;
-    if (root && (_ndgr.stats > 0 || _ndgr.chats > 0)) {
-      root.setAttribute('data-nls-ndgr', `s=${_ndgr.stats} c=${_ndgr.chats} d=${_ndgr.decoded}`);
+    if (root && (_ndgr.stats > 0 || _ndgr.chats > 0 || _ndgr.gifts > 0)) {
+      root.setAttribute(
+        'data-nls-ndgr',
+        `s=${_ndgr.stats} c=${_ndgr.chats} g=${_ndgr.gifts} d=${_ndgr.decoded}`
+      );
     }
   }
 
@@ -538,17 +534,23 @@ import { ndgrChatsToMergeRows } from '../lib/ndgrChatRows.js';
             void (async () => {
               try {
                 const dec = new TextDecoder('utf-8', { fatal: false });
+                const ldAcc = createLengthDelimitedStreamAccumulator({
+                  maxPendingBytes: 2_000_000
+                });
                 for (;;) {
                   const { done, value } = await reader.read();
                   if (done) break;
                   if (value) {
-                    tryProcessBinaryBuffer(value);
+                    tryProcessBinaryBuffer(value, ldAcc);
+                    extractFromBinaryText(dec.decode(value));
                     const text = dec.decode(value, { stream: true });
                     if (text.length > 3 && text.length < 500000) {
                       try { const j = JSON.parse(text); tryForwardStatistics(j); dig(j, 0); } catch { /* not JSON */ }
                     }
                   }
                 }
+                _ldStreamStats = ldAcc.getStats();
+                publishLdStreamDiag();
               } catch { /* stream end */ }
             })();
           } else {
@@ -626,9 +628,37 @@ import { ndgrChatsToMergeRows } from '../lib/ndgrChatRows.js';
   } catch { /* no-op */ }
   const FIBER_SCAN_MS = 3000;
   const FB_NO = ['no', 'commentNo', 'comment_no', 'number', 'vposNo'];
-  const FB_UID = ['userId', 'user_id', 'uid', 'hashedUserId', 'hashed_user_id', 'senderUserId', 'rawUserId', 'raw_user_id'];
-  const FB_NAME = ['name', 'nickname', 'userName', 'user_name', 'displayName', 'display_name'];
-  const FB_AV = ['iconUrl', 'icon_url', 'avatarUrl', 'avatar_url', 'userIconUrl'];
+  const FB_UID = [
+    'userId',
+    'user_id',
+    'uid',
+    'hashedUserId',
+    'hashed_user_id',
+    'senderUserId',
+    'rawUserId',
+    'raw_user_id',
+    'advertiserUserId',
+    'advertiser_user_id'
+  ];
+  const FB_NAME = [
+    'name',
+    'nickname',
+    'userName',
+    'user_name',
+    'displayName',
+    'display_name',
+    'advertiserName',
+    'advertiser_name'
+  ];
+  const FB_AV = [
+    'iconUrl',
+    'icon_url',
+    'avatarUrl',
+    'avatar_url',
+    'userIconUrl',
+    'thumbnailUrl',
+    'thumbnail_url'
+  ];
 
   function getReactCandidates(el) {
     /** @type {unknown[]} */

@@ -1,9 +1,8 @@
 <!DOCTYPE html>
-<html lang="ja">
+<html lang="ja" data-nl-usage-terms-ack="1">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta http-equiv="Permissions-Policy" content="microphone=(self)" />
     <title>君斗りんくの追憶のきらめき</title>
     <style>
       :root {
@@ -63,24 +62,28 @@
         flex-direction: column;
       }
 
+      /* 親 iframe の高さ内に収め、はみ出しは内側スクロール（820px 級の白塔を防ぐ） */
       html.nl-inline {
         width: 100%;
         min-width: 0;
         max-width: none;
-        height: auto;
+        height: 100%;
+        max-height: 100%;
         min-height: 0;
-        max-height: none;
-        overflow: visible;
+        overflow: hidden;
+        box-sizing: border-box;
       }
 
       html.nl-inline body {
         width: 100%;
         min-width: 0;
         max-width: none;
-        height: auto;
+        height: 100%;
+        max-height: 100%;
         min-height: 0;
-        max-height: none;
-        overflow: visible;
+        overflow-x: hidden;
+        overflow-y: auto;
+        box-sizing: border-box;
         font-size: var(--nl-base-font, 15px);
         border: none;
         outline: none;
@@ -117,6 +120,37 @@
         display: none;
       }
 
+      /* ページ内パネル（inline=1）: ツールバー向けのブロックは出さない */
+      html.nl-inline body [data-nl-toolbar-only] {
+        display: none;
+      }
+
+      /*
+       * watch 直下の埋め込みのみ:
+       * 公式のコメント投稿と重複する primary 欄だけ隠す（応援アイコン列・グリッド・診断は残す）
+       */
+      html.nl-inline-embed-watch
+        body
+        .nl-comment-compose--primary
+        > textarea,
+      html.nl-inline-embed-watch
+        body
+        .nl-comment-compose--primary
+        > .nl-compose-send-row,
+      html.nl-inline-embed-watch
+        body
+        .nl-comment-compose--primary
+        > .nl-compose-toolbar-hint {
+        display: none;
+      }
+
+      html.nl-inline-embed-watch body .nl-comment-compose--primary {
+        margin-top: 0;
+        margin-bottom: 6px;
+        padding-top: 6px;
+        padding-bottom: 6px;
+      }
+
       html.nl-inline body .nl-main {
         padding-top: 3px;
       }
@@ -124,6 +158,7 @@
       /* 視聴ページ埋め込み時は「浮いた白箱」枠を付けない（ボーダー・影・大きな角丸を外す） */
       html.nl-inline body .nl-stats,
       html.nl-inline body .nl-record,
+      html.nl-inline body .nl-dev-monitor-details,
       html.nl-inline body .nl-comment-compose--primary .nl-compose-troubleshoot,
       html.nl-inline body .nl-comment-compose,
       html.nl-inline body #userRoomList,
@@ -541,34 +576,128 @@
         margin-top: 1px;
       }
 
+      .nl-story-userlane-stack {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: min(220px, 50vh);
+        overflow-x: hidden;
+        overflow-y: auto;
+        margin: 0 0 4px;
+        min-height: 0;
+        -webkit-overflow-scrolling: touch;
+      }
+
+      html.nl-inline body .nl-story-userlane-stack {
+        max-height: min(260px, 52vh);
+      }
+
+      .nl-story-userlane-tier-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        min-width: 0;
+      }
+
+      .nl-story-userlane-tier-hint {
+        margin: 0;
+        padding: 4px 6px;
+        font-size: 10px;
+        font-weight: 700;
+        line-height: 1.4;
+        color: var(--nl-text-sub);
+        border-radius: 8px;
+        background: color-mix(in srgb, var(--nl-surface) 88%, #b8a06a 12%);
+        border: 1px solid color-mix(in srgb, var(--nl-border) 75%, #c9a227 25%);
+      }
+
       .nl-story-userlane {
         display: flex;
         flex-wrap: wrap;
-        align-items: center;
-        gap: 5px;
-        margin: 0 0 4px;
+        align-items: flex-start;
+        align-content: flex-start;
+        gap: 6px 8px;
+        margin: 0;
         min-height: 0;
-        max-height: 72px;
-        overflow: hidden;
+        max-height: min(132px, 38vh);
+        overflow-x: auto;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
       }
 
-      html.nl-inline body .nl-story-userlane {
+      .nl-story-userlane-stack > .nl-story-userlane,
+      .nl-story-userlane-stack .nl-story-userlane-tier-wrap .nl-story-userlane {
+        max-height: none;
+        overflow-y: visible;
+      }
+
+      html.nl-inline body .nl-story-userlane-stack .nl-story-userlane {
         max-height: none;
       }
 
       /* 識別色はラッパー背景・外枠のみ（既定のリンクゆっくり画像の見え方は変えない） */
       .nl-story-userlane-cell {
         display: inline-flex;
+        flex-direction: row;
         align-items: center;
-        justify-content: center;
+        justify-content: flex-start;
+        gap: 6px;
         flex-shrink: 0;
+        max-width: 100%;
+        min-width: 0;
         border-radius: 999px;
+        padding-right: 6px;
       }
 
       .nl-story-userlane-cell--accent {
-        padding: 3px;
+        padding: 3px 5px 3px 3px;
         background: color-mix(in srgb, var(--nl-user-accent) 20%, transparent);
         box-shadow: 0 0 0 2px color-mix(in srgb, var(--nl-user-accent) 48%, transparent);
+      }
+
+      /* 完成度の段（tier）が変わるところで折り返し、匿名の塊と手前のユーザーを視覚的に分ける */
+      .nl-story-userlane-tier-break {
+        flex: 0 0 100%;
+        width: 100%;
+        height: 0;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        pointer-events: none;
+      }
+
+      .nl-story-userlane-meta {
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        gap: 1px;
+        min-width: 0;
+        max-width: min(118px, 30vw);
+        font-size: 10px;
+        line-height: 1.22;
+        text-align: left;
+      }
+
+      .nl-story-userlane-meta__id,
+      .nl-story-userlane-meta__name {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .nl-story-userlane-meta__id {
+        color: var(--nl-text-sub);
+        font-weight: 600;
+      }
+
+      .nl-story-userlane-meta__name {
+        color: var(--nl-text);
+        font-weight: 500;
+      }
+
+      html.nl-inline body .nl-story-userlane-meta {
+        font-size: 11px;
+        max-width: min(142px, 34vw);
       }
 
       .nl-story-userlane-avatar {
@@ -597,14 +726,39 @@
 
       .nl-story-userlane-guide {
         display: flex;
-        align-items: center;
-        gap: 6px;
-        margin: 0 0 5px;
+        flex-direction: column;
+        align-items: stretch;
+        gap: 5px;
+        margin: 0 0 6px;
+        min-width: 0;
       }
 
-      .nl-story-userlane-guide__avatar {
-        width: 26px;
-        height: 26px;
+      .nl-story-userlane-guide__lines {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+        min-width: 0;
+      }
+
+      .nl-story-userlane-guide__line {
+        display: flex;
+        align-items: flex-start;
+        gap: 7px;
+        padding: 5px 8px;
+        border-radius: 10px;
+        background: linear-gradient(180deg, #fffaf0, #fff4db);
+        border: 1px solid #f5d28d;
+        color: #6b4f18;
+        font-size: 10px;
+        font-weight: 700;
+        line-height: 1.38;
+        box-shadow: 0 1px 5px rgb(148 101 14 / 9%);
+        min-width: 0;
+      }
+
+      .nl-story-userlane-guide__face {
+        width: 24px;
+        height: 24px;
         border-radius: 999px;
         object-fit: cover;
         object-position: center;
@@ -613,31 +767,18 @@
         flex: 0 0 auto;
       }
 
-      .nl-story-userlane-guide__bubble {
-        position: relative;
-        max-width: min(100%, 320px);
-        padding: 6px 9px;
-        border-radius: 12px;
-        background: linear-gradient(180deg, #fffaf0, #fff4db);
-        border: 1px solid #f5d28d;
-        color: #6b4f18;
-        font-size: 11px;
-        font-weight: 700;
-        line-height: 1.35;
-        box-shadow: 0 2px 7px rgb(148 101 14 / 10%);
+      .nl-story-userlane-guide__text {
+        flex: 1 1 auto;
+        min-width: 0;
       }
 
-      .nl-story-userlane-guide__bubble::before {
-        content: '';
-        position: absolute;
-        left: -5px;
-        top: 10px;
-        width: 10px;
-        height: 10px;
-        background: #fff7e8;
-        border-left: 1px solid #f5d28d;
-        border-bottom: 1px solid #f5d28d;
-        transform: rotate(45deg);
+      .nl-story-userlane-guide__foot {
+        margin: 2px 0 0;
+        padding: 0 2px;
+        font-size: 10px;
+        font-weight: 800;
+        color: var(--nl-muted);
+        line-height: 1.35;
       }
 
       .nl-story-userlane-guide__count {
@@ -646,10 +787,60 @@
       }
 
       .nl-story-avatar-diag {
-        margin: 0 0 4px;
-        font-size: 11px;
+        margin: 0 0 6px;
+        font-size: clamp(10px, 2.8vw, 12px);
         color: var(--nl-text-sub);
-        line-height: 1.25;
+        line-height: 1.45;
+      }
+
+      .nl-story-diag__lead {
+        margin: 0 0 6px;
+      }
+
+      .nl-story-diag__lead strong {
+        font-weight: 800;
+        color: var(--nl-text);
+      }
+
+      .nl-story-diag__more {
+        margin: 0;
+        border-radius: 8px;
+        border: 1px solid color-mix(in srgb, var(--nl-border) 80%, transparent);
+        background: color-mix(in srgb, var(--nl-surface) 92%, transparent);
+        padding: 4px 8px 6px;
+      }
+
+      .nl-story-diag__summary {
+        cursor: pointer;
+        font-size: clamp(9.5px, 2.6vw, 11px);
+        font-weight: 700;
+        color: var(--nl-muted);
+        list-style-position: outside;
+      }
+
+      .nl-story-diag__body {
+        margin-top: 6px;
+        padding-top: 6px;
+        border-top: 1px solid color-mix(in srgb, var(--nl-border) 65%, transparent);
+        font-size: clamp(9.5px, 2.5vw, 11px);
+        line-height: 1.4;
+        color: var(--nl-muted);
+      }
+
+      .nl-story-diag__list {
+        margin: 0 0 6px;
+        padding-left: 1.1em;
+      }
+
+      .nl-story-diag__list li {
+        margin-bottom: 4px;
+      }
+
+      .nl-story-diag__technical {
+        margin: 0;
+        font-size: clamp(9px, 2.4vw, 10.5px);
+        word-break: break-word;
+        color: var(--nl-text-sub);
       }
 
       .nl-story-growth {
@@ -670,6 +861,19 @@
       html.nl-inline body .nl-story-growth {
         max-height: none;
         overflow: visible;
+      }
+
+      /*
+       * ツールバーポップアップ: .nl-story-growth の「3行プレビュー」が details 展開後も効き、
+       * グリッドが縦に切れたままになる。展開中だけ十分な高さ＋内側スクロールに切り替える。
+       * （html.nl-inline より詳細度が高い open 単体セレクは使わない — 埋め込みの全表示を壊す）
+       */
+      html:not(.nl-inline) .nl-support-visual-details[open] .nl-story-growth {
+        max-height: min(52vh, 420px);
+        overflow-x: hidden;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: thin;
       }
 
       .nl-story-growth-cell {
@@ -1451,7 +1655,7 @@
       }
 
       .nl-live-stat-card--comments {
-        border-color: color-mix(in srgb, #8b5cf6 30%, var(--nl-border) 70%);
+        border-color: var(--nl-border);
       }
 
       .nl-live-stat-card--support-visual {
@@ -1459,7 +1663,7 @@
       }
 
       .nl-live-stat-card--concurrent {
-        border-color: color-mix(in srgb, #f59e0b 30%, var(--nl-border) 70%);
+        border-color: var(--nl-border);
       }
 
       .nl-live-stat-icon.nl-chara-bounce-small {
@@ -1650,7 +1854,7 @@
       }
 
       .nl-live-stat-card--visitors {
-        border-color: color-mix(in srgb, #14b8a6 30%, var(--nl-border) 70%);
+        border-color: var(--nl-border);
       }
 
       .nl-live-stat-icon {
@@ -1709,28 +1913,56 @@
         text-overflow: ellipsis;
       }
 
+      .nl-live-stat-sub--official {
+        white-space: normal;
+        overflow: hidden;
+        display: -webkit-box;
+        -webkit-box-orient: vertical;
+        -webkit-line-clamp: 2;
+        line-clamp: 2;
+        text-overflow: ellipsis;
+        hyphens: auto;
+        word-break: break-word;
+      }
+
+      /* 応援ランキング専用ゾーン（記録カード内のゆっくりアイコン本体には触れない） */
       .nl-top-support-rank {
         width: 100%;
-        margin-top: 5px;
-        padding-top: 5px;
-        border-top: 1px solid color-mix(in srgb, var(--nl-border) 55%, transparent);
+        box-sizing: border-box;
+        margin-top: 6px;
+        padding: 7px 8px 8px;
+        border-radius: 10px;
+        background: color-mix(in srgb, var(--nl-accent) 8%, var(--nl-surface));
+        border: 1px solid color-mix(in srgb, var(--nl-border) 72%, var(--nl-accent) 14%);
+        box-shadow: 0 1px 3px rgb(2 17 31 / 8%);
+      }
+
+      @media (prefers-color-scheme: dark) {
+        .nl-top-support-rank {
+          background: color-mix(in srgb, var(--nl-accent) 12%, var(--nl-surface));
+          border-color: color-mix(in srgb, var(--nl-border) 65%, var(--nl-accent) 18%);
+          box-shadow: 0 1px 4px rgb(0 0 0 / 35%);
+        }
       }
 
       .nl-top-support-rank__note {
-        margin: 0 0 4px;
+        margin: 0 0 5px;
         font-size: clamp(7px, 1.8vw, 9px);
-        font-weight: 600;
+        font-weight: 700;
         color: var(--nl-muted);
         line-height: 1.3;
+        letter-spacing: 0.02em;
       }
 
       .nl-top-support-rank__list {
         display: flex;
         flex-direction: column;
-        gap: 4px;
+        gap: 5px;
         width: 100%;
         min-width: 0;
         text-align: left;
+        padding: 2px 0 0;
+        border-top: 1px solid color-mix(in srgb, var(--nl-border) 45%, transparent);
       }
 
       .nl-top-support-rank__line {
@@ -1824,14 +2056,84 @@
         color: var(--nl-text);
       }
 
-      html.nl-inline body .nl-top-support-rank__line {
+      /* 3枚スタット直下・フル幅・上位N名を横並び（はみ出しは横スクロール） */
+      .nl-top-support-rank--span-cards {
+        grid-column: 1 / -1;
+      }
+
+      .nl-top-support-rank--below-cards {
+        margin-top: 2px;
+      }
+
+      .nl-top-support-rank--below-cards .nl-top-support-rank__note {
+        text-align: center;
+      }
+
+      .nl-top-support-rank--below-cards .nl-top-support-rank__list {
+        flex-direction: row;
+        flex-wrap: nowrap;
+        gap: 6px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        padding: 4px 2px 8px;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-gutter: stable;
+        border-top: 1px solid color-mix(in srgb, var(--nl-border) 45%, transparent);
+      }
+
+      .nl-top-support-rank--below-cards .nl-top-support-rank__line {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 3px;
+        flex: 0 0 auto;
+        min-width: 54px;
+        max-width: 76px;
+        width: min-content;
+        padding: 5px 4px 6px;
+        box-sizing: border-box;
+        border-radius: 8px;
+        border: 1px solid color-mix(in srgb, var(--nl-border) 55%, transparent);
+        background: color-mix(in srgb, var(--nl-surface) 88%, var(--nl-bg-soft) 12%);
+      }
+
+      .nl-top-support-rank--below-cards .nl-top-support-rank__line.nl-top-support-rank__line--has-accent {
+        border-color: color-mix(in srgb, var(--nl-rank-accent) 35%, var(--nl-border) 65%);
+      }
+
+      .nl-top-support-rank--below-cards .nl-top-support-rank__thumb-wrap {
+        width: 22px;
+        height: 22px;
+      }
+
+      .nl-top-support-rank--below-cards .nl-top-support-rank__count {
+        font-size: clamp(7px, 1.75vw, 9px);
+      }
+
+      .nl-top-support-rank--below-cards .nl-top-support-rank__id,
+      .nl-top-support-rank--below-cards .nl-top-support-rank__name {
+        font-size: clamp(6px, 1.65vw, 8px);
+        max-width: 100%;
+        text-align: center;
+      }
+
+      html.nl-inline body .nl-top-support-rank:not(.nl-top-support-rank--below-cards) .nl-top-support-rank__line {
         font-size: clamp(9px, 2.3vw, 11px);
         grid-template-columns: auto auto minmax(24px, 28px) minmax(0, 1fr) minmax(0, 1fr);
+      }
+
+      html.nl-inline body .nl-top-support-rank--below-cards .nl-top-support-rank__line {
+        font-size: clamp(8px, 2vw, 10px);
       }
 
       html.nl-inline body .nl-top-support-rank__thumb-wrap {
         width: 26px;
         height: 26px;
+      }
+
+      html.nl-inline body .nl-top-support-rank--below-cards .nl-top-support-rank__thumb-wrap {
+        width: 24px;
+        height: 24px;
       }
 
       html.nl-inline body .nl-live-stat-icon {
@@ -1953,6 +2255,13 @@
         width: max-content;
         height: 100%;
         align-items: center;
+        animation: none;
+      }
+
+      /* 旧マルquee（現状 JS は常に is-latest-only。将来オンにする場合のみ付与） */
+      .nl-comment-ticker__scroll.nl-comment-ticker__scroll--marquee:not(.is-paused):not(
+          .is-latest-only
+        ) {
         animation: nl-comment-ticker-scroll 55s linear infinite;
       }
 
@@ -1991,7 +2300,7 @@
       }
 
       @media (prefers-reduced-motion: reduce) {
-        .nl-comment-ticker__scroll:not(.is-latest-only) {
+        .nl-comment-ticker__scroll.nl-comment-ticker__scroll--marquee:not(.is-latest-only) {
           animation: none;
         }
       }
@@ -2071,7 +2380,7 @@
         justify-content: center;
         margin: 0;
         padding: 5px 10px;
-        border: 2px solid #8b5cf6;
+        border: 1px solid var(--nl-border);
         border-radius: 6px;
         font-size: clamp(1.05rem, 4.5vw, 1.55rem);
         font-weight: 900;
@@ -2246,6 +2555,61 @@
         }
       }
 
+      /* 収録・スクショ向け（storage: nls_calm_panel_motion、埋め込みは未設定時オン） */
+      html.nl-calm-motion .nl-comment-ticker__scroll {
+        animation: none;
+      }
+
+      html.nl-calm-motion .nl-concurrent-loading__rink {
+        animation: none;
+        transform: none;
+      }
+
+      html.nl-calm-motion .nl-concurrent-loading__dot {
+        animation: none;
+        opacity: 0.7;
+      }
+
+      html.nl-calm-motion .nl-concurrent-loading__hint {
+        animation: none;
+        opacity: 0.85;
+      }
+
+      html.nl-calm-motion .nl-story-face.is-hop {
+        animation: none;
+      }
+
+      html.nl-calm-motion .nl-story.is-pulse,
+      html.nl-calm-motion .nl-story.is-burst {
+        animation: none;
+      }
+
+      html.nl-calm-motion .nl-story.is-sparkle::after {
+        animation: none;
+      }
+
+      html.nl-calm-motion .nl-story-growth-icon.is-new {
+        animation: none;
+      }
+
+      html.nl-calm-motion .nl-live-stat-icon.nl-chara-bounce-small,
+      html.nl-calm-motion .nl-live-stat-icon.nl-chara-bounce-medium,
+      html.nl-calm-motion .nl-live-stat-icon.nl-chara-bounce-big {
+        animation: none;
+      }
+
+      html.nl-calm-motion .nl-support-visual-details__summary::before {
+        transition: none;
+      }
+
+      html.nl-calm-motion .nl-support-visual-details[open] > .nl-support-visual-details__body {
+        animation: none;
+      }
+
+      html.nl-calm-motion .room-heat-fill {
+        transition: none;
+      }
+
       .nl-record {
         display: flex;
         align-items: center;
@@ -2267,6 +2631,644 @@
         flex: 1;
         font-size: clamp(12.5px, calc(var(--nl-base-font) * 0.95), 16px);
         font-weight: 600;
+      }
+
+      .nl-dev-monitor-details {
+        margin: 0 0 6px;
+        background: var(--nl-surface);
+        border: 1px solid var(--nl-border);
+        border-radius: var(--nl-radius);
+        box-shadow: var(--nl-shadow);
+        font-size: clamp(11px, calc(var(--nl-base-font) * 0.88), 14px);
+      }
+
+      .nl-dev-monitor-details > summary {
+        cursor: pointer;
+        padding: 6px 8px;
+        font-weight: 600;
+        color: var(--nl-muted);
+        list-style-position: outside;
+        margin-left: 0.5rem;
+      }
+
+      .nl-dev-monitor-details[open] > summary {
+        color: var(--nl-text);
+        border-bottom: 1px solid var(--nl-border);
+      }
+
+      .nl-dev-monitor-details__body {
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        max-height: min(52vh, 480px);
+        overflow: auto;
+      }
+
+      #devMonitorAcquisition {
+        margin: 0 0 6px;
+      }
+
+      .nl-acquisition {
+        margin: 0;
+        padding: 8px;
+        border-radius: 10px;
+        border: 1px solid var(--nl-border);
+        background: color-mix(in srgb, var(--nl-surface) 92%, var(--nl-bg-soft));
+      }
+
+      .nl-acquisition--empty {
+        padding: 10px 8px;
+      }
+
+      .nl-acquisition__title {
+        margin: 0 0 8px;
+        font-size: clamp(12px, calc(var(--nl-base-font) * 0.92), 15px);
+        font-weight: 700;
+        text-align: center;
+        color: var(--nl-text);
+        letter-spacing: 0.02em;
+      }
+
+      .nl-acquisition__charts {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: stretch;
+        justify-content: center;
+        gap: 10px;
+      }
+
+      .nl-acquisition__radar,
+      .nl-acquisition__pie {
+        flex: 1 1 100px;
+        min-width: 96px;
+        max-width: 140px;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .nl-acquisition__radar svg {
+        width: 100%;
+        max-width: 120px;
+        height: auto;
+        aspect-ratio: 1;
+      }
+
+      .nl-acquisition__bars {
+        flex: 2 1 160px;
+        min-width: min(100%, 200px);
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        justify-content: center;
+      }
+
+      .nl-acquisition__bar-row {
+        display: grid;
+        grid-template-columns: 4.5em 1fr 2.75em;
+        align-items: center;
+        gap: 6px;
+        font-size: clamp(9.5px, calc(var(--nl-base-font) * 0.78), 12px);
+      }
+
+      .nl-acquisition__bar-label {
+        margin: 0;
+        color: var(--nl-muted);
+        font-weight: 600;
+        text-align: right;
+      }
+
+      .nl-acquisition__bar-track {
+        height: 8px;
+        border-radius: 4px;
+        background: color-mix(in srgb, var(--nl-border) 55%, transparent);
+        overflow: hidden;
+      }
+
+      .nl-acquisition__bar-fill {
+        height: 100%;
+        border-radius: 4px;
+        min-width: 0;
+        transition: width 0.25s ease;
+      }
+
+      .nl-acquisition__bar-fill--thumb {
+        background: linear-gradient(90deg, #0f8fd8, #38bdf8);
+      }
+      .nl-acquisition__bar-fill--id {
+        background: linear-gradient(90deg, #6366f1, #a78bfa);
+      }
+      .nl-acquisition__bar-fill--nick {
+        background: linear-gradient(90deg, #ea580c, #fb923c);
+      }
+      .nl-acquisition__bar-fill--comment {
+        background: linear-gradient(90deg, #0d9488, #2dd4bf);
+      }
+
+      .nl-acquisition__bar-pct {
+        margin: 0;
+        font-variant-numeric: tabular-nums;
+        color: var(--nl-text);
+        font-weight: 600;
+        text-align: right;
+      }
+
+      .nl-acquisition__pie-disk {
+        width: min(100px, 28vw);
+        height: min(100px, 28vw);
+        border-radius: 50%;
+        box-shadow: inset 0 0 0 3px color-mix(in srgb, var(--nl-surface) 70%, var(--nl-border));
+      }
+
+      .nl-acquisition__cap {
+        font-size: clamp(8.5px, calc(var(--nl-base-font) * 0.68), 10.5px);
+        color: var(--nl-muted);
+        text-align: center;
+        line-height: 1.2;
+      }
+
+      .nl-acquisition__legend {
+        margin: 8px 0 0;
+        padding: 0;
+        list-style: none;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 6px 12px;
+        font-size: clamp(9.5px, calc(var(--nl-base-font) * 0.78), 12px);
+      }
+
+      .nl-acquisition__legend li {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        color: var(--nl-text);
+      }
+
+      .nl-acquisition__dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        flex-shrink: 0;
+      }
+
+      .nl-acquisition__dot--thumb {
+        background: #0f8fd8;
+      }
+      .nl-acquisition__dot--id {
+        background: #6366f1;
+      }
+      .nl-acquisition__dot--nick {
+        background: #ea580c;
+      }
+      .nl-acquisition__dot--comment {
+        background: #0d9488;
+      }
+
+      .nl-acquisition__footnote {
+        margin: 6px 0 0;
+        font-size: clamp(8.5px, calc(var(--nl-base-font) * 0.68), 10.5px);
+        line-height: 1.35;
+        color: var(--nl-muted);
+        text-align: center;
+      }
+
+      .nl-acquisition__empty {
+        margin: 0;
+        font-size: clamp(10px, calc(var(--nl-base-font) * 0.82), 12px);
+        color: var(--nl-muted);
+        text-align: center;
+      }
+
+      .nl-dev-monitor-viz-wrap {
+        margin: 0 0 6px;
+      }
+
+      .nl-dev-monitor-viz {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .nl-viz-block {
+        margin: 0;
+        padding: 8px;
+        border-radius: 10px;
+        border: 1px solid var(--nl-border);
+        background: color-mix(in srgb, var(--nl-surface) 92%, var(--nl-bg-soft));
+      }
+
+      .nl-viz-block__title {
+        margin: 0 0 6px;
+        font-size: clamp(11px, calc(var(--nl-base-font) * 0.85), 13px);
+        font-weight: 700;
+        color: var(--nl-text);
+      }
+
+      .nl-viz-block__caption {
+        margin: 4px 0 0;
+        font-size: clamp(10px, calc(var(--nl-base-font) * 0.8), 12px);
+        font-variant-numeric: tabular-nums;
+        color: var(--nl-muted);
+      }
+
+      .nl-viz-block__note {
+        margin: 6px 0 0;
+        font-size: clamp(8.5px, calc(var(--nl-base-font) * 0.7), 10.5px);
+        line-height: 1.35;
+        color: var(--nl-muted);
+      }
+
+      .nl-viz-block__empty {
+        margin: 0;
+        font-size: clamp(10px, calc(var(--nl-base-font) * 0.82), 12px);
+        color: var(--nl-muted);
+        text-align: center;
+      }
+
+      .nl-viz-bar {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      .nl-viz-bar--tall .nl-viz-bar__track {
+        height: 12px;
+      }
+
+      .nl-viz-bar__track {
+        height: 8px;
+        border-radius: 6px;
+        background: color-mix(in srgb, var(--nl-border) 55%, transparent);
+        overflow: hidden;
+      }
+
+      .nl-viz-bar__fill {
+        height: 100%;
+        border-radius: 6px;
+        min-width: 0;
+        transition: width 0.25s ease;
+      }
+
+      .nl-viz-bar__fill--ok {
+        background: linear-gradient(90deg, #059669, #34d399);
+      }
+
+      .nl-viz-bar__fill--warn {
+        background: linear-gradient(90deg, #d97706, #fbbf24);
+      }
+
+      .nl-viz-bar__fill--bad {
+        background: linear-gradient(90deg, #dc2626, #f87171);
+      }
+
+      .nl-viz-bar__fill--neutral {
+        background: linear-gradient(90deg, #64748b, #94a3b8);
+      }
+
+      .nl-viz-mini-rows {
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+      }
+
+      .nl-viz-mini-row {
+        display: grid;
+        grid-template-columns: minmax(0, 7.2em) 1fr 2.25em;
+        align-items: center;
+        gap: 5px 6px;
+        font-size: clamp(9px, calc(var(--nl-base-font) * 0.74), 11px);
+      }
+
+      .nl-viz-mini-row__label {
+        margin: 0;
+        color: var(--nl-muted);
+        font-weight: 600;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .nl-viz-mini-row__track {
+        height: 6px;
+        border-radius: 3px;
+        background: color-mix(in srgb, var(--nl-border) 50%, transparent);
+        overflow: hidden;
+      }
+
+      .nl-viz-mini-row__fill {
+        height: 100%;
+        border-radius: 3px;
+        min-width: 0;
+      }
+
+      .nl-viz-mini-row__fill--g1 {
+        background: linear-gradient(90deg, #0f8fd8, #38bdf8);
+      }
+      .nl-viz-mini-row__fill--g2 {
+        background: linear-gradient(90deg, #0369a1, #7dd3fc);
+      }
+      .nl-viz-mini-row__fill--g3 {
+        background: linear-gradient(90deg, #6366f1, #a78bfa);
+      }
+      .nl-viz-mini-row__fill--g4 {
+        background: linear-gradient(90deg, #4338ca, #c4b5fd);
+      }
+      .nl-viz-mini-row__fill--g5 {
+        background: linear-gradient(90deg, #ea580c, #fb923c);
+      }
+      .nl-viz-mini-row__fill--g6 {
+        background: linear-gradient(90deg, #c2410c, #fdba74);
+      }
+      .nl-viz-mini-row__fill--g7 {
+        background: linear-gradient(90deg, #0d9488, #2dd4bf);
+      }
+      .nl-viz-mini-row__fill--g8 {
+        background: linear-gradient(90deg, #0f766e, #5eead4);
+      }
+
+      .nl-viz-mini-row__fill--c0 {
+        background: linear-gradient(90deg, #0f8fd8, #38bdf8);
+      }
+      .nl-viz-mini-row__fill--c1 {
+        background: linear-gradient(90deg, #6366f1, #a78bfa);
+      }
+      .nl-viz-mini-row__fill--c2 {
+        background: linear-gradient(90deg, #ea580c, #fb923c);
+      }
+      .nl-viz-mini-row__fill--c3 {
+        background: linear-gradient(90deg, #0d9488, #2dd4bf);
+      }
+      .nl-viz-mini-row__fill--c4 {
+        background: linear-gradient(90deg, #a21caf, #e879f9);
+      }
+      .nl-viz-mini-row__fill--c5 {
+        background: linear-gradient(90deg, #4d7c0f, #84cc16);
+      }
+
+      .nl-viz-mini-row__n {
+        margin: 0;
+        font-variant-numeric: tabular-nums;
+        text-align: right;
+        color: var(--nl-text);
+        font-weight: 600;
+      }
+
+      .nl-viz-spark-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(min(100%, 140px), 1fr));
+        gap: 8px;
+      }
+
+      .nl-viz-spark {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+        min-width: 0;
+      }
+
+      .nl-viz-spark__cap {
+        font-size: clamp(8.5px, calc(var(--nl-base-font) * 0.68), 10px);
+        color: var(--nl-muted);
+        font-weight: 600;
+      }
+
+      .nl-viz-spark__svg {
+        width: 100%;
+        height: auto;
+        max-height: 42px;
+      }
+
+      .nl-dev-monitor__hint {
+        margin: 0;
+        font-size: clamp(10px, calc(var(--nl-base-font) * 0.8), 12px);
+        line-height: 1.35;
+        color: var(--nl-muted);
+      }
+
+      .nl-dev-monitor__hint-sub {
+        display: block;
+        margin-top: 6px;
+        font-size: clamp(9.5px, calc(var(--nl-base-font) * 0.76), 11px);
+        line-height: 1.4;
+        color: color-mix(in srgb, var(--nl-muted) 92%, var(--nl-text) 8%);
+      }
+
+      .nl-dev-monitor__hint-sub code {
+        font-size: 0.92em;
+        padding: 0 2px;
+        border-radius: 3px;
+        background: color-mix(in srgb, var(--nl-border) 35%, transparent);
+      }
+
+      .nl-dev-monitor__stats {
+        margin: 0;
+        display: grid;
+        gap: 4px;
+      }
+
+      .nl-dev-monitor__row {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) minmax(0, 1.1fr);
+        gap: 6px 10px;
+        align-items: baseline;
+        font-size: clamp(10.5px, calc(var(--nl-base-font) * 0.82), 13px);
+      }
+
+      .nl-dev-monitor__row dt {
+        margin: 0;
+        color: var(--nl-muted);
+        font-weight: 600;
+      }
+
+      .nl-dev-monitor__row dd {
+        margin: 0;
+        word-break: break-word;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .nl-dev-monitor__json {
+        margin: 0;
+        padding: 6px 8px;
+        background: color-mix(in srgb, var(--nl-surface) 88%, var(--nl-border));
+        border: 1px solid var(--nl-border);
+        border-radius: 6px;
+        font-size: clamp(9px, calc(var(--nl-base-font) * 0.72), 11px);
+        line-height: 1.35;
+        white-space: pre-wrap;
+        word-break: break-word;
+        max-height: min(28vh, 220px);
+        overflow: auto;
+      }
+
+      .nl-dev-monitor__btn {
+        align-self: flex-start;
+        padding: 4px 10px;
+        font-size: clamp(11px, calc(var(--nl-base-font) * 0.85), 14px);
+        border-radius: 6px;
+        border: 1px solid var(--nl-border);
+        background: var(--nl-surface);
+        cursor: pointer;
+      }
+
+      .nl-dev-monitor__btn:hover {
+        filter: brightness(1.03);
+      }
+
+      .nl-dev-monitor__btn--accent {
+        background: var(--nl-accent);
+        color: #fff;
+        border-color: var(--nl-accent);
+      }
+
+      .nl-dev-monitor__btn--accent:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+
+      .nl-dev-monitor__actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px;
+      }
+
+      .nl-dev-monitor__export-status {
+        font-size: clamp(9px, calc(var(--nl-base-font) * 0.72), 11px);
+        color: var(--nl-muted);
+      }
+
+      .nl-dev-monitor-dl-charts-wrap {
+        margin: 0 0 6px;
+      }
+
+      .nl-dev-monitor-dl-charts {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .nl-viz-stack-block {
+        margin: 0 0 8px;
+      }
+
+      .nl-viz-stack-block:last-child {
+        margin-bottom: 0;
+      }
+
+      .nl-viz-stack-block__title {
+        margin: 0 0 4px;
+        font-size: clamp(10px, calc(var(--nl-base-font) * 0.78), 12px);
+        font-weight: 700;
+        color: var(--nl-text);
+      }
+
+      .nl-viz-stack-block__cap {
+        margin: 4px 0 0;
+        font-size: clamp(8.5px, calc(var(--nl-base-font) * 0.7), 10.5px);
+        line-height: 1.3;
+        color: var(--nl-muted);
+        word-break: break-word;
+      }
+
+      .nl-viz-stack-track {
+        display: flex;
+        width: 100%;
+        height: 12px;
+        border-radius: 6px;
+        overflow: hidden;
+        background: color-mix(in srgb, var(--nl-border) 45%, transparent);
+      }
+
+      .nl-viz-stack-track--tall {
+        height: 14px;
+      }
+
+      .nl-viz-stack-seg {
+        flex-shrink: 0;
+        min-width: 0;
+        height: 100%;
+        box-sizing: border-box;
+      }
+
+      .nl-viz-stack-seg--http {
+        background: linear-gradient(90deg, #0f8fd8, #38bdf8);
+      }
+
+      .nl-viz-stack-seg--miss {
+        background: linear-gradient(90deg, #64748b, #94a3b8);
+      }
+
+      .nl-viz-stack-seg--nickY {
+        background: linear-gradient(90deg, #ea580c, #fb923c);
+      }
+
+      .nl-viz-stack-seg--nickN {
+        background: linear-gradient(90deg, #9ca3af, #d1d5db);
+      }
+
+      .nl-viz-stack-seg--uidN {
+        background: linear-gradient(90deg, #6366f1, #a78bfa);
+      }
+
+      .nl-viz-stack-seg--uidA {
+        background: linear-gradient(90deg, #a21caf, #e879f9);
+      }
+
+      .nl-viz-stack-seg--uidM {
+        background: linear-gradient(90deg, #78716c, #a8a29e);
+      }
+
+      .nl-viz-stack-seg--rec {
+        background: linear-gradient(90deg, #059669, #34d399);
+      }
+
+      .nl-viz-stack-seg--gap {
+        background: linear-gradient(
+          90deg,
+          color-mix(in srgb, var(--nl-border) 80%, #f59e0b),
+          #fde68a
+        );
+      }
+
+      .nl-viz-count-spark {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        align-items: stretch;
+      }
+
+      .nl-viz-count-spark__svg {
+        width: 100%;
+        max-width: 280px;
+        height: auto;
+      }
+
+      .nl-viz-count-spark__legend {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px 14px;
+        font-size: clamp(8.5px, calc(var(--nl-base-font) * 0.7), 10.5px);
+        color: var(--nl-muted);
+      }
+
+      .nl-viz-leg {
+        display: inline-block;
+        width: 9px;
+        height: 9px;
+        border-radius: 2px;
+        margin-right: 4px;
+        vertical-align: middle;
+      }
+
+      .nl-viz-leg--disp {
+        background: #0f8fd8;
+      }
+
+      .nl-viz-leg--stor {
+        background: #0d9488;
       }
 
       .nl-watch-quick-panel {
@@ -2385,6 +3387,29 @@
       .nl-panel-width-radios input[type='radio'] {
         width: 17px;
         height: 17px;
+        accent-color: var(--nl-accent);
+        flex-shrink: 0;
+      }
+
+      .nl-panel-calm-motion {
+        margin-top: 2px;
+        padding-top: 6px;
+        border-top: 1px solid color-mix(in srgb, var(--nl-border) 55%, transparent);
+      }
+
+      .nl-panel-calm-motion label {
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+        font-size: clamp(11.5px, calc(var(--nl-base-font) * 0.84), 14px);
+        font-weight: 500;
+        line-height: 1.35;
+      }
+
+      .nl-panel-calm-motion input[type='checkbox'] {
+        width: 17px;
+        height: 17px;
+        margin-top: 2px;
         accent-color: var(--nl-accent);
         flex-shrink: 0;
       }
@@ -2732,6 +3757,113 @@
         margin-left: auto;
         min-height: 34px;
         padding: 7px 10px;
+      }
+
+      .nl-extension-cache-row {
+        flex: 1 1 100%;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 10px;
+        margin: 0;
+        padding-top: 4px;
+        border-top: 1px solid color-mix(in srgb, var(--nl-border) 70%, transparent);
+      }
+
+      .nl-display-help {
+        flex: 1 1 100%;
+        margin-top: 4px;
+        padding-top: 10px;
+        border-top: 1px solid color-mix(in srgb, var(--nl-border) 55%, transparent);
+      }
+
+      .nl-display-help__title {
+        margin: 0 0 6px;
+        font-size: clamp(12px, calc(var(--nl-base-font) * 0.9), 14.5px);
+        font-weight: 800;
+        line-height: 1.35;
+        color: var(--nl-text);
+        letter-spacing: 0.02em;
+      }
+
+      .nl-display-help__text {
+        margin: 0 0 10px;
+        font-size: clamp(10.5px, calc(var(--nl-base-font) * 0.8), 13px);
+        font-weight: 500;
+        line-height: 1.55;
+        color: var(--nl-muted);
+      }
+
+      .nl-display-help__actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 8px 10px;
+      }
+
+      .nl-panel-reload-btn {
+        flex-shrink: 0;
+        min-height: 32px;
+        padding: 6px 12px;
+        font-size: clamp(10px, calc(var(--nl-base-font) * 0.78), 12px);
+        font-weight: 700;
+        border-radius: 8px;
+        border: 1px solid color-mix(in srgb, var(--nl-accent) 42%, var(--nl-border));
+        background: color-mix(in srgb, var(--nl-accent) 10%, var(--nl-surface));
+        color: var(--nl-text);
+        cursor: pointer;
+        box-shadow: 0 1px 2px rgb(2 17 31 / 8%);
+      }
+
+      .nl-panel-reload-btn:hover {
+        border-color: color-mix(in srgb, var(--nl-accent) 55%, var(--nl-border));
+        background: color-mix(in srgb, var(--nl-accent) 16%, var(--nl-surface));
+      }
+
+      .nl-panel-reload-btn:focus-visible {
+        outline: 2px solid var(--nl-accent);
+        outline-offset: 2px;
+      }
+
+      .nl-panel-reload-btn:disabled {
+        opacity: 0.55;
+        cursor: not-allowed;
+      }
+
+      .nl-display-help__status {
+        display: block;
+        margin-top: 8px;
+      }
+
+      .nl-extension-cache-clear-btn {
+        flex-shrink: 0;
+        min-height: 32px;
+        padding: 6px 10px;
+        font-size: clamp(10px, calc(var(--nl-base-font) * 0.78), 12px);
+        font-weight: 600;
+        border-radius: 8px;
+        border: 1px solid var(--nl-border);
+        background: var(--nl-surface);
+        color: var(--nl-text);
+        cursor: pointer;
+        box-shadow: 0 1px 2px rgb(2 17 31 / 8%);
+      }
+
+      .nl-extension-cache-clear-btn:hover {
+        border-color: color-mix(in srgb, var(--nl-accent) 45%, var(--nl-border));
+      }
+
+      .nl-extension-cache-clear-btn:focus-visible {
+        outline: 2px solid var(--nl-accent);
+        outline-offset: 2px;
+      }
+
+      .nl-extension-cache-clear-status {
+        flex: 1 1 200px;
+        min-width: 0;
+        font-size: clamp(9.5px, calc(var(--nl-base-font) * 0.74), 12px);
+        line-height: 1.35;
+        color: var(--nl-muted);
       }
 
       .nl-voice-guide-details {
@@ -3301,8 +4433,20 @@
         background: #eef6ff;
       }
 
+      #userRoomList .room-card__row {
+        display: flex;
+        align-items: flex-start;
+        gap: 6px;
+        min-width: 0;
+      }
+
+      #userRoomList .room-card__avatar {
+        flex-shrink: 0;
+        margin-top: 1px;
+      }
+
       .room-main {
-        width: 100%;
+        flex: 1 1 0;
         min-width: 0;
       }
 
@@ -3395,6 +4539,48 @@
         margin-top: 3px;
         font-size: 8.8px;
         color: var(--nl-muted);
+      }
+
+      .room-heat-velocity {
+        margin-top: 4px;
+        font-size: 9px;
+        color: var(--nl-muted);
+      }
+
+      .nl-session-summary-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 10px;
+      }
+
+      .nl-session-summary-table th,
+      .nl-session-summary-table td {
+        border: 1px solid var(--nl-border);
+        padding: 4px 6px;
+        text-align: left;
+      }
+
+      .nl-session-summary-table th {
+        background: var(--nl-bg-soft);
+      }
+
+      .nl-session-summary-mount {
+        overflow-x: auto;
+        margin-top: 6px;
+      }
+
+      .nl-session-summary-actions {
+        margin-top: 8px;
+      }
+
+      .nl-gift-quick-list {
+        margin: 6px 0 0;
+        padding-left: 1.1em;
+        font-size: 11px;
+      }
+
+      .nl-gift-uid {
+        font-size: 10px;
       }
 
       .room-bar-row {
@@ -3658,6 +4844,199 @@
       html:not(.nl-inline) body .nl-voice-autosend {
         display: none;
       }
+
+      /* ツールバー・サイドパネル: ダークカード系（watch ページ内埋め込みは nl-skin-panel-dark なし） */
+      .nl-vdh-divider {
+        display: none;
+      }
+
+      html.nl-skin-panel-dark {
+        color-scheme: dark;
+        --nl-bg: #0a0e14;
+        --nl-bg-soft: #121820;
+        --nl-surface: #161d27;
+        --nl-text: #e8edf4;
+        --nl-muted: #8d9bb5;
+        --nl-border: rgb(71 85 105 / 48%);
+        --nl-accent: #3b82f6;
+        --nl-accent-hover: #60a5fa;
+        --nl-record-on: #34d399;
+        --nl-header-start: #1c2d4a;
+        --nl-header-end: #0f172a;
+        --nl-danger-bg: rgb(185 28 28 / 28%);
+        --nl-danger-text: #fecaca;
+        --nl-shadow: 0 12px 32px rgb(0 0 0 / 55%);
+        --nl-frame-outline: rgb(100 116 139 / 35%);
+      }
+
+      html.nl-skin-panel-dark body {
+        background: linear-gradient(168deg, #0a0e14 0%, #121a24 48%, #0d1219 100%);
+      }
+
+      html.nl-skin-panel-dark .nl-main {
+        padding: 10px 10px 12px;
+      }
+
+      html.nl-skin-panel-dark .nl-vdh-divider {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin: 10px 0 8px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--nl-muted);
+      }
+
+      html.nl-skin-panel-dark .nl-vdh-divider::before,
+      html.nl-skin-panel-dark .nl-vdh-divider::after {
+        content: '';
+        flex: 1;
+        height: 1px;
+        background: linear-gradient(
+          90deg,
+          transparent,
+          rgb(100 116 139 / 55%) 14%,
+          rgb(100 116 139 / 55%) 86%,
+          transparent
+        );
+      }
+
+      html.nl-skin-panel-dark .nl-vdh-divider span {
+        flex-shrink: 0;
+        max-width: 78%;
+        text-align: center;
+        line-height: 1.25;
+      }
+
+      html.nl-skin-panel-dark .nl-live-stat-card {
+        background: linear-gradient(160deg, #1a2330 0%, #141b24 100%);
+        box-shadow: 0 4px 16px rgb(0 0 0 / 38%);
+        border-color: rgb(100 116 139 / 32%);
+      }
+
+      html.nl-skin-panel-dark #postCommentBtn {
+        background: linear-gradient(180deg, #3b82f6 0%, #2563eb 100%);
+        box-shadow: 0 2px 10px rgb(37 99 235 / 38%);
+        transition: background 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      html.nl-skin-panel-dark #postCommentBtn:hover:not(:disabled) {
+        background: linear-gradient(180deg, #60a5fa 0%, #3b82f6 100%);
+        box-shadow: 0 3px 14px rgb(59 130 246 / 42%);
+      }
+
+      html.nl-skin-panel-dark #postCommentBtn:disabled {
+        background: rgb(51 65 85 / 88%);
+        box-shadow: none;
+      }
+
+      html.nl-skin-panel-dark .nl-comment-ticker__viewport {
+        background: linear-gradient(180deg, #1e293b 0%, #162032 100%);
+        border-color: rgb(59 130 246 / 38%);
+        box-shadow: inset 0 1px 0 rgb(255 255 255 / 6%);
+      }
+
+      html.nl-skin-panel-dark .nl-comment-ticker__seg {
+        color: var(--nl-text);
+      }
+
+      html.nl-skin-panel-dark .nl-ticker-item {
+        text-shadow: none;
+      }
+
+      html.nl-skin-panel-dark .nl-ticker-latest__avatar {
+        border-color: rgb(148 163 184 / 45%);
+        background: var(--nl-surface);
+      }
+
+      html.nl-skin-panel-dark #watchThumb {
+        border-color: var(--nl-border);
+      }
+
+      html.nl-skin-panel-dark .nl-watch-tags .chip {
+        background: rgb(30 58 138 / 42%);
+        color: #bfdbfe;
+        border-color: rgb(59 130 246 / 38%);
+      }
+
+      html.nl-skin-panel-dark .nl-compose-troubleshoot {
+        background: rgb(15 23 42 / 72%);
+      }
+
+      html.nl-skin-panel-dark .nl-support-visual-details {
+        background: rgb(15 23 42 / 55%);
+        border-color: rgb(100 116 139 / 35%);
+      }
+
+      html.nl-skin-panel-dark .nl-support-visual-details[open] {
+        box-shadow: 0 8px 26px rgb(0 0 0 / 28%);
+      }
+
+      html.nl-skin-panel-dark .nl-story-userlane-guide__line {
+        background: linear-gradient(180deg, #292524 0%, #1c1917 100%);
+        border-color: rgb(245 158 11 / 45%);
+        color: #fde68a;
+        box-shadow: 0 2px 8px rgb(0 0 0 / 32%);
+      }
+
+      html.nl-skin-panel-dark .nl-story-userlane-guide__count {
+        color: #fcd34d;
+      }
+
+      html.nl-skin-panel-dark .nl-story-userlane-tier-hint {
+        color: #e2e8f0;
+        background: rgb(30 41 59 / 55%);
+        border-color: rgb(245 158 11 / 35%);
+      }
+
+      html.nl-skin-panel-dark .nl-story-detail {
+        background: color-mix(in srgb, var(--nl-surface) 88%, var(--nl-accent) 12%);
+      }
+
+      html.nl-skin-panel-dark .nl-story-detail.is-preview {
+        background: color-mix(in srgb, var(--nl-surface) 85%, var(--nl-accent) 15%);
+      }
+
+      html.nl-skin-panel-dark #userRoomList li.room-card:hover {
+        background: rgb(30 41 59 / 88%);
+      }
+
+      html.nl-skin-panel-dark .nl-usage-terms-gate {
+        background: color-mix(in srgb, #020617 78%, transparent);
+      }
+
+      html.nl-skin-panel-dark .nl-usage-terms-gate__panel {
+        background: var(--nl-surface);
+        border-color: var(--nl-border);
+      }
+
+      html.nl-skin-panel-dark .nl-extension-context-banner {
+        color: #bfdbfe;
+        background: rgb(30 58 138 / 38%);
+        border-color: rgb(59 130 246 / 42%);
+      }
+
+      html.nl-skin-panel-dark .nl-comment-harvest-banner {
+        color: #fde68a;
+        background: rgb(120 53 15 / 32%);
+        border-color: rgb(245 158 11 / 38%);
+      }
+
+      html.nl-skin-panel-dark .nl-comment-harvest-hint {
+        color: #fcd34d;
+      }
+
+      html.nl-skin-panel-dark .nl-comment-harvest-banner button {
+        background: var(--nl-surface);
+        border-color: rgb(245 158 11 / 45%);
+        color: var(--nl-text);
+      }
+
+      html.nl-skin-panel-dark #storageErrorBanner {
+        border-color: rgb(248 113 113 / 38%);
+      }
     </style>
   </head>
   <body>
@@ -3759,7 +5138,7 @@
         <div
           class="nl-live-stat-card nl-live-stat-card--comments nl-live-stat-card--support-visual"
           id="supportVisualLiveCard"
-          title="大きい数字は拡張がこの配信で記録した応援コメント件数。下段はニコ生公式の累計コメント数（取得できたときのみ表示）。"
+          title="この数字は、このPCに保存した応援コメントの件数です。画面に出ていない古いコメントは取り込めません。記録をオフにしていた時間やページを閉じていた間は増えません。下に出る公式の件数はニコ生の累計（別の意味）で、取り込みの割合も併記されます。"
         >
           <img
             class="nl-live-stat-icon"
@@ -3774,12 +5153,6 @@
             class="nl-live-stat-sub nl-live-stat-sub--official"
             id="liveStatCommentsOfficial"
             hidden
-          ></div>
-          <div
-            id="topSupportRankStrip"
-            class="nl-top-support-rank"
-            hidden
-            aria-hidden="true"
           ></div>
         </div>
         <div
@@ -3835,6 +5208,16 @@
           <div class="nl-live-stat-value" id="watchViewerDom">—</div>
           <div class="nl-live-stat-unit">人</div>
         </div>
+        <div
+          id="topSupportRankStrip"
+          class="nl-top-support-rank nl-top-support-rank--below-cards nl-top-support-rank--span-cards"
+          hidden
+          aria-hidden="true"
+        ></div>
+      </div>
+
+      <div class="nl-vdh-divider" role="presentation">
+        <span>コメント・書き出し</span>
       </div>
 
       <section
@@ -3895,7 +5278,7 @@
           class="nl-export-toolbar__hint nl-compose-toolbar-hint"
           id="exportToolbarHint"
         >
-          HTML保存・スクショ・再読み込みは送信の横のボタンから。watch に埋め込むパネルの幅は直下で選べます。定期サムネや書き出しの詳細は、その下の項目を開いてください。
+          HTML保存・スクショ（動画領域のみ）・再読み込みは送信の横からもできます。ちらつきや帯の動きを抑えたいときは直下の「動きを抑える」をオン。watch に埋め込むパネルの幅と、「表示がおかしいとき」の直し方はその下です。定期サムネや書き出しの詳細は、さらに下の項目を開いてください。
         </p>
         <div
           class="nl-record nl-panel-width nl-compose-panel-width"
@@ -3925,8 +5308,54 @@
               動画の幅だけ
             </label>
           </div>
+          <div class="nl-panel-calm-motion">
+            <label for="calmPanelMotion">
+              <input type="checkbox" id="calmPanelMotion" />
+              <span>パネル内の動きを抑える（ループアニメ・帯など）</span>
+            </label>
+          </div>
+          <div
+            class="nl-display-help"
+            role="region"
+            aria-labelledby="nlDisplayHelpTitle"
+          >
+            <div id="nlDisplayHelpTitle" class="nl-display-help__title">
+              表示がおかしいとき
+            </div>
+            <p class="nl-display-help__text" id="nlDisplayHelpDesc">
+              まず<strong>watch を再読み込み</strong>（ページをやり直す）。それでも名前やアイコンだけ変なときだけ、
+              <strong>表示キャッシュを消す</strong>（このPCが覚えた表示名・アイコンURLを忘れる。記録した応援コメントや設定は消えません）。
+            </p>
+            <div class="nl-display-help__actions">
+              <button
+                type="button"
+                id="reloadWatchTabPanelBtn"
+                class="nl-panel-reload-btn"
+                aria-describedby="nlDisplayHelpDesc"
+              >
+                watch を再読み込み
+              </button>
+              <button
+                type="button"
+                id="extensionCacheClearBtn"
+                class="nl-extension-cache-clear-btn"
+                aria-describedby="nlDisplayHelpDesc"
+                title="記録したコメントや設定は消しません。表示名・アイコンURLの覚えだけ消します。"
+              >
+                表示キャッシュを消す
+              </button>
+            </div>
+            <span
+              id="extensionCacheClearStatus"
+              class="nl-extension-cache-clear-status nl-display-help__status"
+              aria-live="polite"
+            ></span>
+          </div>
         </div>
-        <details class="nl-export-toolbar__details nl-compose-primary-more">
+        <details
+          class="nl-export-toolbar__details nl-compose-primary-more"
+          data-nl-toolbar-only
+        >
           <summary class="nl-export-toolbar__summary">
             書き出しの詳細・定期サムネ・ページ表示
           </summary>
@@ -3955,12 +5384,16 @@
               <p class="nl-compose-troubleshoot-text">
                 コメントの取得や送信がうまくいかないときは、<strong>watchページを再読み込み</strong>（F5）してください。送信の横の「再読み込み」ボタンでも同じ操作ができます。拡張機能のファイルを差し替えたあとは、Chrome の
                 <strong>chrome://extensions</strong>
-                を開き、「君斗りんくの追憶のきらめき」の<strong>「更新」</strong>を押してから、必要なら watch ページも再読み込みしてください（拡張は自動では再読み込みされません）。
+                を開き、「君斗りんくの追憶のきらめき」の<strong>「更新」</strong>を押してから、必要なら watch ページも再読み込みしてください（拡張は自動では再読み込みされません）。<strong>タブを複数開いて別々の生放送を同時に見ても使えます</strong>（各タブで拡張が動きます。設定やストレージは同じ Chrome プロファイル内で共有されます）。
               </p>
             </div>
           </div>
         </details>
       </section>
+
+      <div class="nl-vdh-divider" role="presentation">
+        <span>応援の記録と表示</span>
+      </div>
 
       <section class="nl-stats" aria-label="応援コメント数">
         <span id="liveId" hidden>-</span>
@@ -3999,6 +5432,13 @@
               <div id="roomHeatFill" class="room-heat-fill" style="width: 0%"></div>
             </div>
             <div id="roomHeatNote" class="room-heat-note">増加は少なめ（この5分で増えた件数）</div>
+            <div
+              id="commentVelocityLine"
+              class="room-heat-velocity"
+              role="status"
+              aria-live="polite"
+              hidden
+            ></div>
           </div>
           <div class="nl-story" aria-live="polite">
             <div class="nl-story-avatars" aria-hidden="true">
@@ -4035,24 +5475,79 @@
                         アイコン列を隠す
                       </button>
                     </div>
-                    <div id="sceneStoryUserLaneGuide" class="nl-story-userlane-guide" hidden>
-                      <img
-                        class="nl-story-userlane-guide__avatar"
-                        src="images/yukkuri-charactore-english/konta/kitsune-yukkuri-half-eyes-mouth-closed.png"
-                        alt=""
-                        decoding="async"
-                      />
+                    <div id="sceneStoryUserLaneGuideTop" class="nl-story-userlane-guide" hidden>
                       <div
-                        id="sceneStoryUserLaneGuideBubble"
-                        class="nl-story-userlane-guide__bubble"
-                      >こん太: ここは識別できた応援ユーザーの列だよ</div>
+                        id="sceneStoryUserLaneGuideLinesTop"
+                        class="nl-story-userlane-guide__lines"
+                        aria-label="応援ユーザーレーンの説明（りんく）"
+                      ></div>
                     </div>
                     <div
-                      id="sceneStoryUserLane"
-                      class="nl-story-userlane"
+                      id="sceneStoryUserLaneStack"
+                      class="nl-story-userlane-stack"
                       aria-label="最近の応援ユーザーサムネイル"
                       hidden
-                    ></div>
+                    >
+                      <div
+                        id="sceneStoryUserLaneRinkWrap"
+                        class="nl-story-userlane-tier-wrap"
+                      >
+                        <div
+                          id="sceneStoryUserLaneRink"
+                          class="nl-story-userlane nl-story-userlane--rink"
+                          aria-label="優先1・個人サムネと表示名がそろったユーザー"
+                          hidden
+                        ></div>
+                        <p
+                          id="sceneStoryUserLaneRinkHint"
+                          class="nl-story-userlane-tier-hint"
+                          hidden
+                        >
+                          この段は「表示名と個人サムネがそろった人」だけ。いまの記録では該当者がいないので、下の段に並んでいます。
+                        </p>
+                      </div>
+                      <div
+                        id="sceneStoryUserLaneGuideMidKonta"
+                        class="nl-story-userlane-guide nl-story-userlane-guide--mid"
+                        hidden
+                      >
+                        <div
+                          id="sceneStoryUserLaneGuideLinesMidKonta"
+                          class="nl-story-userlane-guide__lines"
+                          aria-label="応援ユーザーレーンの説明（こん太・この段の前）"
+                        ></div>
+                      </div>
+                      <div
+                        id="sceneStoryUserLaneKonta"
+                        class="nl-story-userlane nl-story-userlane--konta"
+                        aria-label="優先2・表示名かサムネのどちらかが取れているユーザー"
+                        hidden
+                      ></div>
+                      <div
+                        id="sceneStoryUserLaneGuideMidTanu"
+                        class="nl-story-userlane-guide nl-story-userlane-guide--mid"
+                        hidden
+                      >
+                        <div
+                          id="sceneStoryUserLaneGuideLinesMidTanu"
+                          class="nl-story-userlane-guide__lines"
+                          aria-label="応援ユーザーレーンの説明（たぬ姉・この段の前）"
+                        ></div>
+                      </div>
+                      <div
+                        id="sceneStoryUserLaneTanu"
+                        class="nl-story-userlane nl-story-userlane--tanu"
+                        aria-label="優先3・取得が薄いユーザー"
+                        hidden
+                      ></div>
+                    </div>
+                    <div id="sceneStoryUserLaneGuideBottom" class="nl-story-userlane-guide" hidden>
+                      <div
+                        id="sceneStoryUserLaneGuideLinesBottom"
+                        class="nl-story-userlane-guide__lines"
+                        aria-label="応援ユーザーレーンの表示件数"
+                      ></div>
+                    </div>
                     <div id="storyAvatarDiag" class="nl-story-avatar-diag" hidden></div>
                     <div id="storyGrowthCollapsible" class="nl-story-growth-collapsible">
                       <div id="sceneStoryGauge" class="nl-story-meter" aria-label="応援コメントアイコン表示">
@@ -4088,7 +5583,7 @@
         </div>
       </section>
 
-      <section id="watchMeta" class="nl-watch-meta" hidden>
+      <section id="watchMeta" class="nl-watch-meta" hidden data-nl-toolbar-only>
         <div class="nl-watch-meta-top">
           <img id="watchThumb" alt="放送サムネイル" hidden />
           <div>
@@ -4138,7 +5633,53 @@
         </label>
       </div>
 
-      <section class="nl-comment-compose" aria-label="コメント補助機能">
+      <details class="nl-dev-monitor-details" id="devMonitorDetails">
+        <summary>詳しい状況（開発・切り分け用・折りたたみ）</summary>
+        <div class="nl-dev-monitor-details__body">
+          <p class="nl-dev-monitor__hint">
+            普段は開かなくて大丈夫です。記録と公式表示の差や、アイコン・名前がどれだけ取れているかを、グラフと表で見る欄です（上から順に
+            取得率チャート → 件数の比較・種類の内訳 → 表 → 技術用JSON）。コメント本文は出しません。
+            <span class="nl-dev-monitor__hint-sub">
+              困ったときの目安: ライブかタイムシフトか／「このPCで記録」がONか／対象のwatchタブを開いたままか。下の「watchタブ内の一時対応表」と「取り込んだ行数」が長く0のままなら、ページの再読み込み（F5）や拡張の更新も試してください。
+            </span>
+          </p>
+          <div id="devMonitorAcquisition" class="nl-acquisition-wrap"></div>
+          <div
+            id="devMonitorViz"
+            class="nl-dev-monitor-viz-wrap"
+            aria-live="polite"
+          ></div>
+          <div
+            id="devMonitorDlCharts"
+            class="nl-dev-monitor-dl-charts-wrap"
+            aria-live="polite"
+          ></div>
+          <dl class="nl-dev-monitor__stats" id="devMonitorStats"></dl>
+          <pre
+            class="nl-dev-monitor__json"
+            id="devMonitorJson"
+            aria-label="開発者向け・技術用の要約JSON（任意）"
+          ></pre>
+          <div class="nl-dev-monitor__actions">
+            <button type="button" class="nl-dev-monitor__btn" id="devMonitorRefresh">
+              スナップショット再取得
+            </button>
+            <button type="button" class="nl-dev-monitor__btn" id="devMonitorExportTrendBtn">
+              推移JSONをコピー
+            </button>
+            <button type="button" class="nl-dev-monitor__btn nl-dev-monitor__btn--accent" id="devMonitorExportMarketingBtn" disabled>
+              📊 マーケ分析DL
+            </button>
+            <span
+              id="devMonitorExportTrendStatus"
+              class="nl-dev-monitor__export-status"
+              aria-live="polite"
+            ></span>
+          </div>
+        </div>
+      </details>
+
+      <section class="nl-comment-compose" aria-label="コメント補助機能" data-nl-toolbar-only>
         <details class="nl-voice-guide-details" id="voiceOsGuideDetails">
           <summary class="nl-voice-guide-summary">
             <span class="nl-voice-guide-summary__avatar" aria-hidden="true">
@@ -4256,12 +5797,13 @@
         </div>
       </div>
 
-      <h2>応援可視化（ユーザー別）</h2>
-      <ul id="userRoomList" aria-live="polite"></ul>
+      <h2 data-nl-toolbar-only>応援可視化（ユーザー別）</h2>
+      <ul id="userRoomList" aria-live="polite" data-nl-toolbar-only></ul>
 
       <section
         class="nl-frame-switch nl-project-concept"
         aria-label="この拡張について（君斗りんくの追憶のきらめき）"
+        data-nl-toolbar-only
       >
         <details class="nl-frame-theme-details" id="projectConceptDetails">
           <summary class="nl-frame-theme-details__summary">
@@ -4304,7 +5846,7 @@
         </details>
       </section>
 
-      <section class="nl-frame-switch" aria-label="ポップアップの見た目（配色）">
+      <section class="nl-frame-switch" aria-label="ポップアップの見た目（配色）" data-nl-toolbar-only>
         <details class="nl-frame-theme-details" id="frameThemeDetails">
           <summary class="nl-frame-theme-details__summary">
             <span class="nl-frame-theme-details__summary-text">
@@ -4403,7 +5945,30 @@
         </details>
       </section>
 
-      <footer class="nl-powered-by" role="contentinfo" aria-label="ブランド表記">
+      <details class="nl-session-summary-panel" data-nl-toolbar-only>
+        <summary>記録サマリの推移（この放送）</summary>
+        <p class="nl-sub">
+          IndexedDB に約1分ごとにサンプルを残します（件数上限で古い順に削除されます）。
+        </p>
+        <div id="sessionSummaryCompareMount" class="nl-session-summary-mount"></div>
+        <div class="nl-session-summary-actions">
+          <button type="button" id="exportSessionSummaryJsonBtn">
+            サマリをJSONで保存
+          </button>
+        </div>
+      </details>
+
+      <details class="nl-gift-quick-panel" data-nl-toolbar-only>
+        <summary>ギフト・広告ユーザー（簡易）</summary>
+        <div id="giftQuickStatsMount" class="nl-gift-quick-mount"></div>
+      </details>
+
+      <footer
+        class="nl-powered-by"
+        role="contentinfo"
+        aria-label="ブランド表記"
+        data-nl-toolbar-only
+      >
         <span class="nl-powered-by-label">Powered by</span>
         <a
           class="nl-powered-by-link"

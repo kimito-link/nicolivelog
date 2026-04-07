@@ -43,14 +43,47 @@ export const KEY_SUPPORT_VISUAL_EXPANDED = 'nls_support_visual_expanded';
 /** ポップアップ利用条件（外部アイコン・書き出し等）の同意済みフラグ */
 export const KEY_USAGE_TERMS_ACK = 'nls_usage_terms_ack_v1';
 
+/**
+ * 将来の PRO / PREMIUM 等のエンタイトルメント（決済連携は別タスク）。
+ * 値は `free` | `pro` | `premium` を想定。未設定は free 扱い。
+ */
+export const KEY_NL_ENTITLEMENT_TIER = 'nls_entitlement_tier_v1';
+
 /** 音声入力: 使用するマイクの deviceId（空は既定） */
 export const KEY_VOICE_INPUT_DEVICE = 'nls_voice_input_device';
 
 /** 拡張から投稿したコメント（本文＋時刻）— 応援アイコンをこん太にする照合用 */
 export const KEY_SELF_POSTED_RECENTS = 'nls_self_posted_recents';
 
+/** userId 単位の表示名・個人サムネ URL（弱い既定アイコン以外）の永続キャッシュ */
+export const KEY_USER_COMMENT_PROFILE_CACHE = 'nls_user_comment_profile_v1';
+
+/**
+ * UI の「キャッシュクリア」で chrome.storage.local から削除するキー。
+ * 応援コメント記録（nls_comments_*）・ギフト記録・各種設定は含めない。
+ */
+export const EXTENSION_SOFT_CACHE_STORAGE_KEYS = Object.freeze([
+  KEY_USER_COMMENT_PROFILE_CACHE
+]);
+
 /** 視聴ページインラインパネルの幅: 視聴ブロック全幅 or 動画幅のみ */
 export const KEY_INLINE_PANEL_WIDTH_MODE = 'nls_inline_panel_width_mode';
+
+/**
+ * パネル内のループアニメ・チラ見せスクロールを止める（画面収録・スクショ向け）。
+ * 未設定時は opts.inlineDefault に従う（埋め込みは既定でオン想定）。
+ */
+export const KEY_CALM_PANEL_MOTION = 'nls_calm_panel_motion';
+
+/**
+ * @param {unknown} raw
+ * @param {{ inlineDefault?: boolean }} [opts]
+ */
+export function normalizeCalmPanelMotion(raw, opts = {}) {
+  if (raw === true) return true;
+  if (raw === false) return false;
+  return opts.inlineDefault === true;
+}
 
 export const INLINE_PANEL_WIDTH_PLAYER_ROW = 'player_row';
 export const INLINE_PANEL_WIDTH_VIDEO = 'video';
@@ -77,8 +110,29 @@ export function isUsageTermsAcknowledged(raw) {
   return raw === true;
 }
 
+/** @param {unknown} raw @returns {'free' | 'pro' | 'premium'} */
+export function normalizeEntitlementTier(raw) {
+  const s = String(raw || '').trim().toLowerCase();
+  if (s === 'pro' || s === 'premium') return s;
+  return 'free';
+}
+
+/** 開発監視トレンド（liveId ごと・chrome.storage.local） */
+export const KEY_DEV_MONITOR_TREND_PREFIX = 'nls_dm_tr:';
+
+/** @param {string} liveId */
+export function devMonitorTrendStorageKey(liveId) {
+  return `${KEY_DEV_MONITOR_TREND_PREFIX}${String(liveId || '').trim() || '_'}`;
+}
+
 /** @param {string} liveId lv123 */
 export function commentsStorageKey(liveId) {
   const id = String(liveId || '').trim().toLowerCase();
   return `nls_comments_${id}`;
+}
+
+/** @param {string} liveId lv123 */
+export function giftUsersStorageKey(liveId) {
+  const id = String(liveId || '').trim().toLowerCase();
+  return `nls_gift_users_${id}`;
 }

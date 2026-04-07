@@ -86,6 +86,17 @@ export function extractUserIdFromDataAttributes(el) {
 }
 
 /**
+ * img の遅延読み込み用属性名（`collectNicoUserIconUrlPartsFromImg` と content script の MutationObserver.attributeFilter と同期）
+ */
+export const NICO_USER_ICON_IMG_LAZY_ATTRS = Object.freeze([
+  'src',
+  'data-src',
+  'data-lazy-src',
+  'data-original',
+  'data-url'
+]);
+
+/**
  * img の src / srcset / data-* から URL 断片を集める（遅延読み込み対応）
  * @param {HTMLImageElement} img
  * @returns {string[]}
@@ -93,13 +104,7 @@ export function extractUserIdFromDataAttributes(el) {
 export function collectNicoUserIconUrlPartsFromImg(img) {
   if (!(img instanceof HTMLImageElement)) return [];
   const urls = [];
-  for (const a of [
-    'src',
-    'data-src',
-    'data-original',
-    'data-lazy-src',
-    'data-url'
-  ]) {
+  for (const a of NICO_USER_ICON_IMG_LAZY_ATTRS) {
     const v = img.getAttribute(a);
     if (v) urls.push(String(v).trim());
   }
@@ -467,6 +472,81 @@ export function resolveUserIdForNicoLiveCommentRow(row) {
   return userId;
 }
 
+/**
+ * @param {string|undefined|null} raw
+ * @returns {string}
+ */
+function cleanNicknameCandidate(raw) {
+  const t = String(raw ?? '')
+    .replace(/\u00a0/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!t || t.length > 128) return '';
+  if (/^https?:\/\//i.test(t)) return '';
+  return t;
+}
+
+/**
+ * PC コメント table-row から表示名（intercept 不調時の DOM フォールバック）
+ * @param {Element} row
+ * @param {string} commentText
+ * @returns {string}
+ */
+function extractNicknameFromNicoLiveCommentRow(row, commentText) {
+  if (!row || row.nodeType !== 1) return '';
+  const bodyNorm = String(commentText || '').replace(/\s+/g, ' ').trim();
+
+  /** @param {string} n */
+  const accept = (n) => {
+    const s = cleanNicknameCandidate(n);
+    if (!s) return '';
+    if (bodyNorm && s === bodyNorm) return '';
+    return s;
+  };
+
+  try {
+    const links = row.querySelectorAll('a[href*="/user/"]');
+    for (const a of links) {
+      const t = accept(a.getAttribute('title') || '');
+      if (t) return t;
+      const ar = accept(a.getAttribute('aria-label') || '');
+      if (ar) return ar;
+    }
+  } catch {
+    // no-op
+  }
+
+  const dataHints = [
+    row.getAttribute('data-user-name'),
+    row.getAttribute('data-username'),
+    row.getAttribute('data-display-name')
+  ];
+  for (const d of dataHints) {
+    const t = accept(d || '');
+    if (t) return t;
+  }
+
+  try {
+    const namedChild = row.querySelector('[data-user-name]');
+    if (namedChild) {
+      const t = accept(namedChild.getAttribute('data-user-name') || '');
+      if (t) return t;
+    }
+  } catch {
+    // no-op
+  }
+
+  const fromFiber = extractNicknameFromReactFiberInSubtree(row, 56, {
+    skipRoot: true
+  });
+  if (fromFiber) {
+    const t = accept(fromFiber);
+    if (t) return t;
+  }
+
+  return '';
+}
+
 /** @param {Element|null} el */
 function getReactFiber(el) {
   if (!el) return null;
@@ -534,6 +614,106 @@ function pickUserIdFromBag(bag) {
     }
   }
   return null;
+}
+
+/** @type {readonly string[]} */
+const NICKNAME_PROP_KEYS = [
+  'name',
+  'nickname',
+  'nickName',
+  'userName',
+  'screenName',
+  'handleName',
+  'displayName',
+  'userNickname',
+  'senderName',
+  'profileName'
+];
+
+/**
+ * React props 断片から表示名を推定（userId 取得と同系のネストを辿る）
+ * @param {unknown} bag
+ * @returns {string}
+ */
+function pickNicknameFromBag(bag) {
+  if (!bag || typeof bag !== 'object') return '';
+  const obj = /** @type {Record<string, unknown>} */ (bag);
+  for (const key of NICKNAME_PROP_KEYS) {
+    const v = obj[key];
+    if (v == null) continue;
+    const s = cleanNicknameCandidate(String(v));
+    if (s) return s;
+  }
+  for (const key of ['comment', 'data', 'item', 'chat', 'message']) {
+    const nested = obj[key];
+    if (!nested || typeof nested !== 'object') continue;
+    const nestedObj = /** @type {Record<string, unknown>} */ (nested);
+    for (const nk of NICKNAME_PROP_KEYS) {
+      const v = nestedObj[nk];
+      if (v == null) continue;
+      const s = cleanNicknameCandidate(String(v));
+      if (s) return s;
+    }
+  }
+  return '';
+}
+
+/**
+ * @param {unknown} fiber
+ * @returns {string}
+ */
+function pickNicknameFromFiber(fiber) {
+  if (!fiber || typeof fiber !== 'object') return '';
+  const f = /** @type {{ memoizedProps?: unknown, pendingProps?: unknown }} */ (
+    fiber
+  );
+  for (const bag of [f.memoizedProps, f.pendingProps]) {
+    const n = pickNicknameFromBag(bag);
+    if (n) return n;
+  }
+  return '';
+}
+
+/**
+ * @param {Element} el
+ * @returns {string}
+ */
+function extractNicknameFromReactFiberSelfOnly(el) {
+  if (!el || el.nodeType !== 1) return '';
+  const fiber = getReactFiber(el);
+  if (!fiber) return '';
+  return pickNicknameFromFiber(fiber);
+}
+
+/**
+ * 行サブツリー内の fiber から表示名を探す（DOM の a[href*="/user/"] が無い環境向け）
+ *
+ * @param {Element} root
+ * @param {number} [maxNodes]
+ * @param {{ skipRoot?: boolean }} [opts]
+ * @returns {string}
+ */
+export function extractNicknameFromReactFiberInSubtree(
+  root,
+  maxNodes = 56,
+  opts = {}
+) {
+  if (!root || root.nodeType !== 1) return '';
+  const skipRoot = Boolean(opts.skipRoot);
+  /** @type {Element[]} */
+  const queue = [];
+  if (!skipRoot) queue.push(root);
+  for (const c of root.children) queue.push(c);
+  let seen = 0;
+  while (queue.length > 0 && seen < maxNodes) {
+    const el = queue.shift();
+    if (!el || el.nodeType !== 1) continue;
+    seen += 1;
+    const n = extractNicknameFromReactFiberSelfOnly(el);
+    if (n) return n;
+    for (const c of el.children) queue.push(c);
+  }
+  return '';
 }
 
 /**
@@ -604,9 +784,11 @@ export function resolveUserIdOnElement(el) {
 }
 
 /**
- * 新ニコ生PC: div.table-row[data-comment-type="normal"] + .comment-number + .comment-text
+ * 新ニコ生PC: div.table-row + .comment-number + .comment-text
+ * data-comment-type は normal 以外（generalSystemMessage 等）も公式コメント数に含まれるため、
+ * 番号・本文が取れる行は種類を問わず記録する。
  * @param {Element} el — 行要素またはその子孫
- * @returns {{ commentNo: string, text: string, userId: string|null, avatarUrl?: string } | null}
+ * @returns {{ commentNo: string, text: string, userId: string|null, nickname?: string, avatarUrl?: string } | null}
  */
 export function parseNicoLiveTableRow(el) {
   if (!el || el.nodeType !== 1) return null;
@@ -614,7 +796,6 @@ export function parseNicoLiveTableRow(el) {
     ? el
     : el.closest?.('div.table-row[role="row"]') || el.closest?.('.table-row');
   if (!row) return null;
-  if (row.getAttribute('data-comment-type') !== 'normal') return null;
 
   const numEl = row.querySelector('.comment-number');
   const textEl = row.querySelector('.comment-text');
@@ -633,14 +814,16 @@ export function parseNicoLiveTableRow(el) {
   const base =
     documentBaseHref(row.ownerDocument) || 'https://live.nicovideo.jp/';
   const avatarUrl = extractUserIconUrlFromElement(row, base);
+  const nickname = extractNicknameFromNicoLiveCommentRow(row, text);
   const out = { commentNo, text, userId };
+  if (nickname) out.nickname = nickname;
   if (avatarUrl) out.avatarUrl = avatarUrl;
   return out;
 }
 
 /**
  * @param {Element} el
- * @returns {{ commentNo: string, text: string, userId: string|null, avatarUrl?: string } | null}
+ * @returns {{ commentNo: string, text: string, userId: string|null, nickname?: string, avatarUrl?: string } | null}
  */
 export function parseCommentElement(el) {
   if (!el || el.nodeType !== 1) return null;
@@ -681,6 +864,21 @@ export function parseCommentElement(el) {
   return null;
 }
 
+/**
+ * MutationObserver 等: コメント番号・本文セルがある table-row を辿る。
+ * @param {Element|null|undefined} el
+ * @returns {Element|null}
+ */
+export function closestHarvestableNicoCommentRow(el) {
+  if (!el || el.nodeType !== 1) return null;
+  const row =
+    el.closest?.('div.table-row[role="row"]') || el.closest?.('div.table-row');
+  if (!row) return null;
+  if (!row.querySelector?.('.comment-number') || !row.querySelector?.('.comment-text'))
+    return null;
+  return row;
+}
+
 const ROW_QUERY = [
   'li',
   '[role="listitem"]',
@@ -689,18 +887,22 @@ const ROW_QUERY = [
 ].join(',');
 
 /**
- * 要素自身＋子孫のニコ生コメント table-row（通常コメントのみ）
+ * 要素自身＋子孫のニコ生コメント table-row（番号・本文セルがある行）
  * @param {Element} el
  * @returns {Element[]}
  */
 function collectNicoLiveTableRows(el) {
   if (!el || el.nodeType !== 1) return [];
   const set = new Set();
+  /** @param {Element} r */
+  const maybeAdd = (r) => {
+    if (!r.querySelector?.('.comment-number') || !r.querySelector?.('.comment-text'))
+      return;
+    set.add(r);
+  };
   try {
-    if (el.matches?.('div.table-row[data-comment-type="normal"]')) set.add(el);
-    el.querySelectorAll?.('div.table-row[data-comment-type="normal"]').forEach((r) =>
-      set.add(r)
-    );
+    if (el.matches?.('div.table-row')) maybeAdd(el);
+    el.querySelectorAll?.('div.table-row').forEach((r) => maybeAdd(r));
   } catch {
     // no-op
   }
@@ -710,16 +912,16 @@ function collectNicoLiveTableRows(el) {
 /**
  * 追加されたノード以下からコメント行候補を集める
  * @param {Node} root
- * @returns {{ commentNo: string, text: string, userId: string|null, avatarUrl?: string }[]}
+ * @returns {{ commentNo: string, text: string, userId: string|null, nickname?: string, avatarUrl?: string }[]}
  */
 export function extractCommentsFromNode(root) {
   if (!root || root.nodeType !== 1) return [];
   const el = /** @type {Element} */ (root);
   const seen = new Set();
-  /** @type {{ commentNo: string, text: string, userId: string|null, avatarUrl?: string }[]} */
+  /** @type {{ commentNo: string, text: string, userId: string|null, nickname?: string, avatarUrl?: string }[]} */
   const out = [];
 
-  /** @param {{ commentNo: string, text: string, userId: string|null, avatarUrl?: string } | null} parsed */
+  /** @param {{ commentNo: string, text: string, userId: string|null, nickname?: string, avatarUrl?: string } | null} parsed */
   function push(parsed) {
     if (!parsed) return;
     const k = `${parsed.commentNo}\t${parsed.text}`;

@@ -24,31 +24,13 @@ export const test = base.extend({
 });
 
 /**
- * 初回表示の利用条件オーバーレイを通過する（既に同意済みなら即 return）
+ * 利用条件ゲート廃止後も、JS で data 属性が付くまで短く待つ（E2E 安定用）
  * @param {import('@playwright/test').Page} popup
  */
 export async function dismissExtensionUsageTermsGate(popup) {
-  await popup.waitForFunction(
-    () =>
-      document.documentElement.getAttribute('data-nl-usage-terms-ack') === '1' ||
-      (() => {
-        const g = document.getElementById('usageTermsGate');
-        if (!g) return false;
-        return getComputedStyle(g).display !== 'none';
-      })(),
-    { timeout: 15_000 }
-  );
-  const acked =
-    (await popup
-      .locator('html')
-      .evaluate((el) => el.getAttribute('data-nl-usage-terms-ack') === '1')) === true;
-  if (!acked) {
-    await popup.locator('#usageTermsAckCheckbox').check();
-    await popup.locator('#usageTermsContinueBtn').click();
-    await expect(popup.locator('html')).toHaveAttribute('data-nl-usage-terms-ack', '1', {
-      timeout: 8000
-    });
-  }
+  await expect(popup.locator('html')).toHaveAttribute('data-nl-usage-terms-ack', '1', {
+    timeout: 15_000
+  });
 }
 
 export { expect };

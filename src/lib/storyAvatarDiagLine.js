@@ -1,0 +1,175 @@
+/**
+ * 応援グリッド用・診断表示（PII なし・件数のみ）。
+ * ユーザー向けは平易な文＋折りたたみの詳細。
+ */
+
+import { escapeHtml } from './htmlEscape.js';
+
+/**
+ * @typedef {{
+ *   total: number,
+ *   withUid: number,
+ *   withAvatar: number,
+ *   uniqueAvatar: number,
+ *   resolvedAvatar: number,
+ *   resolvedUniqueAvatar: number,
+ *   selfShown: number,
+ *   selfSaved: number,
+ *   selfPending: number,
+ *   selfPendingMatched: number,
+ *   interceptItems: number,
+ *   interceptWithUid: number,
+ *   interceptWithAvatar: number,
+ *   mergedPatched: number,
+ *   mergedUidReplaced: number,
+ *   stripped: number,
+ *   interceptMapOnPage?: number,
+ *   interceptExportRows?: number,
+ *   interceptExportCode?: string,
+ *   interceptExportDetail?: string
+ * }} StoryAvatarDiagSnapshot
+ */
+
+/**
+ * エクスポート理由コードを短い日本語に（ユーザー向け1行）。
+ * @param {string} code
+ * @param {string} [detail]
+ */
+export function interceptExportCodeUserLabel(code, detail = '') {
+  const c = String(code || '').trim();
+  const d = String(detail || '').trim();
+  switch (c) {
+    case 'ok':
+      return '取り込みに成功しました。';
+    case 'ok_empty':
+      return '取り込みは成功しましたが、まだ行がありません。watch タブを開いたままにして、ポップアップを更新してみてください。';
+    case 'export_rejected':
+      return d ? `取り込みをページ側が拒否しました（${d.slice(0, 80)}）` : '取り込みをページ側が拒否しました。';
+    case 'message_failed':
+      return 'ページとの通信に失敗しました。watch を再読み込み（F5）してから試してください。';
+    case 'no_success_response':
+      return 'ページから応答がありませんでした。対象の watch タブが開いているか確認してください。';
+    default:
+      return c ? `状態コード: ${c}` : '状態を取得できませんでした。';
+  }
+}
+
+/**
+ * 開発者向けの1行（従来形式・折りたたみ内）。
+ * @param {StoryAvatarDiagSnapshot} s
+ * @returns {string|null}
+ */
+export function formatStoryAvatarDiagLine(s) {
+  const total = typeof s.total === 'number' && s.total > 0 ? s.total : 0;
+  if (total <= 0) return null;
+
+  let line =
+    `診断(技術): 保存アイコンURL ${s.withAvatar}/${s.total}（種類 ${s.uniqueAvatar}）` +
+    ` / 表示に使えたアイコン ${s.resolvedAvatar}/${s.total}（種類 ${s.resolvedUniqueAvatar}）` +
+    ` / ユーザーID ${s.withUid}/${s.total}` +
+    ` / 自分の投稿 表示${s.selfShown}件（保存済${s.selfSaved}, 待ち${s.selfPending}, 一致${s.selfPendingMatched}）` +
+    ` / ページから拾った補助 ${s.interceptItems}件（ID${s.interceptWithUid}, アイコン${s.interceptWithAvatar}）` +
+    ` / 後から補完 ${s.mergedPatched}件`;
+  if (s.mergedUidReplaced > 0) {
+    line += `（ID差し替え ${s.mergedUidReplaced}）`;
+  }
+  if (s.stripped > 0) {
+    line += ` / 不整合除去 ${s.stripped}件`;
+  }
+
+  const mapOn =
+    typeof s.interceptMapOnPage === 'number' && s.interceptMapOnPage >= 0
+      ? String(s.interceptMapOnPage)
+      : '—';
+  const exportRows =
+    typeof s.interceptExportRows === 'number' && s.interceptExportRows >= 0
+      ? s.interceptExportRows
+      : null;
+  const exCode = String(s.interceptExportCode || '').trim();
+  const exDetail = String(s.interceptExportDetail || '').trim().slice(0, 72);
+  if (mapOn !== '—' || exportRows != null || exCode) {
+    line += ` / ページ内の一時対応表 ${mapOn}件`;
+    if (exportRows != null) line += `・直近の取り込み ${exportRows}行`;
+    if (exCode) line += ` [${exCode}]`;
+    if (exDetail) line += ` (${exDetail})`;
+  }
+
+  return line;
+}
+
+/**
+ * ユーザー向け HTML（内訳は details で折りたたみ）。
+ * @param {StoryAvatarDiagSnapshot} s
+ * @returns {string|null}
+ */
+export function buildStoryAvatarDiagHtml(s) {
+  const total = typeof s.total === 'number' && s.total > 0 ? s.total : 0;
+  if (total <= 0) return null;
+
+  const leadParts = [];
+  leadParts.push(
+    `記録している応援コメント <strong>${total}</strong> 件のうち、一覧でアイコンまで表示できているのは <strong>${s.resolvedAvatar}</strong> 件、ユーザーIDが付いているのは <strong>${s.withUid}</strong> 件です。`
+  );
+  if (s.mergedPatched > 0) {
+    leadParts.push(
+      `あとから情報が足りて埋まった行が <strong>${s.mergedPatched}</strong> 件あります。`
+    );
+  }
+  if (s.selfShown > 0 || s.selfPending > 0 || s.selfSaved > 0) {
+    leadParts.push(
+      `あなたが送ったコメントは、画面上 <strong>${s.selfShown}</strong> 件・このPCに保存済み <strong>${s.selfSaved}</strong> 件・照合待ち <strong>${s.selfPending}</strong> 件です。`
+    );
+  }
+  if (s.interceptItems > 0) {
+    leadParts.push(
+      `視聴ページの通信から拾った利用者情報（アイコンや名前の補助）が <strong>${s.interceptItems}</strong> 件分あります。`
+    );
+  }
+
+  const mapOn =
+    typeof s.interceptMapOnPage === 'number' && s.interceptMapOnPage >= 0
+      ? s.interceptMapOnPage
+      : null;
+  const exCode = String(s.interceptExportCode || '').trim();
+  if (mapOn != null || exCode) {
+    const extra = [];
+    if (mapOn != null) {
+      extra.push(
+        `いまの watch タブ内の「コメント番号と利用者の対応表」は <strong>${mapOn}</strong> 件です（タブを閉じると消えます）。`
+      );
+    }
+    if (exCode) {
+      extra.push(
+        escapeHtml(
+          interceptExportCodeUserLabel(
+            exCode,
+            String(s.interceptExportDetail || '')
+          )
+        )
+      );
+    }
+    leadParts.push(extra.join(' '));
+  }
+
+  const technical = formatStoryAvatarDiagLine(s);
+  const glossary =
+    '<ul class="nl-story-diag__list">' +
+    '<li><strong>保存アイコン</strong>：このPCの記録に、アイコンのURLとして残っている件数です。</li>' +
+    '<li><strong>表示アイコン</strong>：グリッドなどで実際に画像として使えている件数です。</li>' +
+    '<li><strong>ページから拾った補助</strong>：ニコ生のページが読み取る通信から、拡張が利用者表示を補うために使う情報です（本文は保存しません）。</li>' +
+    '<li><strong>一時対応表</strong>：開いている watch タブのメモリ上だけにある対応表で、キャッシュとは別です。</li>' +
+    '</ul>';
+
+  return (
+    `<div class="nl-story-diag">` +
+    `<p class="nl-story-diag__lead">${leadParts.join(' ')}</p>` +
+    `<details class="nl-story-diag__more">` +
+    `<summary class="nl-story-diag__summary">内訳・用語（詳しく見る）</summary>` +
+    `<div class="nl-story-diag__body">` +
+    glossary +
+    (technical
+      ? `<p class="nl-story-diag__technical">${escapeHtml(technical)}</p>`
+      : '') +
+    `</div></details></div>`
+  );
+}

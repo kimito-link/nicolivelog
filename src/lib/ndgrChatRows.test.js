@@ -78,7 +78,7 @@ describe('ndgrChatsToMergeRows', () => {
     ).toEqual([]);
   });
 
-  it('ユーザー ID が無いチャットは除外', () => {
+  it('ユーザー ID が無いチャットも番号・本文があれば userId null で返す', () => {
     expect(
       ndgrChatsToMergeRows([
         {
@@ -89,7 +89,26 @@ describe('ndgrChatsToMergeRows', () => {
           content: 'orphan'
         }
       ])
-    ).toEqual([]);
+    ).toEqual([{ commentNo: '5', text: 'orphan', userId: null }]);
+  });
+
+  it('デコード欠損（undefined フィールド）でも番号・rawUserId・本文が取れれば行を返す', () => {
+    const rows = ndgrChatsToMergeRows([
+      {
+        no: 12,
+        rawUserId: 777001,
+        hashedUserId: undefined,
+        name: undefined,
+        content: 'ndgr partial payload'
+      }
+    ]);
+    expect(rows).toEqual([
+      {
+        commentNo: '12',
+        text: 'ndgr partial payload',
+        userId: '777001'
+      }
+    ]);
   });
 
   it('nickname は空なら付けない', () => {
@@ -103,6 +122,26 @@ describe('ndgrChatsToMergeRows', () => {
       }
     ]);
     expect(rows).toEqual([{ commentNo: '7', text: 'hello', userId: '123' }]);
+  });
+
+  it('匿名ID（a:）で name が空なら nickname に匿名', () => {
+    const rows = ndgrChatsToMergeRows([
+      {
+        no: 8,
+        rawUserId: 'a:AXaKZ_4ShxQHJVsX',
+        hashedUserId: '',
+        name: '',
+        content: 'hi'
+      }
+    ]);
+    expect(rows).toEqual([
+      {
+        commentNo: '8',
+        text: 'hi',
+        userId: 'a:AXaKZ_4ShxQHJVsX',
+        nickname: '匿名'
+      }
+    ]);
   });
 
   it('複数件を順に返す', () => {
@@ -130,5 +169,76 @@ describe('ndgrChatsToMergeRows', () => {
   it('空配列・非配列は空配列', () => {
     expect(ndgrChatsToMergeRows([])).toEqual([]);
     expect(ndgrChatsToMergeRows(/** @type {any} */ (null))).toEqual([]);
+  });
+
+  it('commentNo が空白のみならスキップ', () => {
+    expect(
+      ndgrChatsToMergeRows([
+        {
+          no: '  \t  ',
+          rawUserId: 1,
+          hashedUserId: '',
+          name: '',
+          content: 'hello'
+        }
+      ])
+    ).toEqual([]);
+  });
+
+  it('vpos/accountStatus/is184 をパススルーする', () => {
+    const rows = ndgrChatsToMergeRows([
+      {
+        no: 10,
+        rawUserId: 555,
+        hashedUserId: '',
+        name: '',
+        content: 'extended',
+        vpos: 12345,
+        accountStatus: 1,
+        is184: true
+      }
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].vpos).toBe(12345);
+    expect(rows[0].accountStatus).toBe(1);
+    expect(rows[0].is184).toBe(true);
+  });
+
+  it('is184=false は省略する', () => {
+    const rows = ndgrChatsToMergeRows([
+      {
+        no: 11,
+        rawUserId: 666,
+        hashedUserId: '',
+        name: '',
+        content: 'normal',
+        vpos: 0,
+        accountStatus: 0,
+        is184: false
+      }
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].vpos).toBe(0);
+    expect(rows[0].accountStatus).toBe(0);
+    expect(rows[0]).not.toHaveProperty('is184');
+  });
+
+  it('vpos/accountStatus が null なら省略する', () => {
+    const rows = ndgrChatsToMergeRows([
+      {
+        no: 12,
+        rawUserId: 777,
+        hashedUserId: '',
+        name: '',
+        content: 'minimal',
+        vpos: null,
+        accountStatus: null,
+        is184: false
+      }
+    ]);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).not.toHaveProperty('vpos');
+    expect(rows[0]).not.toHaveProperty('accountStatus');
+    expect(rows[0]).not.toHaveProperty('is184');
   });
 });

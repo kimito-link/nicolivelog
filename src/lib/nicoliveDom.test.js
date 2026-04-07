@@ -4,6 +4,7 @@ import {
   parseCommentLineText,
   parseCommentElement,
   parseNicoLiveTableRow,
+  closestHarvestableNicoCommentRow,
   extractCommentsFromNode,
   extractUserIdFromLinks,
   extractUserIdFromDataAttributes,
@@ -11,7 +12,10 @@ import {
   extractUserIdFromIconSrc,
   extractUserIconUrlFromElement,
   extractUserIdFromReactFiber,
-  resolveUserIdForNicoLiveCommentRow
+  resolveUserIdForNicoLiveCommentRow,
+  NICO_USER_ICON_IMG_LAZY_ATTRS,
+  collectNicoUserIconUrlPartsFromImg,
+  absoluteNicoUserIconFromImg
 } from './nicoliveDom.js';
 
 describe('parseCommentLineText', () => {
@@ -128,6 +132,23 @@ describe('parseNicoLiveTableRow', () => {
     });
   });
 
+  it('プロフィールリンクの title から nickname を拾う', () => {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = `
+      <div class="table-row" role="row" data-comment-type="normal">
+        <a class="user-link" href="https://www.nicovideo.jp/user/12345678" title="表示テスト名">icon</a>
+        <span class="comment-number">12</span>
+        <span class="comment-text">本文です</span>
+      </div>`;
+    const row = wrap.querySelector('.table-row');
+    expect(parseNicoLiveTableRow(row)).toEqual({
+      commentNo: '12',
+      text: '本文です',
+      userId: '12345678',
+      nickname: '表示テスト名'
+    });
+  });
+
   it('comment-number が空・不正なら null', () => {
     const mk = (num, txt) => {
       const w = document.createElement('div');
@@ -163,7 +184,7 @@ describe('parseNicoLiveTableRow', () => {
     expect(parseNicoLiveTableRow(w.querySelector('.table-row'))).toBeNull();
   });
 
-  it('generalSystemMessage は無視', () => {
+  it('generalSystemMessage でも comment-number が空なら null', () => {
     const wrap = document.createElement('div');
     wrap.innerHTML = `
       <div class="table-row" data-comment-type="generalSystemMessage">
@@ -171,6 +192,20 @@ describe('parseNicoLiveTableRow', () => {
         <span class="comment-text">「雑談」が好きな1人が来場しました</span>
       </div>`;
     expect(parseNicoLiveTableRow(wrap.querySelector('.table-row'))).toBeNull();
+  });
+
+  it('generalSystemMessage で番号・本文が取れれば抽出する', () => {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = `
+      <div class="table-row" role="row" data-comment-type="generalSystemMessage">
+        <span class="comment-number">535</span>
+        <span class="comment-text">「料理」が好きな1人が来場しました</span>
+      </div>`;
+    expect(parseNicoLiveTableRow(wrap.querySelector('.table-row'))).toEqual({
+      commentNo: '535',
+      text: '「料理」が好きな1人が来場しました',
+      userId: null
+    });
   });
 
   it('アイコン URL から user id', () => {
@@ -184,6 +219,104 @@ describe('parseNicoLiveTableRow', () => {
     expect(parseNicoLiveTableRow(wrap.querySelector('.table-row'))?.userId).toBe(
       '86255751'
     );
+  });
+
+  it('遅延: data-lazy-src のみでも avatarUrl と userId を拾う', () => {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = `
+      <div class="table-row" role="row" data-comment-type="normal">
+        <img alt="" src="" data-lazy-src="https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/1/10000111.jpg">
+        <span class="comment-number">3</span>
+        <span class="comment-text">lazy</span>
+      </div>`;
+    const row = wrap.querySelector('.table-row');
+    expect(parseNicoLiveTableRow(row)).toEqual({
+      commentNo: '3',
+      text: 'lazy',
+      userId: '10000111',
+      avatarUrl:
+        'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/1/10000111.jpg'
+    });
+  });
+});
+
+describe('closestHarvestableNicoCommentRow', () => {
+  it('IMG から番号・本文付き table-row に辿る', () => {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = `
+      <div class="table-row" role="row" data-comment-type="generalSystemMessage">
+        <img src="" alt="">
+        <span class="comment-number">12</span>
+        <span class="comment-text">sys</span>
+      </div>`;
+    const img = wrap.querySelector('img');
+    const row = wrap.querySelector('.table-row');
+    expect(closestHarvestableNicoCommentRow(/** @type {Element} */ (img))).toBe(row);
+  });
+
+  it('comment-number が無い行は null', () => {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = `
+      <div class="table-row" role="row" data-comment-type="generalSystemMessage">
+        <span class="comment-text">only text</span>
+      </div>`;
+    const el = wrap.querySelector('.comment-text');
+    expect(closestHarvestableNicoCommentRow(/** @type {Element} */ (el))).toBeNull();
+  });
+});
+
+describe('NICO_USER_ICON_IMG_LAZY_ATTRS / collectNicoUserIconUrlPartsFromImg', () => {
+  it('定数に列挙した属性は collect で拾われる（MutationObserver.attributeFilter と同期）', () => {
+    const icon =
+      'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/1/10000222.jpg';
+    const img = document.createElement('img');
+    for (const a of NICO_USER_ICON_IMG_LAZY_ATTRS) {
+      img.setAttribute(a, `${icon}?via=${a}`);
+    }
+    const parts = collectNicoUserIconUrlPartsFromImg(img);
+    for (const a of NICO_USER_ICON_IMG_LAZY_ATTRS) {
+      expect(parts).toContain(`${icon}?via=${a}`);
+    }
+  });
+});
+
+describe('absoluteNicoUserIconFromImg', () => {
+  const base = 'https://live.nicovideo.jp/watch/lv1';
+  const iconUrl =
+    'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/1/10000333.jpg';
+
+  it('小さい表示サイズの img は usericon URL を返す', () => {
+    const img = document.createElement('img');
+    img.setAttribute('src', iconUrl);
+    vi.spyOn(img, 'getBoundingClientRect').mockReturnValue({
+      width: 32,
+      height: 32,
+      top: 0,
+      left: 0,
+      bottom: 32,
+      right: 32,
+      x: 0,
+      y: 0,
+      toJSON: () => ({})
+    });
+    expect(absoluteNicoUserIconFromImg(img, base)).toBe(iconUrl);
+  });
+
+  it('横幅または高さが 96px 超の img は usericon とみなさない（巨大画像の誤検知抑制）', () => {
+    const img = document.createElement('img');
+    img.setAttribute('src', iconUrl);
+    vi.spyOn(img, 'getBoundingClientRect').mockReturnValue({
+      width: 120,
+      height: 40,
+      top: 0,
+      left: 0,
+      bottom: 40,
+      right: 120,
+      x: 0,
+      y: 0,
+      toJSON: () => ({})
+    });
+    expect(absoluteNicoUserIconFromImg(img, base)).toBe('');
   });
 });
 
@@ -309,15 +442,23 @@ describe('extractCommentsFromNode', () => {
           </span>
         </div>
         <div class="table-row" role="row" data-comment-type="generalSystemMessage">
-          <span class="comment-text">システム</span>
+          <span role="gridcell">
+            <span class="comment-number">757</span>
+            <div class="content-area"><span class="comment-text">システム告知</span></div>
+          </span>
         </div>
       </div>`;
     const list = extractCommentsFromNode(panel);
-    expect(list).toHaveLength(1);
+    expect(list).toHaveLength(2);
     expect(list[0]).toMatchObject({
       commentNo: '756',
       text: '京都',
       avatarUrl: 'https://cdn.nimg.jp/nicoaccount/usericon/s/1/999.jpg'
+    });
+    expect(list[1]).toMatchObject({
+      commentNo: '757',
+      text: 'システム告知',
+      userId: null
     });
   });
 
@@ -528,6 +669,32 @@ describe('extractUserIdFromReactFiber', () => {
       commentNo: '42',
       text: 'fiber test',
       userId: '5544332'
+    });
+  });
+
+  it('parseNicoLiveTableRow が行内子の fiber 経由で nickname を返す', () => {
+    const wrap = document.createElement('div');
+    wrap.innerHTML = `
+      <div class="table-row" role="row" data-comment-type="normal">
+        <span class="content-area">
+          <span class="comment-number">43</span>
+          <span class="comment-text">nick fiber</span>
+        </span>
+      </div>`;
+    const row = wrap.querySelector('.table-row');
+    const cell = wrap.querySelector('.content-area');
+    cell['__reactFiber$fiberKey'] = {
+      memoizedProps: {
+        comment: { userId: '5544332', name: 'fiber表示名テスト' }
+      },
+      return: null
+    };
+    const result = parseNicoLiveTableRow(row);
+    expect(result).toEqual({
+      commentNo: '43',
+      text: 'nick fiber',
+      userId: '5544332',
+      nickname: 'fiber表示名テスト'
     });
   });
 });

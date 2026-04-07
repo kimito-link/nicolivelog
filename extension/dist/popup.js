@@ -49,6 +49,46 @@
     }
   }
 
+  // src/lib/popupWatchUrlResolve.js
+  function resolveWatchUrlFromTabAndStash(tab, lastWatchUrlRaw) {
+    const tabUrl = tab?.url || "";
+    if (isNicoLiveWatchUrl(tabUrl)) {
+      return { url: tabUrl, fromActiveTab: true };
+    }
+    if (typeof lastWatchUrlRaw === "string" && isNicoLiveWatchUrl(lastWatchUrlRaw)) {
+      return { url: lastWatchUrlRaw, fromActiveTab: false };
+    }
+    return { url: "", fromActiveTab: true };
+  }
+
+  // src/lib/nicoAnonymousDisplay.js
+  function isNiconicoAnonymousUserId(userId) {
+    const s = String(userId ?? "").trim();
+    if (!s.startsWith("a:")) return false;
+    const rest = s.slice(2).trim();
+    return rest.length >= 2;
+  }
+  function anonymousNicknameFallback(userId, nickname) {
+    const nick = String(nickname ?? "").trim();
+    if (nick) return nick;
+    return isNiconicoAnonymousUserId(userId) ? "\u533F\u540D" : "";
+  }
+  function compactNicoLaneUserId(userId) {
+    const s = String(userId ?? "").trim();
+    if (!s) return "";
+    if (/^\d{5,14}$/.test(s)) {
+      return s.length <= 18 ? s : `${s.slice(0, 8)}\u2026${s.slice(-6)}`;
+    }
+    if (/^a:/i.test(s)) {
+      const rest = s.slice(2).trim();
+      const head = rest.slice(0, 4);
+      if (rest.length <= 5) return `a:${rest}`;
+      return `a:${head}\u2026`;
+    }
+    if (s.length <= 12) return s;
+    return `${s.slice(0, 5)}\u2026${s.slice(-3)}`;
+  }
+
   // src/lib/storageKeys.js
   var KEY_RECORDING = "nls_recording_enabled";
   var KEY_LAST_WATCH_URL = "nls_last_watch_url";
@@ -65,7 +105,17 @@
   var KEY_USAGE_TERMS_ACK = "nls_usage_terms_ack_v1";
   var KEY_VOICE_INPUT_DEVICE = "nls_voice_input_device";
   var KEY_SELF_POSTED_RECENTS = "nls_self_posted_recents";
+  var KEY_USER_COMMENT_PROFILE_CACHE = "nls_user_comment_profile_v1";
+  var EXTENSION_SOFT_CACHE_STORAGE_KEYS = Object.freeze([
+    KEY_USER_COMMENT_PROFILE_CACHE
+  ]);
   var KEY_INLINE_PANEL_WIDTH_MODE = "nls_inline_panel_width_mode";
+  var KEY_CALM_PANEL_MOTION = "nls_calm_panel_motion";
+  function normalizeCalmPanelMotion(raw, opts = {}) {
+    if (raw === true) return true;
+    if (raw === false) return false;
+    return opts.inlineDefault === true;
+  }
   var INLINE_PANEL_WIDTH_PLAYER_ROW = "player_row";
   var INLINE_PANEL_WIDTH_VIDEO = "video";
   function normalizeInlinePanelWidthMode(raw) {
@@ -79,12 +129,17 @@
   function isCommentEnterSendEnabled(raw) {
     return raw !== false;
   }
-  function isUsageTermsAcknowledged(raw) {
-    return raw === true;
+  var KEY_DEV_MONITOR_TREND_PREFIX = "nls_dm_tr:";
+  function devMonitorTrendStorageKey(liveId) {
+    return `${KEY_DEV_MONITOR_TREND_PREFIX}${String(liveId || "").trim() || "_"}`;
   }
   function commentsStorageKey(liveId) {
     const id = String(liveId || "").trim().toLowerCase();
     return `nls_comments_${id}`;
+  }
+  function giftUsersStorageKey(liveId) {
+    const id = String(liveId || "").trim().toLowerCase();
+    return `nls_gift_users_${id}`;
   }
 
   // src/lib/supportVisualExpanded.js
@@ -212,6 +267,7 @@
     const s = String(url || "").trim();
     return /^https?:\/\//i.test(s);
   }
+  var NICONICO_OFFICIAL_DEFAULT_USERICON_HTTPS = "https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/defaults/blank.jpg";
   function niconicoDefaultUserIconUrl(userId) {
     const s = String(userId || "").trim();
     if (!/^\d{5,14}$/.test(s)) return "";
@@ -219,6 +275,34 @@
     if (!Number.isFinite(n) || n < 1) return "";
     const bucket = Math.max(1, Math.floor(n / 1e4));
     return `https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/${bucket}/${s}.jpg`;
+  }
+  function isWeakNiconicoUserIconHttpUrl(url) {
+    const s = String(url || "").trim();
+    if (!isHttpOrHttpsUrl(s)) return false;
+    return /\/usericon\/defaults\//i.test(s);
+  }
+  function isNiconicoSyntheticDefaultUserIconUrl(avatarUrl, userId) {
+    const url = String(avatarUrl || "").trim();
+    const uid = String(userId || "").trim();
+    if (!isHttpOrHttpsUrl(url) || !/^\d{5,14}$/.test(uid)) return false;
+    const expected = niconicoDefaultUserIconUrl(uid);
+    return Boolean(expected && url === expected);
+  }
+  function isAnonymousStyleNicoUserId(userId) {
+    const s = String(userId || "").trim();
+    if (!s) return true;
+    if (/^\d{5,14}$/.test(s)) return false;
+    if (/^a:/i.test(s)) return true;
+    if (/^[a-zA-Z0-9_-]{10,26}$/.test(s)) return true;
+    return true;
+  }
+  function pickSupportGrowthFallbackTileSrc(userId, httpCandidate, yukkuriSrc, tvSrc) {
+    if (isHttpOrHttpsUrl(httpCandidate)) {
+      return String(httpCandidate).trim();
+    }
+    const y = String(yukkuriSrc || "").trim();
+    const t = String(tvSrc || "").trim();
+    return isAnonymousStyleNicoUserId(userId) ? t || y : y || t;
   }
   function resolveSupportGrowthTileSrc(p) {
     const def = String(p.defaultSrc || "");
@@ -234,10 +318,6 @@
     }
     return def;
   }
-  function pickUserLaneDisplayTileSrc(httpCandidate, defaultTileSrc) {
-    if (isHttpOrHttpsUrl(httpCandidate)) return String(httpCandidate).trim();
-    return String(defaultTileSrc || "").trim();
-  }
   function userLaneDedupeKey(p) {
     const u = String(p?.userId || "").trim();
     if (u) return `u:${u}`;
@@ -247,6 +327,42 @@
     const s = String(p?.stableId || "").trim();
     if (s) return `s:${s}`;
     return "";
+  }
+  function userLaneResolvedThumbScore(userId, httpCandidate) {
+    const c = String(httpCandidate || "").trim();
+    if (!isHttpOrHttpsUrl(c)) return 0;
+    if (isWeakNiconicoUserIconHttpUrl(c)) return 0;
+    const u = String(userId || "").trim();
+    if (/^\d{5,14}$/.test(u) && isNiconicoSyntheticDefaultUserIconUrl(c, u)) return 1;
+    return 2;
+  }
+  function commentEnrichmentAvatarScore(userId, url) {
+    const c = String(url || "").trim();
+    if (!isHttpOrHttpsUrl(c)) return 0;
+    if (isWeakNiconicoUserIconHttpUrl(c)) return 1;
+    const u = String(userId || "").trim();
+    if (/^\d{5,14}$/.test(u) && isNiconicoSyntheticDefaultUserIconUrl(c, u)) return 1;
+    return 2;
+  }
+
+  // src/lib/userIdPreference.js
+  function userIdObservationStrength(userId) {
+    const s = String(userId ?? "").trim();
+    if (!s) return 0;
+    if (/^\d{5,14}$/.test(s)) return 2;
+    return 1;
+  }
+  function pickStrongerUserId(existing, incoming, tiePrefer = "incoming") {
+    const ex = String(existing ?? "").trim();
+    const inc = String(incoming ?? "").trim();
+    if (!inc) return ex;
+    if (!ex) return inc;
+    const se = userIdObservationStrength(ex);
+    const si = userIdObservationStrength(inc);
+    if (si > se) return inc;
+    if (si < se) return ex;
+    if (inc === ex) return ex;
+    return tiePrefer === "existing" ? ex : inc;
   }
 
   // src/lib/commentRecord.js
@@ -522,6 +638,37 @@
     };
   }
 
+  // src/lib/popupConcurrentEstimateGate.js
+  function shouldShowConcurrentEstimate({
+    recentActiveUsers,
+    officialViewerCount,
+    viewerCountFromDom,
+    liveId
+  }) {
+    const recent = typeof recentActiveUsers === "number" && Number.isFinite(recentActiveUsers) ? recentActiveUsers : 0;
+    if (recent > 0) return true;
+    if (typeof officialViewerCount === "number" && Number.isFinite(officialViewerCount)) {
+      return true;
+    }
+    const vc = viewerCountFromDom;
+    if (typeof vc === "number" && Number.isFinite(vc) && vc >= 0) return true;
+    return Boolean(String(liveId || "").trim());
+  }
+  function concurrentEstimateIsSparseSignal({
+    recentActiveUsers,
+    officialViewerCount,
+    viewerCountFromDom
+  }) {
+    const recent = typeof recentActiveUsers === "number" && Number.isFinite(recentActiveUsers) ? recentActiveUsers : 0;
+    if (recent > 0) return false;
+    if (typeof officialViewerCount === "number" && Number.isFinite(officialViewerCount)) {
+      return false;
+    }
+    const vc = viewerCountFromDom;
+    if (typeof vc === "number" && Number.isFinite(vc) && vc >= 0) return false;
+    return true;
+  }
+
   // src/lib/liveAudienceDom.js
   var MAX_REASONABLE_VIEWERS = 12e6;
   function normalizeDigitsForViewerScan(text) {
@@ -601,7 +748,7 @@
     if (!userKey || userKey === UNKNOWN_USER_KEY) {
       return "ID\u672A\u53D6\u5F97\uFF08DOM\u306B\u6295\u7A3F\u8005\u60C5\u5831\u306A\u3057\uFF09";
     }
-    const name = String(nickname || "").trim();
+    const name = anonymousNicknameFallback(userKey, nickname);
     const shortId = shortUserKeyDisplay(userKey);
     if (name) return `${name}\uFF08${shortId}\uFF09`;
     return shortId;
@@ -629,11 +776,14 @@
       }
       const row = map.get(userKey);
       row.count += 1;
-      if (nickname && !row.nickname) row.nickname = nickname;
+      if (nickname) {
+        if (!row.nickname) row.nickname = nickname;
+        else if (nickname.length > row.nickname.length) row.nickname = nickname;
+      }
       if (capturedAt >= row.lastAt) {
         row.lastAt = capturedAt;
         row.lastText = text.length > 60 ? `${text.slice(0, 60)}\u2026` : text;
-        row.avatarUrl = userKey === UNKNOWN_USER_KEY ? "" : avatarCandidate;
+        if (userKey !== UNKNOWN_USER_KEY && avatarCandidate) row.avatarUrl = avatarCandidate;
       }
     }
     return [...map.values()].sort((a, b) => b.lastAt - a.lastAt);
@@ -698,25 +848,6 @@
     const pal = colorScheme === "dark" ? ACCENT_HEX_DARK : ACCENT_HEX_LIGHT;
     return pal[slot] ?? null;
   }
-  function accentSlotFromSupportEntry(entry, opts) {
-    if (!entry || typeof entry !== "object") return null;
-    const e = (
-      /** @type {{ userId?: string, nickname?: string }} */
-      entry
-    );
-    const uid = String(e.userId || "").trim();
-    if (uid) return accentSlotFromUserKey(uid);
-    const tile = String(opts?.tileSrc || "").trim();
-    const defaultTile = String(opts?.defaultTileSrc || "").trim();
-    const tileIsDistinct = Boolean(tile && (!defaultTile || tile !== defaultTile));
-    if (tileIsDistinct) return accentSlotFromUserKey(`t:${tile}`);
-    const sid = String(opts?.stableId || "").trim();
-    if (sid) return accentSlotFromUserKey(`s:${sid}`);
-    const nick = String(e.nickname || "").trim();
-    if (nick) return accentSlotFromUserKey(`n:${nick}`);
-    if (tile) return accentSlotFromUserKey(`t:${tile}`);
-    return null;
-  }
   function supportUserKeyFromEntry(entry) {
     if (!entry || typeof entry !== "object") return UNKNOWN_USER_KEY;
     const uid = String(
@@ -743,6 +874,219 @@
       if (supportUserKeyFromEntry(e) === userKey) n += 1;
     }
     return n;
+  }
+
+  // src/lib/userCommentProfileCache.js
+  var USER_COMMENT_PROFILE_CACHE_MAX = 5e3;
+  function normalizeUserCommentProfileMap(raw) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    const src = (
+      /** @type {Record<string, unknown>} */
+      raw
+    );
+    const out = {};
+    for (const [k, v] of Object.entries(src)) {
+      const uid = String(k || "").trim();
+      if (!uid || uid.length > 128) continue;
+      if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+      const o = (
+        /** @type {Record<string, unknown>} */
+        v
+      );
+      const updatedAt = Number(o.updatedAt);
+      if (!Number.isFinite(updatedAt) || updatedAt <= 0) continue;
+      const nick = String(o.nickname || "").trim().slice(0, 200);
+      const av = String(o.avatarUrl || "").trim();
+      const avatarUrl = av && isHttpOrHttpsUrl(av) && !isWeakNiconicoUserIconHttpUrl(av) ? av.slice(0, 2e3) : "";
+      if (!nick && !avatarUrl) continue;
+      out[uid] = {
+        updatedAt,
+        ...nick ? { nickname: nick } : {},
+        ...avatarUrl ? { avatarUrl } : {}
+      };
+    }
+    return out;
+  }
+  function mergeIntoMap(map, uid, p) {
+    const nickIn = String(p.nickname || "").trim();
+    const avIn = String(p.avatarUrl || "").trim();
+    const strongAv = avIn && isHttpOrHttpsUrl(avIn) && !isWeakNiconicoUserIconHttpUrl(avIn) ? avIn : "";
+    if (!nickIn && !strongAv) return false;
+    const now = Date.now();
+    const prev = map[uid] || { updatedAt: 0 };
+    let nextNick = String(prev.nickname || "").trim();
+    let nextAv = String(prev.avatarUrl || "").trim();
+    let changed = false;
+    if (nickIn) {
+      if (!nextNick || nickIn.length > nextNick.length) {
+        nextNick = nickIn;
+        changed = true;
+      }
+    }
+    if (strongAv) {
+      const prevStrong = nextAv && isHttpOrHttpsUrl(nextAv) && !isWeakNiconicoUserIconHttpUrl(nextAv);
+      if (!prevStrong) {
+        nextAv = strongAv;
+        changed = true;
+      }
+    }
+    if (!changed) return false;
+    const entry = { updatedAt: now };
+    if (nextNick) entry.nickname = nextNick;
+    if (nextAv && isHttpOrHttpsUrl(nextAv)) entry.avatarUrl = nextAv;
+    map[uid] = entry;
+    return true;
+  }
+  function upsertUserCommentProfileFromEntry(map, entry) {
+    const uid = String(entry?.userId || "").trim();
+    if (!uid) return false;
+    return mergeIntoMap(map, uid, {
+      nickname: String(entry?.nickname || "").trim(),
+      avatarUrl: String(entry?.avatarUrl || "").trim()
+    });
+  }
+  function upsertUserCommentProfileFromIntercept(map, it) {
+    const uid = String(it?.uid || "").trim();
+    if (!uid) return false;
+    const av = String(it?.av || "").trim();
+    return mergeIntoMap(map, uid, {
+      nickname: String(it?.name || "").trim(),
+      avatarUrl: av
+    });
+  }
+  function applyUserCommentProfileMapToEntries(entries, map) {
+    if (!Array.isArray(entries) || !entries.length || !Object.keys(map).length) {
+      return { next: entries, patched: 0 };
+    }
+    let patched = 0;
+    const next = entries.map((e) => {
+      const uid = String(
+        /** @type {{ userId?: string|null }} */
+        e?.userId || ""
+      ).trim();
+      if (!uid) return e;
+      const hit = map[uid];
+      if (!hit) return e;
+      const curNick = String(
+        /** @type {{ nickname?: string }} */
+        e?.nickname || ""
+      ).trim();
+      const candNick = String(hit.nickname || "").trim();
+      const curAv = String(
+        /** @type {{ avatarUrl?: string }} */
+        e?.avatarUrl || ""
+      ).trim();
+      const candAv = String(hit.avatarUrl || "").trim();
+      let out = (
+        /** @type {T} */
+        e
+      );
+      let changed = false;
+      if (candNick && (!curNick || candNick.length > curNick.length)) {
+        out = { ...out, nickname: candNick };
+        changed = true;
+      }
+      if (candAv && isHttpOrHttpsUrl(candAv) && !isWeakNiconicoUserIconHttpUrl(candAv)) {
+        const curStrong = curAv && isHttpOrHttpsUrl(curAv) && !isWeakNiconicoUserIconHttpUrl(curAv);
+        if (!curStrong) {
+          out = { ...out, avatarUrl: candAv };
+          changed = true;
+        }
+      }
+      if (changed) patched += 1;
+      return out;
+    });
+    return { next, patched };
+  }
+  function pruneUserCommentProfileMap(map, max = USER_COMMENT_PROFILE_CACHE_MAX) {
+    const raw = Number(max);
+    const lim = Math.max(
+      1,
+      Math.min(
+        Number.isFinite(raw) && raw > 0 ? raw : USER_COMMENT_PROFILE_CACHE_MAX,
+        2e4
+      )
+    );
+    const ids = Object.keys(map);
+    if (ids.length <= lim) return map;
+    ids.sort((a, b) => (map[b].updatedAt || 0) - (map[a].updatedAt || 0));
+    const keep = new Set(ids.slice(0, lim));
+    const out = {};
+    for (const id of keep) {
+      out[id] = map[id];
+    }
+    return out;
+  }
+  async function readStorageBagWithRetry(readFn, opts = {}) {
+    const attempts = Math.max(1, Math.min(Number(opts.attempts) || 4, 8));
+    const delays = Array.isArray(opts.delaysMs) && opts.delaysMs.length ? opts.delaysMs : [0, 50, 120, 280];
+    for (let i = 0; i < attempts; i += 1) {
+      if (i > 0) {
+        const ms = Math.max(
+          0,
+          Number(delays[Math.min(i - 1, delays.length - 1)]) || 0
+        );
+        if (ms > 0) {
+          await new Promise((r) => setTimeout(r, ms));
+        }
+      }
+      try {
+        const bag = await readFn();
+        if (bag && typeof bag === "object" && !Array.isArray(bag)) {
+          return (
+            /** @type {Record<string, unknown>} */
+            bag
+          );
+        }
+      } catch {
+      }
+    }
+    return {};
+  }
+  function hydrateUserCommentProfileMapFromStorage(into, fromDisk) {
+    if (!into || !fromDisk || typeof into !== "object" || typeof fromDisk !== "object") {
+      return false;
+    }
+    let touched = false;
+    for (const [uid, disk] of Object.entries(fromDisk)) {
+      if (!disk || typeof disk !== "object") continue;
+      const du = Number(disk.updatedAt);
+      if (!Number.isFinite(du) || du <= 0) continue;
+      const cur = into[uid];
+      if (!cur) {
+        into[uid] = { ...disk };
+        touched = true;
+        continue;
+      }
+      const cu = Number(cur.updatedAt) || 0;
+      if (du > cu) {
+        into[uid] = { ...disk };
+        touched = true;
+        continue;
+      }
+      let nextNick = String(cur.nickname || "").trim();
+      const dn = String(disk.nickname || "").trim();
+      let gapTouched = false;
+      if (dn.length > nextNick.length) {
+        nextNick = dn;
+        gapTouched = true;
+      }
+      let nextAv = String(cur.avatarUrl || "").trim();
+      const da = String(disk.avatarUrl || "").trim();
+      const curStrong = nextAv && isHttpOrHttpsUrl(nextAv) && !isWeakNiconicoUserIconHttpUrl(nextAv);
+      const diskStrong = da && isHttpOrHttpsUrl(da) && !isWeakNiconicoUserIconHttpUrl(da);
+      if (!curStrong && diskStrong) {
+        nextAv = da;
+        gapTouched = true;
+      }
+      if (!gapTouched) continue;
+      const entry = { updatedAt: Math.max(cu, du) };
+      if (nextNick) entry.nickname = nextNick;
+      if (nextAv && isHttpOrHttpsUrl(nextAv)) entry.avatarUrl = nextAv;
+      into[uid] = entry;
+      touched = true;
+    }
+    return touched;
   }
 
   // src/lib/supportGrowthAvatarLoad.js
@@ -863,6 +1207,159 @@
   }
   function escapeAttr(s) {
     return escapeHtml(s);
+  }
+
+  // src/lib/topSupportRankStripLines.js
+  function topSupportRankLineModels(stripRooms, opts) {
+    const defaultThumb = String(opts?.defaultThumbSrc || "").trim();
+    const colorScheme = opts?.colorScheme === "dark" ? "dark" : "light";
+    const rooms = Array.isArray(stripRooms) ? stripRooms : [];
+    let knownRank = 0;
+    return rooms.map((r) => {
+      const userKey = String(r?.userKey ?? "");
+      const isUnknown = userKey === UNKNOWN_USER_KEY;
+      if (!isUnknown) knownRank += 1;
+      const placeNumber = isUnknown ? null : knownRank;
+      const rawAv = String(r?.avatarUrl || "").trim();
+      const thumbSrc = isHttpOrHttpsUrl(rawAv) ? rawAv : defaultThumb;
+      const thumbNeedsNoReferrer = isHttpOrHttpsUrl(thumbSrc);
+      const idTitle = isUnknown ? "" : String(r.userKey);
+      const idShort = isUnknown ? "\u2014" : shortUserKeyDisplay(userKey) || String(userKey);
+      const nickRaw = String(r?.nickname || "").trim();
+      const nameLine = isUnknown ? "\u2014" : anonymousNicknameFallback(userKey, nickRaw) || "\uFF08\u672A\u53D6\u5F97\uFF09";
+      const fullLabelForTitle = displayUserLabel(userKey, r?.nickname);
+      let hasAccent = false;
+      let accentColorCss = null;
+      if (!isUnknown) {
+        const slot = accentSlotFromUserKey(userKey);
+        const col = slot != null ? accentColorForSlot(slot, colorScheme) : null;
+        if (col) {
+          hasAccent = true;
+          accentColorCss = col;
+        }
+      }
+      return {
+        count: Math.max(0, Number(r?.count) || 0),
+        isUnknown,
+        placeNumber,
+        hasAccent,
+        accentColorCss,
+        thumbSrc,
+        thumbNeedsNoReferrer,
+        idTitle,
+        idShort,
+        nameLine,
+        fullLabelForTitle
+      };
+    });
+  }
+
+  // src/lib/topSupportRankStripConfig.js
+  var TOP_SUPPORT_RANK_STRIP_MAX = 10;
+
+  // src/lib/topSupportRankStripStableKey.js
+  function topSupportRankStripStableKey(liveId, entryCount, stripRooms) {
+    const lid = String(liveId || "").trim().toLowerCase();
+    const n = Math.max(0, Math.floor(Number(entryCount) || 0));
+    const rows = Array.isArray(stripRooms) ? stripRooms : [];
+    if (!rows.length) {
+      return `${lid}
+${n}
+`;
+    }
+    const body = rows.map((r) => {
+      const k = String(r?.userKey ?? "");
+      const c = Math.max(0, Math.floor(Number(r?.count) || 0));
+      return `${k}:${c}`;
+    }).join("\n");
+    return `${lid}
+${n}
+${body}`;
+  }
+
+  // src/lib/supportGridDisplayTier.js
+  var SUPPORT_GRID_TIER_RINK = "rink";
+  var SUPPORT_GRID_TIER_KONTA = "konta";
+  var SUPPORT_GRID_TIER_TANU = "tanu";
+  function goodUserThumbUrl(u) {
+    const s = String(u || "").trim();
+    return isHttpOrHttpsUrl(s) && !isWeakNiconicoUserIconHttpUrl(s);
+  }
+  function supportGridStrongNickname(nick, userId) {
+    const n = String(nick ?? "").trim();
+    if (!n) return false;
+    if (n === "\uFF08\u672A\u53D6\u5F97\uFF09" || n === "(\u672A\u53D6\u5F97)") return false;
+    if (n === "\u533F\u540D") return false;
+    if (isNiconicoAnonymousUserId(userId) && n.length <= 1) return false;
+    return true;
+  }
+  function supportGridDisplayTier(p) {
+    const uid = String(p?.userId ?? "").trim();
+    if (!uid) return SUPPORT_GRID_TIER_TANU;
+    let hasThumb = false;
+    if (p.lpMockHasCustomAvatar === true) hasThumb = true;
+    else if (p.lpMockHasCustomAvatar === false) hasThumb = false;
+    else {
+      const httpCandidate = String(p.httpAvatarCandidate ?? "").trim();
+      const rawAv = String(p.storedAvatarUrl ?? "").trim();
+      hasThumb = goodUserThumbUrl(httpCandidate) || goodUserThumbUrl(rawAv);
+    }
+    const nick = String(p?.nickname ?? "").trim();
+    const strongNick = supportGridStrongNickname(nick, uid);
+    if (strongNick && hasThumb) return SUPPORT_GRID_TIER_RINK;
+    if (strongNick || hasThumb) return SUPPORT_GRID_TIER_KONTA;
+    return SUPPORT_GRID_TIER_TANU;
+  }
+
+  // src/lib/storyUserLaneBuckets.js
+  function bucketStoryUserLanePicks(sortedCandidates, maxTotal) {
+    const n = Math.max(0, Math.floor(Number(maxTotal) || 0));
+    const a3 = sortedCandidates.filter((c) => c.profileTier === 3);
+    const a2 = sortedCandidates.filter((c) => c.profileTier === 2);
+    const a1 = sortedCandidates.filter((c) => c.profileTier === 1);
+    let rem = n;
+    const rink = a3.slice(0, rem);
+    rem -= rink.length;
+    const konta = a2.slice(0, rem);
+    rem -= konta.length;
+    const tanu = a1.slice(0, rem);
+    return { rink, konta, tanu };
+  }
+  function flattenStoryUserLaneBuckets(b) {
+    return [...b.rink, ...b.konta, ...b.tanu];
+  }
+
+  // src/lib/storyUserLaneGuideHtml.js
+  function storyUserLaneGuideLine(src, textEscaped) {
+    return `<div class="nl-story-userlane-guide__line"><img class="nl-story-userlane-guide__face" src="${escapeAttr(src)}" alt="" width="24" height="24" decoding="async" /><span class="nl-story-userlane-guide__text">${textEscaped}</span></div>`;
+  }
+  function buildStoryUserLaneGuideTopHtml(faceRink) {
+    return storyUserLaneGuideLine(
+      faceRink,
+      escapeHtml(
+        "\u308A\u3093\u304F: \u30CB\u30B3\u751F\u306E\u30E6\u30FC\u30B6\u30FC\u8B58\u5225\u5B50\uFF08\u6570\u5024ID\u30FB\u533F\u540D\u306E a: \u5F62\u5F0F\uFF09\u304C\u4ED8\u3044\u305F\u5FDC\u63F4\u3060\u3051\u304C\u3053\u306E\u5217\u306B\u8F09\u308B\u3088\u3002\u4E26\u3073\u3067\u306F\u3001\u500B\u4EBA\u30B5\u30E0\u30CD\u3068\u300C\u533F\u540D\u300D\u300C\uFF08\u672A\u53D6\u5F97\uFF09\u300D\u4EE5\u5916\u306E\u8868\u793A\u540D\u304C\u305D\u308D\u3063\u305F\u4EBA\u3092\u3044\u3061\u3070\u3093\u624B\u524D\u306B\u5BC4\u305B\u308B\u3088\u3002\u30B5\u30E0\u30CD\u3068\u30D7\u30ED\u30D5\u30A3\u30FC\u30EB\u3092\u6574\u3048\u3066\u3044\u308B\u3068\u3001\u914D\u4FE1\u8005\u5074\u304B\u3089\u3082\u898B\u3064\u3051\u3084\u3059\u304F\u306A\u308A\u3084\u3059\u3044\u3001\u3068\u3044\u3046\u6587\u8108\u3067\u3082\u3042\u308B\u3088\u3002"
+      )
+    );
+  }
+  function buildStoryUserLaneGuideKontaHtml(faceKonta) {
+    return storyUserLaneGuideLine(
+      faceKonta,
+      escapeHtml(
+        "\u3053\u3093\u592A: 2\u756A\u76EE\u306E\u512A\u5148\u3068\u3057\u3066\u3001\u8868\u793A\u540D\u304B\u500B\u4EBA\u30B5\u30E0\u30CD\u306E\u3069\u3061\u3089\u304B\u307E\u3067\u53D6\u308C\u305F\u4EBA\u306F\u3001\u305D\u306E\u6B21\u306E\u6BB5\u3068\u3057\u3066\u4E26\u3073\u3084\u3059\u3044\u3088\uFF08\u5168\u54E1\u3092\u96A0\u3059\u308F\u3051\u3058\u3083\u306A\u3044\u3088\uFF09\u3002"
+      )
+    );
+  }
+  function buildStoryUserLaneGuideTanuHtml(faceTanu) {
+    return storyUserLaneGuideLine(
+      faceTanu,
+      escapeHtml(
+        "\u305F\u306C\u59C9: ID\u304C\u53D6\u308C\u3066\u3044\u306A\u3044\u30B3\u30E1\u30F3\u30C8\u306F\u3001\u3053\u306E\u5217\u306B\u306F\u8F09\u305B\u306A\u3044\u3088\uFF08\u533A\u5225\u3067\u304D\u306A\u3044\u304B\u3089\uFF09\u3002\u3042\u3068\u53D6\u5F97\u304C\u8584\u3044\u4EBA\u306F\u4E26\u3073\u306E\u5F8C\u308D\u5BC4\u308A\u306B\u306A\u308A\u3084\u3059\u3044\u304B\u3089\u3001\u4E0B\u306E\u300C\u72B6\u6CC1\u306E\u8A73\u7D30\u300D\u3067\u6B20\u3051\u3092\u78BA\u8A8D\u3057\u3066\u306D\u3002"
+      )
+    );
+  }
+  function buildStoryUserLaneGuideFootHtml(displayCount) {
+    const n = Math.max(0, Math.floor(Number(displayCount) || 0));
+    return `<p class="nl-story-userlane-guide__foot" aria-live="polite">${escapeHtml(`\u3044\u307E ${n} \u4EF6\u3092\u8868\u793A\u4E2D`)}</p>`;
   }
 
   // src/lib/htmlReportConceptGuide.js
@@ -997,14 +1494,1235 @@
   }
 
   // src/lib/watchAudienceCopy.js
-  var BODY_TEXT = "\u6765\u5834\u8005\u6570\u306F\u30CB\u30B3\u751F\u306E\u914D\u4FE1\u30DA\u30FC\u30B8\u304C\u793A\u3059\u7D2F\u8A08\u8996\u8074\u8005\uFF08\u516C\u5F0F\u7D71\u8A08\u306E watchCount \u76F8\u5F53\uFF09\u3067\u3001NicoDB\uFF08https://nicodb.net/\uFF09\u306E\u6765\u5834\u8005\u6570\u3068\u540C\u7CFB\u3068\u3057\u3066\u6BD4\u8F03\u3057\u3084\u3059\u3044\u3067\u3059\u3002\u63A8\u5B9A\u540C\u6642\u63A5\u7D9A\u306F\u30B3\u30E1\u30F3\u30C8\u304B\u3089\u306E\u72EC\u81EA\u898B\u7A4D\u3082\u308A\u3067\u3001\u516C\u5F0F\u306E\u540C\u63A5\u8868\u793A\u3067\u306F\u3042\u308A\u307E\u305B\u3093\u3002HTML\u30EC\u30DD\u30FC\u30C8\u306E\u300C\u6765\u5834\uFF08\u5FDC\u63F4\u30B3\u30E1\u30F3\u30C8\uFF09\u300D\u306F\u5225\u5B9A\u7FA9\u3067\u3059\u3002\u53D6\u5F97\u306F NDGR\uFF0Fembedded \u7531\u6765\u30FB\u7D0430\u79D2\u66F4\u65B0\u3002";
-  var TITLE_TEXT = "\u7D2F\u8A08\u306E\u6765\u5834\u8005\u6570\u306F watch \u30DA\u30FC\u30B8\u306E statistics.watchCount \u7B49\uFF08\u53D6\u5F97\u7D4C\u8DEF: WebSocket \u2192 embedded-data \u2192 DOM\uFF09\u3002\u63A8\u5B9A\u540C\u6642\u63A5\u7D9A\u306F\u30B3\u30E1\u30F3\u30BF\u30FC\u6CD5\uFF085\u5206\u30E6\u30CB\u30FC\u30AF\xD7\u52D5\u7684\u500D\u7387\uFF09\u3068\u6EDE\u7559\u6CD5\u306E\u8907\u5408\u3002\u30E6\u30CB\u30FC\u30AF\u306F\u8A18\u9332\u30B3\u30E1\u30F3\u30C8\u306E userId \u7A2E\u985E\u6570\uFF08\u672A\u53D6\u5F97\u6642\u306F https \u30A2\u30A4\u30B3\u30F3 URL \u7A2E\u985E\u6570\u3092 \u2248 \u8868\u793A\uFF09\u3002";
+  var BODY_TEXT = "\u6765\u5834\u8005\u6570\u306F\u3001\u914D\u4FE1\u30DA\u30FC\u30B8\u306B\u51FA\u3066\u3044\u308B\u7D2F\u8A08\uFF08\u516C\u5F0F\u306E\u30AB\u30A6\u30F3\u30C8\uFF09\u3067\u3059\u3002NicoDB\uFF08https://nicodb.net/\uFF09\u3068\u3082\u6BD4\u8F03\u3057\u3084\u3059\u3044\u5B9A\u7FA9\u3067\u3059\u3002\u63A8\u5B9A\u540C\u6642\u63A5\u7D9A\u306F\u30B3\u30E1\u30F3\u30C8\u306A\u3069\u304B\u3089\u3053\u306E\u62E1\u5F35\u304C\u51FA\u3057\u3066\u3044\u308B\u76EE\u5B89\u3067\u3001\u516C\u5F0F\u306E\u540C\u63A5\u8868\u793A\u3067\u306F\u3042\u308A\u307E\u305B\u3093\u3002HTML\u30EC\u30DD\u30FC\u30C8\u306E\u300C\u6765\u5834\uFF08\u5FDC\u63F4\u30B3\u30E1\u30F3\u30C8\uFF09\u300D\u306F\u5225\u306E\u610F\u5473\u3067\u3059\u3002\u6570\u5B57\u306E\u66F4\u65B0\u306F\u6570\u5341\u79D2\u304A\u304D\u7A0B\u5EA6\u3067\u3059\u3002";
+  var TITLE_TEXT = "\u7D2F\u8A08\u6765\u5834\u8005\u306F\u30DA\u30FC\u30B8\u306E\u516C\u5F0F\u30C7\u30FC\u30BF\u304B\u3089\u3001\u63A8\u5B9A\u540C\u6642\u63A5\u7D9A\u306F\u8A18\u9332\u3057\u305F\u30B3\u30E1\u30F3\u30C8\u306A\u3069\u304B\u3089\u8A08\u7B97\u3057\u3066\u3044\u307E\u3059\u3002\u8A73\u3057\u3044\u5F0F\u306FLP\u306E\u300C\u63A8\u5B9A\u540C\u6642\u63A5\u7D9A\u300D\u7BC0\u3092\u53C2\u7167\u3057\u3066\u304F\u3060\u3055\u3044\u3002";
   function buildWatchAudienceNote({ snapshot }) {
     void snapshot;
     return {
       body: BODY_TEXT,
       title: TITLE_TEXT
     };
+  }
+
+  // src/lib/devMonitorDebugSubset.js
+  function pickDevMonitorDebugSubset(raw) {
+    if (!raw || typeof raw !== "object") return {};
+    const o = (
+      /** @type {Record<string, unknown>} */
+      raw
+    );
+    return {
+      wsViewerCount: o.wsViewerCount,
+      wsCommentCount: o.wsCommentCount,
+      wsAge: o.wsAge,
+      intercept: o.intercept,
+      embeddedVC: o.embeddedVC,
+      programBeginAtMs: o.programBeginAtMs,
+      embeddedBeginAt: o.embeddedBeginAt,
+      edProgramKeys: o.edProgramKeys,
+      poll: o.poll,
+      dom: o.dom,
+      pi: o.pi,
+      piEnq: o.piEnq,
+      piPost: o.piPost,
+      piWs: o.piWs,
+      piFetch: o.piFetch,
+      piXhr: o.piXhr,
+      piPhase: o.piPhase,
+      fbScans: o.fbScans,
+      fbFound: o.fbFound,
+      fbRows: o.fbRows,
+      fbProbe: o.fbProbe,
+      fbStep: o.fbStep,
+      fbAttempts: o.fbAttempts,
+      fbErr: o.fbErr,
+      fetchLog: o.fetchLog,
+      fetchOther: o.fetchOther,
+      ndgr: o.ndgr,
+      ndgrLdStream: o.ndgrLdStream,
+      commentTypeVisibleSample: o.commentTypeVisibleSample
+    };
+  }
+
+  // src/lib/devMonitorAvatarStats.js
+  function summarizeStoredCommentProfileGaps(entries) {
+    const empty = {
+      numericUidWithHttpAvatar: 0,
+      numericUidWithoutHttpAvatar: 0,
+      anonStyleUidWithHttpAvatar: 0,
+      anonStyleUidWithoutHttpAvatar: 0,
+      numericWithNickname: 0,
+      numericWithoutNickname: 0,
+      anonWithNickname: 0,
+      anonWithoutNickname: 0
+    };
+    if (!Array.isArray(entries)) return empty;
+    let numericUidWithHttpAvatar = 0;
+    let numericUidWithoutHttpAvatar = 0;
+    let anonStyleUidWithHttpAvatar = 0;
+    let anonStyleUidWithoutHttpAvatar = 0;
+    let numericWithNickname = 0;
+    let numericWithoutNickname = 0;
+    let anonWithNickname = 0;
+    let anonWithoutNickname = 0;
+    for (const e of entries) {
+      const uid = String(e?.userId ?? "").trim();
+      if (!uid) continue;
+      const av = String(e?.avatarUrl || "").trim();
+      const http = isHttpOrHttpsUrl(av);
+      const nick = String(e?.nickname ?? "").trim();
+      const hasNick = Boolean(nick);
+      const numeric = /^\d{5,14}$/.test(uid);
+      if (numeric) {
+        if (http) numericUidWithHttpAvatar += 1;
+        else numericUidWithoutHttpAvatar += 1;
+        if (hasNick) numericWithNickname += 1;
+        else numericWithoutNickname += 1;
+      } else if (isAnonymousStyleNicoUserId(uid)) {
+        if (http) anonStyleUidWithHttpAvatar += 1;
+        else anonStyleUidWithoutHttpAvatar += 1;
+        if (hasNick) anonWithNickname += 1;
+        else anonWithoutNickname += 1;
+      }
+    }
+    return {
+      numericUidWithHttpAvatar,
+      numericUidWithoutHttpAvatar,
+      anonStyleUidWithHttpAvatar,
+      anonStyleUidWithoutHttpAvatar,
+      numericWithNickname,
+      numericWithoutNickname,
+      anonWithNickname,
+      anonWithoutNickname
+    };
+  }
+  function summarizeStoredCommentAvatarStats(entries) {
+    const empty = {
+      total: 0,
+      withHttpAvatar: 0,
+      withoutHttpAvatar: 0,
+      syntheticDefaultAvatar: 0,
+      numericUserId: 0,
+      nonNumericUserId: 0,
+      missingUserId: 0,
+      withNickname: 0,
+      withoutNickname: 0
+    };
+    if (!Array.isArray(entries)) return empty;
+    let withHttpAvatar = 0;
+    let withoutHttpAvatar = 0;
+    let syntheticDefaultAvatar = 0;
+    let numericUserId = 0;
+    let nonNumericUserId = 0;
+    let missingUserId = 0;
+    let withNickname = 0;
+    let withoutNickname = 0;
+    for (const e of entries) {
+      const av = String(e?.avatarUrl || "").trim();
+      const uid = String(e?.userId ?? "").trim();
+      const nick = String(e?.nickname ?? "").trim();
+      if (nick) withNickname += 1;
+      else withoutNickname += 1;
+      const http = isHttpOrHttpsUrl(av);
+      if (http) {
+        withHttpAvatar += 1;
+        if (/^\d{5,14}$/.test(uid) && isNiconicoSyntheticDefaultUserIconUrl(av, uid)) {
+          syntheticDefaultAvatar += 1;
+        }
+      } else {
+        withoutHttpAvatar += 1;
+      }
+      if (!uid) missingUserId += 1;
+      else if (/^\d{5,14}$/.test(uid)) numericUserId += 1;
+      else nonNumericUserId += 1;
+    }
+    return {
+      total: entries.length,
+      withHttpAvatar,
+      withoutHttpAvatar,
+      syntheticDefaultAvatar,
+      numericUserId,
+      nonNumericUserId,
+      missingUserId,
+      withNickname,
+      withoutNickname
+    };
+  }
+
+  // src/lib/devMonitorTrendSession.js
+  var STORAGE_PREFIX = "nl-dev-monitor-trend:";
+  var MAX_SESSION_POINTS = 24;
+  var MAX_PERSISTED_POINTS = 250;
+  var MAX_AGE_MS = 7 * 24 * 60 * 60 * 1e3;
+  function sessionKeyFor(liveId) {
+    return `${STORAGE_PREFIX}${String(liveId || "").trim() || "_"}`;
+  }
+  function parseTrendJsonArray(raw) {
+    if (typeof raw !== "string" || !raw) return [];
+    try {
+      const p = JSON.parse(raw);
+      return Array.isArray(p) ? p.filter(Boolean) : [];
+    } catch {
+      return [];
+    }
+  }
+  function trimTrendByAgeAndCap(points, maxPoints, maxAgeMs, nowMs) {
+    const cutoff = nowMs - maxAgeMs;
+    const fresh = points.filter(
+      (pt) => pt && typeof pt.t === "number" && Number.isFinite(pt.t) && pt.t >= cutoff
+    );
+    fresh.sort((a, b) => a.t - b.t);
+    const byT = /* @__PURE__ */ new Map();
+    for (const pt of fresh) {
+      byT.set(pt.t, pt);
+    }
+    const deduped = Array.from(byT.values()).sort((a, b) => a.t - b.t);
+    return deduped.slice(-maxPoints);
+  }
+  function mergeTrendArrays(a, b) {
+    return trimTrendByAgeAndCap(
+      [...a, ...b],
+      MAX_PERSISTED_POINTS,
+      MAX_AGE_MS,
+      Date.now()
+    );
+  }
+  function readTrendSeries(win, liveId) {
+    try {
+      const raw = win.sessionStorage.getItem(sessionKeyFor(liveId));
+      return parseTrendJsonArray(raw);
+    } catch {
+      return [];
+    }
+  }
+  function appendTrendPoint(win, liveId, sample) {
+    const lid = String(liveId || "").trim();
+    if (!lid) return;
+    const prev = readTrendSeries(win, lid);
+    const comm = sample.commentPct != null && Number.isFinite(sample.commentPct) ? Math.max(0, Math.min(100, sample.commentPct)) : 0;
+    const now = Date.now();
+    const pt = {
+      t: now,
+      thumb: Math.max(0, Math.min(100, sample.thumb)),
+      idPct: Math.max(0, Math.min(100, sample.idPct)),
+      nick: Math.max(0, Math.min(100, sample.nick)),
+      comment: comm
+    };
+    if (typeof sample.displayCount === "number" && Number.isFinite(sample.displayCount)) {
+      pt.displayCount = Math.max(0, Math.floor(sample.displayCount));
+    }
+    if (typeof sample.storageCount === "number" && Number.isFinite(sample.storageCount)) {
+      pt.storageCount = Math.max(0, Math.floor(sample.storageCount));
+    }
+    const next = trimTrendByAgeAndCap(
+      [...prev, pt],
+      MAX_SESSION_POINTS,
+      MAX_AGE_MS,
+      now
+    );
+    try {
+      win.sessionStorage.setItem(sessionKeyFor(lid), JSON.stringify(next));
+    } catch {
+    }
+  }
+  async function persistTrendPointChrome(liveId, sample) {
+    const lid = String(liveId || "").trim();
+    if (!lid) return;
+    const key = devMonitorTrendStorageKey(lid);
+    const chromeObj = typeof chrome !== "undefined" && chrome.storage && chrome.storage.local ? chrome.storage.local : null;
+    if (!chromeObj) return;
+    const comm = sample.commentPct != null && Number.isFinite(sample.commentPct) ? Math.max(0, Math.min(100, sample.commentPct)) : 0;
+    const now = Date.now();
+    const pt = {
+      t: now,
+      thumb: Math.max(0, Math.min(100, sample.thumb)),
+      idPct: Math.max(0, Math.min(100, sample.idPct)),
+      nick: Math.max(0, Math.min(100, sample.nick)),
+      comment: comm
+    };
+    if (typeof sample.displayCount === "number" && Number.isFinite(sample.displayCount)) {
+      pt.displayCount = Math.max(0, Math.floor(sample.displayCount));
+    }
+    if (typeof sample.storageCount === "number" && Number.isFinite(sample.storageCount)) {
+      pt.storageCount = Math.max(0, Math.floor(sample.storageCount));
+    }
+    const bag = await new Promise((resolve) => {
+      try {
+        chromeObj.get(key, (r) => resolve(r && typeof r === "object" ? r : {}));
+      } catch {
+        resolve({});
+      }
+    });
+    const prev = parseTrendJsonArray(bag[key]);
+    const merged = trimTrendByAgeAndCap(
+      [...prev, pt],
+      MAX_PERSISTED_POINTS,
+      MAX_AGE_MS,
+      now
+    );
+    await new Promise((resolve) => {
+      try {
+        chromeObj.set({ [key]: JSON.stringify(merged) }, () => resolve(void 0));
+      } catch {
+        resolve(void 0);
+      }
+    });
+  }
+  async function readMergedTrendSeries(win, liveId) {
+    const lid = String(liveId || "").trim();
+    if (!lid) return [];
+    const sess = readTrendSeries(win, lid);
+    const chromeObj = typeof chrome !== "undefined" && chrome.storage && chrome.storage.local ? chrome.storage.local : null;
+    if (!chromeObj) return mergeTrendArrays(sess, []);
+    const key = devMonitorTrendStorageKey(lid);
+    const bag = await new Promise((resolve) => {
+      try {
+        chromeObj.get(key, (r) => resolve(r && typeof r === "object" ? r : {}));
+      } catch {
+        resolve({});
+      }
+    });
+    const persisted = parseTrendJsonArray(bag[key]);
+    return mergeTrendArrays(sess, persisted);
+  }
+  function trendToSparklineArrays(points) {
+    return {
+      thumbSeries: points.map((p) => p.thumb),
+      idSeries: points.map((p) => p.idPct),
+      nickSeries: points.map((p) => p.nick),
+      commentSeries: points.map((p) => p.comment),
+      displaySeries: points.map(
+        (p) => typeof p.displayCount === "number" ? p.displayCount : 0
+      ),
+      storageSeries: points.map(
+        (p) => typeof p.storageCount === "number" ? p.storageCount : 0
+      )
+    };
+  }
+  function trendHasCountSamples(points) {
+    return points.some(
+      (p) => typeof p.displayCount === "number" && p.displayCount >= 0 || typeof p.storageCount === "number" && p.storageCount >= 0
+    );
+  }
+
+  // src/lib/marketingAggregate.js
+  function aggregateMarketingReport(comments, liveId) {
+    const filtered = comments.filter(
+      (c) => c.liveId === liveId && c.text && c.text.trim()
+    );
+    const userMap = /* @__PURE__ */ new Map();
+    const timestamps = [];
+    for (const c of filtered) {
+      const uid = c.userId || `anon:${(c.commentNo || c.id || "").slice(0, 12)}`;
+      const t = c.capturedAt || 0;
+      timestamps.push(t);
+      const existing = userMap.get(uid);
+      if (existing) {
+        existing.count++;
+        if (!existing.nickname && c.nickname) existing.nickname = c.nickname;
+        if (!existing.avatarUrl && c.avatarUrl) existing.avatarUrl = c.avatarUrl;
+        if (t < existing.firstAt) existing.firstAt = t;
+        if (t > existing.lastAt) existing.lastAt = t;
+      } else {
+        userMap.set(uid, {
+          userId: uid,
+          nickname: c.nickname || "",
+          avatarUrl: c.avatarUrl || "",
+          count: 1,
+          firstAt: t,
+          lastAt: t
+        });
+      }
+    }
+    const users = [...userMap.values()];
+    users.sort((a, b) => b.count - a.count);
+    const counts = users.map((u) => u.count).sort((a, b) => a - b);
+    const median = counts.length === 0 ? 0 : counts.length % 2 === 1 ? counts[Math.floor(counts.length / 2)] : (counts[counts.length / 2 - 1] + counts[counts.length / 2]) / 2;
+    const minT = timestamps.length ? Math.min(...timestamps) : 0;
+    const maxT = timestamps.length ? Math.max(...timestamps) : 0;
+    const durationMs = maxT - minT;
+    const durationMinutes = Math.max(1, Math.round(durationMs / 6e4));
+    const bucketMap = /* @__PURE__ */ new Map();
+    for (const c of filtered) {
+      const t = c.capturedAt || 0;
+      const minute = Math.floor((t - minT) / 6e4);
+      const uid = c.userId || `anon:${(c.commentNo || "").slice(0, 12)}`;
+      let b = bucketMap.get(minute);
+      if (!b) {
+        b = { count: 0, uids: /* @__PURE__ */ new Set() };
+        bucketMap.set(minute, b);
+      }
+      b.count++;
+      b.uids.add(uid);
+    }
+    const timeline = [];
+    let peakMinute = 0;
+    let peakMinuteCount = 0;
+    for (let m = 0; m <= durationMinutes; m++) {
+      const b = bucketMap.get(m);
+      const count = b ? b.count : 0;
+      const uniqueUsers = b ? b.uids.size : 0;
+      timeline.push({ minute: m, count, uniqueUsers });
+      if (count > peakMinuteCount) {
+        peakMinute = m;
+        peakMinuteCount = count;
+      }
+    }
+    const heavy = users.filter((u) => u.count >= 10).length;
+    const mid = users.filter((u) => u.count >= 4 && u.count < 10).length;
+    const light = users.filter((u) => u.count >= 2 && u.count < 4).length;
+    const once = users.filter((u) => u.count === 1).length;
+    const total = Math.max(1, users.length);
+    const hourDistribution = new Array(24).fill(0);
+    for (const t of timestamps) {
+      const h = new Date(t).getHours();
+      hourDistribution[h]++;
+    }
+    return {
+      liveId,
+      totalComments: filtered.length,
+      uniqueUsers: users.length,
+      avgCommentsPerUser: users.length > 0 ? Math.round(filtered.length / users.length * 10) / 10 : 0,
+      medianCommentsPerUser: median,
+      peakMinute,
+      peakMinuteCount,
+      durationMinutes,
+      commentsPerMinute: Math.round(filtered.length / durationMinutes * 10) / 10,
+      topUsers: users.slice(0, 30),
+      timeline,
+      segmentCounts: { heavy, mid, light, once },
+      segmentPcts: {
+        heavy: Math.round(heavy / total * 1e3) / 10,
+        mid: Math.round(mid / total * 1e3) / 10,
+        light: Math.round(light / total * 1e3) / 10,
+        once: Math.round(once / total * 1e3) / 10
+      },
+      hourDistribution
+    };
+  }
+
+  // src/lib/marketingChartsHtml.js
+  function buildMarketingDashboardHtml(r) {
+    return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>\u914D\u4FE1\u30DE\u30FC\u30B1\u5206\u6790 \u2014 ${escapeHtml(r.liveId)}</title>
+<style>${CSS_BODY}</style>
+</head>
+<body>
+<header class="mkt-header">
+<h1 class="mkt-header__title">\u{1F4CA} \u914D\u4FE1\u30DE\u30FC\u30B1\u30C6\u30A3\u30F3\u30B0\u5206\u6790</h1>
+<p class="mkt-header__sub">${escapeHtml(r.liveId)} \u2014 ${(/* @__PURE__ */ new Date()).toLocaleString("ja-JP")} \u51FA\u529B</p>
+</header>
+<main class="mkt-main">
+${sectionKpi(r)}
+${sectionTimeline(r)}
+${sectionSegment(r)}
+${sectionTopUsers(r)}
+${sectionHourHeatmap(r)}
+</main>
+<footer class="mkt-footer">nicolivelog marketing analytics \u2014 generated at ${(/* @__PURE__ */ new Date()).toISOString()}</footer>
+</body></html>`;
+  }
+  function sectionKpi(r) {
+    const cards = [
+      { label: "\u7DCF\u30B3\u30E1\u30F3\u30C8\u6570", value: r.totalComments.toLocaleString(), icon: "\u{1F4AC}" },
+      { label: "\u30E6\u30CB\u30FC\u30AF\u30E6\u30FC\u30B6\u30FC", value: r.uniqueUsers.toLocaleString(), icon: "\u{1F465}" },
+      { label: "\u30B3\u30E1\u30F3\u30C8/\u5206", value: String(r.commentsPerMinute), icon: "\u26A1" },
+      { label: "\u5E73\u5747\u30B3\u30E1\u30F3\u30C8/\u4EBA", value: String(r.avgCommentsPerUser), icon: "\u{1F4C8}" },
+      { label: "\u4E2D\u592E\u5024/\u4EBA", value: String(r.medianCommentsPerUser), icon: "\u{1F4CA}" },
+      { label: "\u914D\u4FE1\u6642\u9593", value: `${r.durationMinutes} \u5206`, icon: "\u23F1\uFE0F" },
+      { label: "\u30D4\u30FC\u30AF\u5206", value: `${r.peakMinute} \u5206\u76EE\uFF08${r.peakMinuteCount} \u30B3\u30E1\uFF09`, icon: "\u{1F525}" }
+    ];
+    const inner = cards.map(
+      (c) => `<div class="mkt-kpi"><span class="mkt-kpi__icon">${c.icon}</span><span class="mkt-kpi__val">${escapeHtml(c.value)}</span><span class="mkt-kpi__label">${escapeHtml(c.label)}</span></div>`
+    ).join("");
+    return `<section class="mkt-section"><h2>KPI \u30B5\u30DE\u30EA</h2><div class="mkt-kpi-grid">${inner}</div></section>`;
+  }
+  function sectionTimeline(r) {
+    const tl = r.timeline;
+    if (tl.length < 2) return "";
+    const maxC = Math.max(1, ...tl.map((b) => b.count));
+    const maxU = Math.max(1, ...tl.map((b) => b.uniqueUsers));
+    const W = 900;
+    const H = 220;
+    const pad = 40;
+    const innerW = W - pad * 2;
+    const innerH = H - pad * 2;
+    const n = tl.length;
+    const barW = Math.max(1, Math.min(8, innerW / n - 1));
+    const bars = tl.map((b, i) => {
+      const x = pad + innerW * i / n;
+      const h = b.count / maxC * innerH;
+      return `<rect x="${x.toFixed(1)}" y="${(pad + innerH - h).toFixed(1)}" width="${barW}" height="${h.toFixed(1)}" fill="#3b82f6" opacity="0.6"><title>${b.minute}\u5206: ${b.count}\u30B3\u30E1 / ${b.uniqueUsers}\u4EBA</title></rect>`;
+    }).join("");
+    const linePts = tl.map((b, i) => {
+      const x = pad + innerW * i / n + barW / 2;
+      const y = pad + innerH - b.uniqueUsers / maxU * innerH;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+    const yLabelsC = Array.from({ length: 5 }, (_, i) => {
+      const v = Math.round(maxC * (4 - i) / 4);
+      const y = pad + innerH * i / 4;
+      return `<text x="${pad - 4}" y="${y + 4}" text-anchor="end" class="mkt-axis">${v}</text>`;
+    }).join("");
+    const xLabels = tl.filter((_, i) => i % Math.max(1, Math.floor(n / 10)) === 0).map((b) => {
+      const x = pad + innerW * b.minute / n + barW / 2;
+      return `<text x="${x.toFixed(1)}" y="${H - 4}" text-anchor="middle" class="mkt-axis">${b.minute}m</text>`;
+    }).join("");
+    return `<section class="mkt-section">
+<h2>\u30B3\u30E1\u30F3\u30C8\u30BF\u30A4\u30E0\u30E9\u30A4\u30F3</h2>
+<p class="mkt-note">\u9752\u30D0\u30FC\uFF1D\u30B3\u30E1\u30F3\u30C8\u6570/\u5206 / \u30AA\u30EC\u30F3\u30B8\u7DDA\uFF1D\u30E6\u30CB\u30FC\u30AF\u30E6\u30FC\u30B6\u30FC\u6570/\u5206</p>
+<div class="mkt-chart-wrap">
+<svg viewBox="0 0 ${W} ${H}" class="mkt-svg">
+<rect x="${pad}" y="${pad}" width="${innerW}" height="${innerH}" fill="none" stroke="#334155" stroke-width="0.5"/>
+${yLabelsC}${xLabels}${bars}
+<polyline points="${linePts}" fill="none" stroke="#f97316" stroke-width="2" stroke-linecap="round"/>
+</svg>
+</div></section>`;
+  }
+  function sectionSegment(r) {
+    const s = r.segmentCounts;
+    const total = Math.max(1, s.heavy + s.mid + s.light + s.once);
+    const segs = [
+      { label: "\u30D8\u30D3\u30FC\uFF0810+\uFF09", count: s.heavy, color: "#ef4444" },
+      { label: "\u30DF\u30C9\u30EB\uFF084-9\uFF09", count: s.mid, color: "#f97316" },
+      { label: "\u30E9\u30A4\u30C8\uFF082-3\uFF09", count: s.light, color: "#3b82f6" },
+      { label: "\u4E00\u898B\uFF081\uFF09", count: s.once, color: "#94a3b8" }
+    ];
+    const R = 80;
+    const cx = 100;
+    const cy = 100;
+    let cumAngle = -Math.PI / 2;
+    const paths = segs.map((sg) => {
+      const pct = sg.count / total;
+      if (pct <= 0) return "";
+      const angle = pct * 2 * Math.PI;
+      const x1 = cx + R * Math.cos(cumAngle);
+      const y1 = cy + R * Math.sin(cumAngle);
+      cumAngle += angle;
+      const x2 = cx + R * Math.cos(cumAngle);
+      const y2 = cy + R * Math.sin(cumAngle);
+      const large = angle > Math.PI ? 1 : 0;
+      return `<path d="M${cx},${cy} L${x1.toFixed(2)},${y1.toFixed(2)} A${R},${R} 0 ${large},1 ${x2.toFixed(2)},${y2.toFixed(2)} Z" fill="${sg.color}"><title>${sg.label}: ${sg.count}\u4EBA (${(pct * 100).toFixed(1)}%)</title></path>`;
+    }).join("");
+    const legend = segs.map(
+      (sg) => `<span class="mkt-leg"><span class="mkt-leg__dot" style="background:${sg.color}"></span>${escapeHtml(sg.label)} ${sg.count}\u4EBA</span>`
+    ).join("");
+    return `<section class="mkt-section">
+<h2>\u30E6\u30FC\u30B6\u30FC\u30BB\u30B0\u30E1\u30F3\u30C8</h2>
+<p class="mkt-note">\u30B3\u30E1\u30F3\u30C8\u56DE\u6570\u3067\u30E6\u30FC\u30B6\u30FC\u30924\u5C64\u306B\u5206\u985E</p>
+<div class="mkt-seg-wrap">
+<svg viewBox="0 0 200 200" class="mkt-pie">${paths}</svg>
+<div class="mkt-seg-legend">${legend}</div>
+</div></section>`;
+  }
+  function sectionTopUsers(r) {
+    if (r.topUsers.length === 0) return "";
+    const maxCount = r.topUsers[0].count;
+    const rows = r.topUsers.slice(0, 20).map((u, i) => {
+      const pct = u.count / Math.max(1, maxCount) * 100;
+      const avImg = u.avatarUrl ? `<img src="${escapeHtml(u.avatarUrl)}" class="mkt-rank-av" alt="" loading="lazy">` : '<span class="mkt-rank-av mkt-rank-av--empty"></span>';
+      const name = u.nickname || u.userId || "\u2014";
+      return `<tr>
+<td class="mkt-rank-n">${i + 1}</td>
+<td>${avImg}</td>
+<td class="mkt-rank-name">${escapeHtml(name)}</td>
+<td class="mkt-rank-bar"><div class="mkt-rank-bar__fill" style="width:${pct.toFixed(1)}%"></div><span class="mkt-rank-bar__label">${u.count}</span></td>
+</tr>`;
+    }).join("");
+    return `<section class="mkt-section">
+<h2>\u30C8\u30C3\u30D7\u30B3\u30E1\u30F3\u30BF\u30FC TOP 20</h2>
+<table class="mkt-rank-table"><tbody>${rows}</tbody></table>
+</section>`;
+  }
+  function sectionHourHeatmap(r) {
+    const max = Math.max(1, ...r.hourDistribution);
+    const cells = r.hourDistribution.map((v, h) => {
+      const intensity = v / max;
+      const alpha = Math.max(0.08, intensity);
+      return `<div class="mkt-hour" style="background:rgba(59,130,246,${alpha.toFixed(2)})" title="${h}\u6642: ${v}\u4EF6"><span class="mkt-hour__label">${h}</span><span class="mkt-hour__val">${v}</span></div>`;
+    }).join("");
+    return `<section class="mkt-section">
+<h2>\u6642\u9593\u5E2F\u30D2\u30FC\u30C8\u30DE\u30C3\u30D7</h2>
+<p class="mkt-note">\u30B3\u30E1\u30F3\u30C8\u304C\u591A\u3044\u6642\u9593\u5E2F\u307B\u3069\u6FC3\u3044\u9752</p>
+<div class="mkt-hour-grid">${cells}</div>
+</section>`;
+  }
+  var CSS_BODY = `
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f172a;color:#e2e8f0;line-height:1.6}
+.mkt-header{padding:2rem 1.5rem 1rem;background:linear-gradient(135deg,#1e293b,#0f172a);border-bottom:1px solid #334155}
+.mkt-header__title{margin:0;font-size:1.6rem;font-weight:700}
+.mkt-header__sub{margin:.3rem 0 0;font-size:.85rem;color:#94a3b8}
+.mkt-main{max-width:960px;margin:0 auto;padding:1.5rem 1rem}
+.mkt-section{background:#1e293b;border-radius:12px;padding:1.2rem 1.4rem;margin-bottom:1.2rem;border:1px solid #334155}
+.mkt-section h2{margin:0 0 .8rem;font-size:1.1rem;color:#f8fafc;border-left:4px solid #3b82f6;padding-left:.6rem}
+.mkt-note{font-size:.78rem;color:#94a3b8;margin:0 0 .6rem}
+.mkt-kpi-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:.8rem}
+.mkt-kpi{background:#0f172a;border-radius:10px;padding:.8rem;text-align:center;border:1px solid #334155}
+.mkt-kpi__icon{font-size:1.4rem;display:block}
+.mkt-kpi__val{font-size:1.3rem;font-weight:700;display:block;color:#f8fafc}
+.mkt-kpi__label{font-size:.72rem;color:#94a3b8}
+.mkt-chart-wrap{overflow-x:auto}
+.mkt-svg{width:100%;height:auto;max-height:260px}
+.mkt-axis{font-size:10px;fill:#94a3b8}
+.mkt-seg-wrap{display:flex;align-items:center;gap:2rem;flex-wrap:wrap}
+.mkt-pie{width:180px;height:180px;flex-shrink:0}
+.mkt-seg-legend{display:flex;flex-direction:column;gap:.5rem}
+.mkt-leg{display:flex;align-items:center;gap:.4rem;font-size:.85rem}
+.mkt-leg__dot{width:12px;height:12px;border-radius:3px;flex-shrink:0}
+.mkt-rank-table{width:100%;border-collapse:collapse}
+.mkt-rank-table td{padding:.35rem .4rem;border-bottom:1px solid #1e293b}
+.mkt-rank-n{width:2rem;color:#64748b;text-align:right;font-size:.8rem}
+.mkt-rank-av{width:28px;height:28px;border-radius:50%;object-fit:cover;display:block}
+.mkt-rank-av--empty{background:#334155}
+.mkt-rank-name{font-size:.85rem;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mkt-rank-bar{position:relative;height:22px;background:#0f172a;border-radius:4px;overflow:hidden}
+.mkt-rank-bar__fill{height:100%;background:linear-gradient(90deg,#3b82f6,#6366f1);border-radius:4px}
+.mkt-rank-bar__label{position:absolute;right:6px;top:2px;font-size:.75rem;color:#f8fafc;font-weight:600}
+.mkt-hour-grid{display:grid;grid-template-columns:repeat(12,1fr);gap:4px}
+.mkt-hour{border-radius:6px;text-align:center;padding:.5rem .2rem;min-height:52px;display:flex;flex-direction:column;justify-content:center;border:1px solid #334155}
+.mkt-hour__label{font-size:.7rem;color:#94a3b8}
+.mkt-hour__val{font-size:.9rem;font-weight:600}
+.mkt-footer{text-align:center;padding:1.5rem;font-size:.72rem;color:#475569}
+@media(max-width:640px){
+  .mkt-kpi-grid{grid-template-columns:repeat(2,1fr)}
+  .mkt-hour-grid{grid-template-columns:repeat(6,1fr)}
+  .mkt-seg-wrap{flex-direction:column;align-items:flex-start}
+}
+`;
+
+  // src/lib/devMonitorViz.js
+  function officialVsRecordedBarState(p) {
+    const d = Math.max(0, Math.floor(Number(p.displayCount) || 0));
+    const o = p.officialCount != null && Number.isFinite(p.officialCount) && p.officialCount > 0 ? Math.max(0, Math.floor(Number(p.officialCount))) : null;
+    if (o == null) {
+      return {
+        fillPct: d > 0 ? 100 : 0,
+        ratioLabel: d > 0 ? `\u8A18\u9332 ${d} \u4EF6\uFF08\u516C\u5F0F\u4EF6\u6570\u306A\u3057\uFF09` : "\u8A18\u9332 0",
+        tone: "neutral"
+      };
+    }
+    const fill = Math.min(100, d / o * 100);
+    const tone = fill >= 95 ? "ok" : fill >= 80 ? "warn" : d === 0 && o > 0 ? "bad" : "bad";
+    return {
+      fillPct: fill,
+      ratioLabel: `${d} / ${o}\uFF08${fill.toFixed(1)}%\uFF09`,
+      tone
+    };
+  }
+  function profileGapBarSeries(gaps) {
+    const rows = [
+      {
+        label: "\u6570\u5B57ID\u30FB\u30A2\u30A4\u30B3\u30F3\u3042\u308A",
+        n: gaps.numericUidWithHttpAvatar,
+        tone: "g1"
+      },
+      {
+        label: "\u6570\u5B57ID\u30FB\u30A2\u30A4\u30B3\u30F3\u306A\u3057",
+        n: gaps.numericUidWithoutHttpAvatar,
+        tone: "g2"
+      },
+      {
+        label: "\u533F\u540D\u98A8ID\u30FB\u30A2\u30A4\u30B3\u30F3\u3042\u308A",
+        n: gaps.anonStyleUidWithHttpAvatar,
+        tone: "g3"
+      },
+      {
+        label: "\u533F\u540D\u98A8ID\u30FB\u30A2\u30A4\u30B3\u30F3\u306A\u3057",
+        n: gaps.anonStyleUidWithoutHttpAvatar,
+        tone: "g4"
+      },
+      { label: "\u6570\u5B57ID\u30FB\u540D\u524D\u3042\u308A", n: gaps.numericWithNickname, tone: "g5" },
+      { label: "\u6570\u5B57ID\u30FB\u540D\u524D\u306A\u3057", n: gaps.numericWithoutNickname, tone: "g6" },
+      { label: "\u533F\u540D\u98A8\u30FB\u540D\u524D\u3042\u308A", n: gaps.anonWithNickname, tone: "g7" },
+      { label: "\u533F\u540D\u98A8\u30FB\u540D\u524D\u306A\u3057", n: gaps.anonWithoutNickname, tone: "g8" }
+    ];
+    const maxN = Math.max(1, ...rows.map((r) => r.n));
+    return rows.map((r) => ({
+      label: r.label,
+      count: r.n,
+      pct: r.n / maxN * 100,
+      tone: r.tone
+    }));
+  }
+  function commentTypeDistribution(sample) {
+    if (!sample || typeof sample !== "object") return [];
+    const m = {};
+    for (const [k, v] of Object.entries(sample)) {
+      const n = Number(v);
+      if (Number.isFinite(n) && n > 0) m[k] = n;
+    }
+    const total = Object.values(m).reduce((a, b) => a + b, 0);
+    if (total <= 0) return [];
+    return Object.entries(m).map(([key, count]) => ({
+      key,
+      count,
+      pct: count / total * 100
+    })).sort((a, b) => b.count - a.count);
+  }
+  var WS_STALE_MS = 12e4;
+  function wsStalenessState(wsAgeMs) {
+    if (!Number.isFinite(wsAgeMs) || wsAgeMs < 0) {
+      return { freshnessPct: 0, label: "\u2014", tone: "bad" };
+    }
+    const freshnessPct = Math.max(0, Math.min(100, 100 - wsAgeMs / WS_STALE_MS * 100));
+    const tone = freshnessPct >= 70 ? "ok" : freshnessPct >= 35 ? "warn" : "bad";
+    const label = `${Math.round(wsAgeMs)} ms`;
+    return { freshnessPct, label, tone };
+  }
+  function htmlOfficialVsRecordedBar(st) {
+    const toneClass = st.tone === "ok" ? "nl-viz-bar__fill--ok" : st.tone === "warn" ? "nl-viz-bar__fill--warn" : st.tone === "bad" ? "nl-viz-bar__fill--bad" : "nl-viz-bar__fill--neutral";
+    return `<section class="nl-viz-block" aria-label="\u8A18\u9332\u4EF6\u6570\u3068\u516C\u5F0F\u30B3\u30E1\u30F3\u30C8\u6570\u306E\u6BD4\u8F03"><h4 class="nl-viz-block__title">\u8A18\u9332\u4EF6\u6570\u3068\u516C\u5F0F\u30B3\u30E1\u30F3\u30C8\u6570\uFF08\u68D2\u30B0\u30E9\u30D5\uFF09</h4><div class="nl-viz-bar nl-viz-bar--tall"><div class="nl-viz-bar__track"><div class="nl-viz-bar__fill ${toneClass}" style="width:${Math.min(100, st.fillPct).toFixed(2)}%"></div></div><p class="nl-viz-block__caption">${escapeHtml(st.ratioLabel)}</p></div></section>`;
+  }
+  function htmlCaptureRatioBar(ratio) {
+    if (ratio == null || !Number.isFinite(ratio)) return "";
+    const pct = Math.max(0, Math.min(100, ratio * 100));
+    const toneClass = pct >= 70 ? "nl-viz-bar__fill--ok" : pct >= 40 ? "nl-viz-bar__fill--warn" : "nl-viz-bar__fill--bad";
+    return `<section class="nl-viz-block" aria-label="\u30AD\u30E3\u30D7\u30C1\u30E3\u7387"><h4 class="nl-viz-block__title">\u516C\u5F0F\u7D71\u8A08\u304B\u3089\u898B\u305F\u30B3\u30E1\u30F3\u30C8\u30AD\u30E3\u30D7\u30C1\u30E3\u7387\uFF08\u53C2\u8003\uFF09</h4><div class="nl-viz-bar nl-viz-bar--tall"><div class="nl-viz-bar__track"><div class="nl-viz-bar__fill ${toneClass}" style="width:${pct.toFixed(2)}%"></div></div><p class="nl-viz-block__caption">${escapeHtml(`${pct.toFixed(1)}%`)}</p></div></section>`;
+  }
+  function htmlProfileGapBars(series) {
+    if (!series.length) return "";
+    const rows = series.map(
+      (s) => `<div class="nl-viz-mini-row"><span class="nl-viz-mini-row__label">${escapeHtml(s.label)}</span><div class="nl-viz-mini-row__track"><div class="nl-viz-mini-row__fill nl-viz-mini-row__fill--${s.tone}" style="width:${Math.min(100, s.pct).toFixed(2)}%"></div></div><span class="nl-viz-mini-row__n">${escapeHtml(String(s.count))}</span></div>`
+    ).join("");
+    return `<section class="nl-viz-block" aria-label="\u5229\u7528\u8005\u306E\u7A2E\u985E\u5225\u30FB\u30A2\u30A4\u30B3\u30F3\u3068\u540D\u524D\u306E\u53D6\u308A\u3084\u3059\u3055"><h4 class="nl-viz-block__title">\u5229\u7528\u8005\u306E\u7A2E\u985E\u5225\u30FB\u53D6\u308C\u305F\u60C5\u5831\uFF08\u76EE\u5B89\u30D0\u30FC\uFF09</h4><div class="nl-viz-mini-rows">${rows}</div><p class="nl-viz-block__note">\u30D0\u30FC\u306F\u300C\u3044\u3061\u3070\u3093\u591A\u3044\u884C\u300D\u3092100%\u3068\u3057\u305F\u76EE\u5B89\u3067\u3059\u3002\u6570\u5B57\u540C\u58EB\u3092\u305D\u306E\u307E\u307E\u8DB3\u3057\u305F\u308A\u6BD4\u8F03\u3057\u305F\u308A\u306F\u3067\u304D\u307E\u305B\u3093\u3002</p></section>`;
+  }
+  function commentTypeKeyLabelJa(key) {
+    const k = String(key || "").trim().toLowerCase();
+    const map = {
+      gift: "\u30AE\u30D5\u30C8",
+      normal: "\u901A\u5E38",
+      operator: "\u904B\u55B6",
+      system: "\u30B7\u30B9\u30C6\u30E0",
+      command: "\u30B3\u30DE\u30F3\u30C9",
+      easy: "\u30A4\u30FC\u30B8\u30FC",
+      premium: "\u30D7\u30EC\u30DF\u30A2\u30E0",
+      emotion: "\u30A8\u30E2\u30FC\u30B7\u30E7\u30F3"
+    };
+    return map[k] || String(key || "").trim() || "\u305D\u306E\u4ED6";
+  }
+  function htmlCommentTypeBars(dist) {
+    if (!dist.length) return "";
+    const tones = ["c0", "c1", "c2", "c3", "c4", "c5"];
+    const rows = dist.map((d, i) => {
+      const tone = tones[Math.min(i, tones.length - 1)];
+      const ja = commentTypeKeyLabelJa(d.key);
+      return `<div class="nl-viz-mini-row"><span class="nl-viz-mini-row__label" title="\u5185\u90E8\u30AD\u30FC: ${escapeHtml(d.key)}">${escapeHtml(ja)}</span><div class="nl-viz-mini-row__track"><div class="nl-viz-mini-row__fill nl-viz-mini-row__fill--${tone}" style="width:${Math.min(100, d.pct).toFixed(2)}%"></div></div><span class="nl-viz-mini-row__n">${escapeHtml(String(d.count))}</span></div>`;
+    }).join("");
+    return `<section class="nl-viz-block" aria-label="\u753B\u9762\u306B\u8F09\u3063\u3066\u3044\u308B\u30B3\u30E1\u30F3\u30C8\u306E\u7A2E\u985E"><h4 class="nl-viz-block__title">\u3044\u307E\u753B\u9762\u306B\u51FA\u3066\u3044\u308B\u30B3\u30E1\u30F3\u30C8\u306E\u7A2E\u985E\uFF08\u5272\u5408\uFF09</h4><div class="nl-viz-mini-rows">${rows}</div></section>`;
+  }
+  function htmlWsStalenessBar(st) {
+    if (st.label === "\u2014") return "";
+    const toneClass = st.tone === "ok" ? "nl-viz-bar__fill--ok" : st.tone === "warn" ? "nl-viz-bar__fill--warn" : "nl-viz-bar__fill--bad";
+    return `<section class="nl-viz-block" aria-label="\u63A5\u7D9A\u60C5\u5831\u306E\u65B0\u3057\u3055"><h4 class="nl-viz-block__title">\u914D\u4FE1\u30DA\u30FC\u30B8\u3068\u306E\u63A5\u7D9A\u306E\u65B0\u3057\u3055\uFF08\u53C2\u8003\uFF09</h4><div class="nl-viz-bar nl-viz-bar--tall"><div class="nl-viz-bar__track"><div class="nl-viz-bar__fill ${toneClass}" style="width:${st.freshnessPct.toFixed(2)}%"></div></div><p class="nl-viz-block__caption">${escapeHtml(`\u6700\u7D42\u66F4\u65B0\u304B\u3089\u306E\u7D4C\u904E ${st.label}\uFF08\u9577\u3044\u307B\u3069\u30D0\u30FC\u304C\u77ED\u304F\u306A\u308A\u307E\u3059\uFF09`)}</p></div></section>`;
+  }
+  function htmlAcquisitionSparklines(seriesArrays, opts = {}) {
+    const series = [
+      { label: "\u30B5\u30E0\u30CD", color: "#0f8fd8", vals: seriesArrays.thumbSeries },
+      { label: "ID", color: "#6366f1", vals: seriesArrays.idSeries },
+      { label: "\u540D\u524D", color: "#ea580c", vals: seriesArrays.nickSeries },
+      { label: "\u30B3\u30E1", color: "#0d9488", vals: seriesArrays.commentSeries }
+    ];
+    const W = 200;
+    const H = 36;
+    const pad = 4;
+    const innerW = W - pad * 2;
+    const innerH = H - pad * 2;
+    const lineOrDotSvg = (vals, color) => {
+      if (!vals.length) return "";
+      const n = vals.length;
+      if (n === 1) {
+        const v = vals[0];
+        const x = pad + innerW / 2;
+        const y = pad + innerH * (1 - Math.max(0, Math.min(100, v)) / 100);
+        return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="2.2" fill="${color}"/>`;
+      }
+      const pts = vals.map(
+        /** @param {number} v @param {number} i */
+        (v, i) => {
+          const x = pad + innerW * i / (n - 1);
+          const y = pad + innerH * (1 - Math.max(0, Math.min(100, v)) / 100);
+          return `${x.toFixed(2)},${y.toFixed(2)}`;
+        }
+      );
+      return `<path fill="none" stroke="${color}" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" d="M ${pts.join(" L ")}"/>`;
+    };
+    const blocks = series.map((s) => {
+      const svgInner = lineOrDotSvg(s.vals, s.color);
+      return `<div class="nl-viz-spark"><span class="nl-viz-spark__cap">${escapeHtml(s.label)}</span><svg class="nl-viz-spark__svg" viewBox="0 0 ${W} ${H}" aria-hidden="true"><rect x="${pad}" y="${pad}" width="${innerW}" height="${innerH}" fill="none" stroke="color-mix(in srgb, var(--nl-border) 70%, transparent)" stroke-width="0.6" rx="3"/>` + svgInner + "</svg></div>";
+    }).join("");
+    const note = opts.persisted ? "4\u672C\u3068\u3082\u300C\u53D6\u308C\u3066\u3044\u308B\u5272\u5408\u300D\u306E\u63A8\u79FB\u3067\u3059\u3002\u3053\u306EPC\u306B\u5C11\u3057\u305A\u3064\u6B8B\u308A\u307E\u3059\uFF08\u76EE\u5B89\u3067\u6700\u5927\u7D047\u65E5\u30FB250\u70B9\uFF09\u3002" : "4\u672C\u3068\u3082\u300C\u53D6\u308C\u3066\u3044\u308B\u5272\u5408\u300D\u306E\u63A8\u79FB\u3067\u3059\u3002\u30D6\u30E9\u30A6\u30B6\u306E\u30BF\u30D6\u3092\u9589\u3058\u308B\u307E\u3067\u306E\u5C65\u6B74\u3060\u3051\u3067\u3059\u3002";
+    return `<section class="nl-viz-block" aria-label="\u30C7\u30FC\u30BF\u53D6\u5F97\u7387\u306E\u63A8\u79FB"><h4 class="nl-viz-block__title">\u53D6\u5F97\u7387\u306E\u63A8\u79FB\uFF08\u5C0F\u3055\u306A\u6298\u308C\u7DDA\uFF09</h4><p class="nl-viz-block__note">${escapeHtml(note)}</p><div class="nl-viz-spark-grid">${blocks}</div></section>`;
+  }
+  function htmlDualCountSparklines(displaySeries, storageSeries) {
+    if (!displaySeries.length || displaySeries.length !== storageSeries.length) return "";
+    const maxVal = Math.max(
+      1,
+      ...displaySeries,
+      ...storageSeries
+    );
+    const dN = displaySeries.map((n2) => Math.max(0, n2) / maxVal * 100);
+    const sN = storageSeries.map((n2) => Math.max(0, n2) / maxVal * 100);
+    const W = 220;
+    const H = 40;
+    const pad = 4;
+    const innerW = W - pad * 2;
+    const innerH = H - pad * 2;
+    const n = dN.length;
+    if (n < 1) return "";
+    const pathFor = (vals, color) => {
+      if (n === 1) {
+        const v = vals[0];
+        const x = pad + innerW / 2;
+        const y = pad + innerH * (1 - Math.max(0, Math.min(100, v)) / 100);
+        return `<circle cx="${x.toFixed(2)}" cy="${y.toFixed(2)}" r="2.2" fill="${color}"/>`;
+      }
+      const pts = vals.map(
+        /** @param {number} v @param {number} i */
+        (v, i) => {
+          const x = pad + innerW * i / (n - 1);
+          const y = pad + innerH * (1 - Math.max(0, Math.min(100, v)) / 100);
+          return `${x.toFixed(2)},${y.toFixed(2)}`;
+        }
+      );
+      return `<path fill="none" stroke="${color}" stroke-width="1.6" stroke-linecap="round" d="M ${pts.join(" L ")}"/>`;
+    };
+    const svg = `<svg class="nl-viz-count-spark__svg" viewBox="0 0 ${W} ${H}" aria-hidden="true"><rect x="${pad}" y="${pad}" width="${innerW}" height="${innerH}" fill="none" stroke="color-mix(in srgb, var(--nl-border) 70%, transparent)" stroke-width="0.6" rx="3"/>` + pathFor(dN, "#0f8fd8") + pathFor(sN, "#0d9488") + "</svg>";
+    return `<section class="nl-viz-block" aria-label="\u8A18\u9332\u4EF6\u6570\u306E\u63A8\u79FB"><h4 class="nl-viz-block__title">\u8A18\u9332\u4EF6\u6570\u306E\u63A8\u79FB\uFF08\u4E00\u89A7\uFF1D\u9752\u30FB\u4FDD\u5B58\uFF1D\u7DD1\uFF09</h4><p class="nl-viz-block__note">\u30DD\u30C3\u30D7\u30A2\u30C3\u30D7\u3092\u958B\u3044\u3066\u66F4\u65B0\u3059\u308B\u305F\u3073\u306B1\u70B9\u8DB3\u3057\u307E\u3059\u3002\u9AD8\u3055\u306F\u305D\u306E\u6642\u70B9\u3067\u306E\u6700\u5927\u306B\u5408\u308F\u305B\u305F\u76EE\u5B89\u3067\u3059\u3002</p><div class="nl-viz-count-spark">${svg}<div class="nl-viz-count-spark__legend"><span><span class="nl-viz-leg nl-viz-leg--disp" aria-hidden="true"></span>\u4E00\u89A7\u306E\u4EF6\u6570</span><span><span class="nl-viz-leg nl-viz-leg--stor" aria-hidden="true"></span>\u3053\u306EPC\u306B\u4FDD\u5B58\u3057\u305F\u4EF6\u6570</span></div></div></section>`;
+  }
+  function htmlStoredCommentStackCharts(avs) {
+    const t = avs.total;
+    if (t <= 0) return "";
+    const segRow = (title, segments) => {
+      const inner = segments.map((s) => {
+        const w = Math.max(0, Math.min(100, s.pct));
+        return `<div class="nl-viz-stack-seg nl-viz-stack-seg--${s.tone}" style="width:${w.toFixed(2)}%" title="${escapeHtml(s.hint)}"></div>`;
+      }).join("");
+      const cap = segments.map((s) => `${s.label} ${s.count}`).join(" \xB7 ");
+      return `<div class="nl-viz-stack-block"><p class="nl-viz-stack-block__title">${escapeHtml(title)}</p><div class="nl-viz-stack-track" role="img" aria-label="${escapeHtml(cap)}">${inner}</div><p class="nl-viz-stack-block__cap">${escapeHtml(cap)}</p></div>`;
+    };
+    const httpPct = avs.withHttpAvatar / t * 100;
+    const missPct = avs.withoutHttpAvatar / t * 100;
+    const nickYes = avs.withNickname / t * 100;
+    const nickNo = avs.withoutNickname / t * 100;
+    const numPct = avs.numericUserId / t * 100;
+    const anonPct = avs.nonNumericUserId / t * 100;
+    const missUid = avs.missingUserId / t * 100;
+    const blocks = [
+      segRow("\u30A2\u30A4\u30B3\u30F3\u753B\u50CF\u306EURL\uFF08\u8A18\u9332\u3057\u305F\u30B3\u30E1\u30F3\u30C8\uFF09", [
+        {
+          label: "\u3042\u308A",
+          count: avs.withHttpAvatar,
+          pct: httpPct,
+          tone: "http",
+          hint: "https \u306E\u30A2\u30A4\u30B3\u30F3URL\u304C\u53D6\u308C\u3066\u3044\u308B"
+        },
+        {
+          label: "\u306A\u3057",
+          count: avs.withoutHttpAvatar,
+          pct: missPct,
+          tone: "miss",
+          hint: "\u672A\u53D6\u5F97\u30FBURL\u306A\u3057"
+        }
+      ]),
+      segRow("\u8868\u793A\u540D\uFF08\u30CB\u30C3\u30AF\u30CD\u30FC\u30E0\uFF09", [
+        { label: "\u3042\u308A", count: avs.withNickname, pct: nickYes, tone: "nickY", hint: "" },
+        { label: "\u306A\u3057", count: avs.withoutNickname, pct: nickNo, tone: "nickN", hint: "" }
+      ]),
+      segRow("\u30E6\u30FC\u30B6\u30FCID\u306E\u5F62\uFF08\u5408\u8A08100%\uFF09", [
+        { label: "\u6570\u5B57\u306EID", count: avs.numericUserId, pct: numPct, tone: "uidN", hint: "" },
+        { label: "\u533F\u540D\u98A8\u30FB\u305D\u306E\u4ED6", count: avs.nonNumericUserId, pct: anonPct, tone: "uidA", hint: "" },
+        { label: "\u672A\u53D6\u5F97", count: avs.missingUserId, pct: missUid, tone: "uidM", hint: "" }
+      ])
+    ].join("");
+    return `<section class="nl-viz-block" aria-label="\u8A18\u9332\u30B3\u30E1\u30F3\u30C8\u306E\u5185\u8A33\u30B0\u30E9\u30D5"><h4 class="nl-viz-block__title">\u4E0B\u306E\u8868\u3068\u540C\u3058\u5185\u8A33\uFF08\u7A4D\u307F\u4E0A\u3052\u30D0\u30FC\uFF09</h4>${blocks}</section>`;
+  }
+  function htmlRecordOfficialGapStack(displayCount, officialCount) {
+    const o = Math.max(0, Math.floor(officialCount));
+    const d = Math.max(0, Math.floor(displayCount));
+    if (o <= 0) return "";
+    const recPct = Math.min(100, d / o * 100);
+    const gapPct = Math.max(0, 100 - recPct);
+    const gap = o - d;
+    return `<section class="nl-viz-block" aria-label="\u516C\u5F0F\u306B\u5BFE\u3059\u308B\u8A18\u9332\u306E\u5272\u5408"><h4 class="nl-viz-block__title">\u516C\u5F0F\u30B3\u30E1\u30F3\u30C8\u6570\u306B\u5BFE\u3059\u308B\u8A18\u9332\uFF08\u7A4D\u307F\u4E0A\u3052\uFF09</h4><div class="nl-viz-stack-track nl-viz-stack-track--tall" role="img" aria-label="\u8A18\u9332 ${d} \u4EF6\u3001\u5DEE ${gap} \u4EF6"><div class="nl-viz-stack-seg nl-viz-stack-seg--rec" style="width:${recPct.toFixed(2)}%"></div><div class="nl-viz-stack-seg nl-viz-stack-seg--gap" style="width:${gapPct.toFixed(2)}%"></div></div><p class="nl-viz-stack-block__cap">${escapeHtml(`\u8A18\u9332 ${d} / \u516C\u5F0F ${o}\uFF08\u672A\u53D6\u308A\u8FBC\u307F ${gap}\uFF09`)}</p></section>`;
+  }
+  function htmlInterceptStorageBar(interceptCount, storageTotal) {
+    const ic = Math.max(0, Math.floor(interceptCount));
+    const st = Math.max(0, Math.floor(storageTotal));
+    if (st <= 0 && ic <= 0) return "";
+    const denom = Math.max(st, ic, 1);
+    const pct = Math.min(100, ic / denom * 100);
+    return `<section class="nl-viz-block" aria-label="\u30DA\u30FC\u30B8\u304B\u3089\u62FE\u3063\u305F\u5229\u7528\u8005\u30E1\u30E2\u3068\u8A18\u9332\u4EF6\u6570"><h4 class="nl-viz-block__title">\u8996\u8074\u30DA\u30FC\u30B8\u3067\u62FE\u3063\u305F\u5229\u7528\u8005\u30E1\u30E2\u3068\u3001\u4FDD\u5B58\u4EF6\u6570\uFF08\u76EE\u5B89\uFF09</h4><div class="nl-viz-bar nl-viz-bar--tall"><div class="nl-viz-bar__track"><div class="nl-viz-bar__fill nl-viz-bar__fill--neutral" style="width:${pct.toFixed(2)}%"></div></div><p class="nl-viz-block__caption">${escapeHtml(`\u30DA\u30FC\u30B8\u5074\u30E1\u30E2 ${ic} \u4EF6\u30FB\u4FDD\u5B58 ${st} \u4EF6\u306E\u3046\u3061\u5927\u304D\u3044\u65B9\u3092\u57FA\u6E96\u306B\u3057\u305F\u30D0\u30FC ${pct.toFixed(1)}%`)}</p></div></section>`;
+  }
+  function buildDevMonitorDlChartsHtml(p) {
+    const lid = String(p.liveId || "").trim();
+    if (!lid) return "";
+    const parts = [];
+    if (p.avatarStats && p.avatarStats.total > 0) {
+      parts.push(htmlStoredCommentStackCharts(p.avatarStats));
+    }
+    const snap = p.snapshot && typeof p.snapshot === "object" ? (
+      /** @type {Record<string, unknown>} */
+      p.snapshot
+    ) : null;
+    const ocRaw = snap?.officialCommentCount;
+    const oc = typeof ocRaw === "number" && Number.isFinite(ocRaw) ? ocRaw : null;
+    if (oc != null && oc > 0) {
+      parts.push(htmlRecordOfficialGapStack(p.displayCount, oc));
+    }
+    const dbgRaw = snap?._debug;
+    const dbg = dbgRaw && typeof dbgRaw === "object" ? (
+      /** @type {Record<string, unknown>} */
+      dbgRaw
+    ) : null;
+    const intercept = dbg && dbg.intercept != null ? Number(dbg.intercept) : NaN;
+    if (Number.isFinite(intercept) && p.storageCount >= 0) {
+      parts.push(htmlInterceptStorageBar(intercept, p.storageCount));
+    }
+    return `<div class="nl-dev-monitor-dl-charts">${parts.join("")}</div>`;
+  }
+
+  // src/lib/storyAvatarDiagLine.js
+  function interceptExportCodeUserLabel(code, detail = "") {
+    const c = String(code || "").trim();
+    const d = String(detail || "").trim();
+    switch (c) {
+      case "ok":
+        return "\u53D6\u308A\u8FBC\u307F\u306B\u6210\u529F\u3057\u307E\u3057\u305F\u3002";
+      case "ok_empty":
+        return "\u53D6\u308A\u8FBC\u307F\u306F\u6210\u529F\u3057\u307E\u3057\u305F\u304C\u3001\u307E\u3060\u884C\u304C\u3042\u308A\u307E\u305B\u3093\u3002watch \u30BF\u30D6\u3092\u958B\u3044\u305F\u307E\u307E\u306B\u3057\u3066\u3001\u30DD\u30C3\u30D7\u30A2\u30C3\u30D7\u3092\u66F4\u65B0\u3057\u3066\u307F\u3066\u304F\u3060\u3055\u3044\u3002";
+      case "export_rejected":
+        return d ? `\u53D6\u308A\u8FBC\u307F\u3092\u30DA\u30FC\u30B8\u5074\u304C\u62D2\u5426\u3057\u307E\u3057\u305F\uFF08${d.slice(0, 80)}\uFF09` : "\u53D6\u308A\u8FBC\u307F\u3092\u30DA\u30FC\u30B8\u5074\u304C\u62D2\u5426\u3057\u307E\u3057\u305F\u3002";
+      case "message_failed":
+        return "\u30DA\u30FC\u30B8\u3068\u306E\u901A\u4FE1\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002watch \u3092\u518D\u8AAD\u307F\u8FBC\u307F\uFF08F5\uFF09\u3057\u3066\u304B\u3089\u8A66\u3057\u3066\u304F\u3060\u3055\u3044\u3002";
+      case "no_success_response":
+        return "\u30DA\u30FC\u30B8\u304B\u3089\u5FDC\u7B54\u304C\u3042\u308A\u307E\u305B\u3093\u3067\u3057\u305F\u3002\u5BFE\u8C61\u306E watch \u30BF\u30D6\u304C\u958B\u3044\u3066\u3044\u308B\u304B\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044\u3002";
+      default:
+        return c ? `\u72B6\u614B\u30B3\u30FC\u30C9: ${c}` : "\u72B6\u614B\u3092\u53D6\u5F97\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002";
+    }
+  }
+  function formatStoryAvatarDiagLine(s) {
+    const total = typeof s.total === "number" && s.total > 0 ? s.total : 0;
+    if (total <= 0) return null;
+    let line = `\u8A3A\u65AD(\u6280\u8853): \u4FDD\u5B58\u30A2\u30A4\u30B3\u30F3URL ${s.withAvatar}/${s.total}\uFF08\u7A2E\u985E ${s.uniqueAvatar}\uFF09 / \u8868\u793A\u306B\u4F7F\u3048\u305F\u30A2\u30A4\u30B3\u30F3 ${s.resolvedAvatar}/${s.total}\uFF08\u7A2E\u985E ${s.resolvedUniqueAvatar}\uFF09 / \u30E6\u30FC\u30B6\u30FCID ${s.withUid}/${s.total} / \u81EA\u5206\u306E\u6295\u7A3F \u8868\u793A${s.selfShown}\u4EF6\uFF08\u4FDD\u5B58\u6E08${s.selfSaved}, \u5F85\u3061${s.selfPending}, \u4E00\u81F4${s.selfPendingMatched}\uFF09 / \u30DA\u30FC\u30B8\u304B\u3089\u62FE\u3063\u305F\u88DC\u52A9 ${s.interceptItems}\u4EF6\uFF08ID${s.interceptWithUid}, \u30A2\u30A4\u30B3\u30F3${s.interceptWithAvatar}\uFF09 / \u5F8C\u304B\u3089\u88DC\u5B8C ${s.mergedPatched}\u4EF6`;
+    if (s.mergedUidReplaced > 0) {
+      line += `\uFF08ID\u5DEE\u3057\u66FF\u3048 ${s.mergedUidReplaced}\uFF09`;
+    }
+    if (s.stripped > 0) {
+      line += ` / \u4E0D\u6574\u5408\u9664\u53BB ${s.stripped}\u4EF6`;
+    }
+    const mapOn = typeof s.interceptMapOnPage === "number" && s.interceptMapOnPage >= 0 ? String(s.interceptMapOnPage) : "\u2014";
+    const exportRows = typeof s.interceptExportRows === "number" && s.interceptExportRows >= 0 ? s.interceptExportRows : null;
+    const exCode = String(s.interceptExportCode || "").trim();
+    const exDetail = String(s.interceptExportDetail || "").trim().slice(0, 72);
+    if (mapOn !== "\u2014" || exportRows != null || exCode) {
+      line += ` / \u30DA\u30FC\u30B8\u5185\u306E\u4E00\u6642\u5BFE\u5FDC\u8868 ${mapOn}\u4EF6`;
+      if (exportRows != null) line += `\u30FB\u76F4\u8FD1\u306E\u53D6\u308A\u8FBC\u307F ${exportRows}\u884C`;
+      if (exCode) line += ` [${exCode}]`;
+      if (exDetail) line += ` (${exDetail})`;
+    }
+    return line;
+  }
+  function buildStoryAvatarDiagHtml(s) {
+    const total = typeof s.total === "number" && s.total > 0 ? s.total : 0;
+    if (total <= 0) return null;
+    const leadParts = [];
+    leadParts.push(
+      `\u8A18\u9332\u3057\u3066\u3044\u308B\u5FDC\u63F4\u30B3\u30E1\u30F3\u30C8 <strong>${total}</strong> \u4EF6\u306E\u3046\u3061\u3001\u4E00\u89A7\u3067\u30A2\u30A4\u30B3\u30F3\u307E\u3067\u8868\u793A\u3067\u304D\u3066\u3044\u308B\u306E\u306F <strong>${s.resolvedAvatar}</strong> \u4EF6\u3001\u30E6\u30FC\u30B6\u30FCID\u304C\u4ED8\u3044\u3066\u3044\u308B\u306E\u306F <strong>${s.withUid}</strong> \u4EF6\u3067\u3059\u3002`
+    );
+    if (s.mergedPatched > 0) {
+      leadParts.push(
+        `\u3042\u3068\u304B\u3089\u60C5\u5831\u304C\u8DB3\u308A\u3066\u57CB\u307E\u3063\u305F\u884C\u304C <strong>${s.mergedPatched}</strong> \u4EF6\u3042\u308A\u307E\u3059\u3002`
+      );
+    }
+    if (s.selfShown > 0 || s.selfPending > 0 || s.selfSaved > 0) {
+      leadParts.push(
+        `\u3042\u306A\u305F\u304C\u9001\u3063\u305F\u30B3\u30E1\u30F3\u30C8\u306F\u3001\u753B\u9762\u4E0A <strong>${s.selfShown}</strong> \u4EF6\u30FB\u3053\u306EPC\u306B\u4FDD\u5B58\u6E08\u307F <strong>${s.selfSaved}</strong> \u4EF6\u30FB\u7167\u5408\u5F85\u3061 <strong>${s.selfPending}</strong> \u4EF6\u3067\u3059\u3002`
+      );
+    }
+    if (s.interceptItems > 0) {
+      leadParts.push(
+        `\u8996\u8074\u30DA\u30FC\u30B8\u306E\u901A\u4FE1\u304B\u3089\u62FE\u3063\u305F\u5229\u7528\u8005\u60C5\u5831\uFF08\u30A2\u30A4\u30B3\u30F3\u3084\u540D\u524D\u306E\u88DC\u52A9\uFF09\u304C <strong>${s.interceptItems}</strong> \u4EF6\u5206\u3042\u308A\u307E\u3059\u3002`
+      );
+    }
+    const mapOn = typeof s.interceptMapOnPage === "number" && s.interceptMapOnPage >= 0 ? s.interceptMapOnPage : null;
+    const exCode = String(s.interceptExportCode || "").trim();
+    if (mapOn != null || exCode) {
+      const extra = [];
+      if (mapOn != null) {
+        extra.push(
+          `\u3044\u307E\u306E watch \u30BF\u30D6\u5185\u306E\u300C\u30B3\u30E1\u30F3\u30C8\u756A\u53F7\u3068\u5229\u7528\u8005\u306E\u5BFE\u5FDC\u8868\u300D\u306F <strong>${mapOn}</strong> \u4EF6\u3067\u3059\uFF08\u30BF\u30D6\u3092\u9589\u3058\u308B\u3068\u6D88\u3048\u307E\u3059\uFF09\u3002`
+        );
+      }
+      if (exCode) {
+        extra.push(
+          escapeHtml(
+            interceptExportCodeUserLabel(
+              exCode,
+              String(s.interceptExportDetail || "")
+            )
+          )
+        );
+      }
+      leadParts.push(extra.join(" "));
+    }
+    const technical = formatStoryAvatarDiagLine(s);
+    const glossary = '<ul class="nl-story-diag__list"><li><strong>\u4FDD\u5B58\u30A2\u30A4\u30B3\u30F3</strong>\uFF1A\u3053\u306EPC\u306E\u8A18\u9332\u306B\u3001\u30A2\u30A4\u30B3\u30F3\u306EURL\u3068\u3057\u3066\u6B8B\u3063\u3066\u3044\u308B\u4EF6\u6570\u3067\u3059\u3002</li><li><strong>\u8868\u793A\u30A2\u30A4\u30B3\u30F3</strong>\uFF1A\u30B0\u30EA\u30C3\u30C9\u306A\u3069\u3067\u5B9F\u969B\u306B\u753B\u50CF\u3068\u3057\u3066\u4F7F\u3048\u3066\u3044\u308B\u4EF6\u6570\u3067\u3059\u3002</li><li><strong>\u30DA\u30FC\u30B8\u304B\u3089\u62FE\u3063\u305F\u88DC\u52A9</strong>\uFF1A\u30CB\u30B3\u751F\u306E\u30DA\u30FC\u30B8\u304C\u8AAD\u307F\u53D6\u308B\u901A\u4FE1\u304B\u3089\u3001\u62E1\u5F35\u304C\u5229\u7528\u8005\u8868\u793A\u3092\u88DC\u3046\u305F\u3081\u306B\u4F7F\u3046\u60C5\u5831\u3067\u3059\uFF08\u672C\u6587\u306F\u4FDD\u5B58\u3057\u307E\u305B\u3093\uFF09\u3002</li><li><strong>\u4E00\u6642\u5BFE\u5FDC\u8868</strong>\uFF1A\u958B\u3044\u3066\u3044\u308B watch \u30BF\u30D6\u306E\u30E1\u30E2\u30EA\u4E0A\u3060\u3051\u306B\u3042\u308B\u5BFE\u5FDC\u8868\u3067\u3001\u30AD\u30E3\u30C3\u30B7\u30E5\u3068\u306F\u5225\u3067\u3059\u3002</li></ul>';
+    return `<div class="nl-story-diag"><p class="nl-story-diag__lead">${leadParts.join(" ")}</p><details class="nl-story-diag__more"><summary class="nl-story-diag__summary">\u5185\u8A33\u30FB\u7528\u8A9E\uFF08\u8A73\u3057\u304F\u898B\u308B\uFF09</summary><div class="nl-story-diag__body">` + glossary + (technical ? `<p class="nl-story-diag__technical">${escapeHtml(technical)}</p>` : "") + `</div></details></div>`;
+  }
+
+  // src/lib/commentVelocityWindow.js
+  function countCommentsInWindowMs(entries, nowMs, windowMs) {
+    if (!Array.isArray(entries) || windowMs <= 0) return 0;
+    const now = typeof nowMs === "number" && Number.isFinite(nowMs) ? nowMs : Date.now();
+    const cutoff = now - windowMs;
+    let n = 0;
+    for (const e of entries) {
+      const t = e && typeof e === "object" && typeof e.capturedAt === "number" ? e.capturedAt : 0;
+      if (t >= cutoff && t <= now) n += 1;
+    }
+    return n;
+  }
+  function commentsPerMinuteFromWindow(count, windowMs) {
+    if (windowMs <= 0) return 0;
+    const c = typeof count === "number" && Number.isFinite(count) && count >= 0 ? count : 0;
+    return c * 6e4 / windowMs;
+  }
+
+  // src/lib/broadcastSessionSummaryDb.js
+  var BROADCAST_SUMMARY_DB_NAME = "nls_broadcast_summary_v1";
+  var BROADCAST_SUMMARY_STORE = "samples";
+  var DB_VERSION = 1;
+  var BROADCAST_SUMMARY_MAX_ROWS = 5e3;
+  var BROADCAST_SUMMARY_MAX_PER_LIVE = 200;
+  function openBroadcastSessionSummaryDb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(BROADCAST_SUMMARY_DB_NAME, DB_VERSION);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(BROADCAST_SUMMARY_STORE)) {
+          const s = db.createObjectStore(BROADCAST_SUMMARY_STORE, {
+            keyPath: "id",
+            autoIncrement: true
+          });
+          s.createIndex("byLiveCaptured", ["liveId", "capturedAt"], {
+            unique: false
+          });
+          s.createIndex("byCapturedAt", "capturedAt", { unique: false });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function appendBroadcastSessionSummarySample(db, row) {
+    const lid = String(row.liveId || "").trim().toLowerCase();
+    if (!lid) return;
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(BROADCAST_SUMMARY_STORE, "readwrite");
+      const store = tx.objectStore(BROADCAST_SUMMARY_STORE);
+      const addReq = store.add({ ...row, liveId: lid });
+      addReq.onerror = () => reject(addReq.error);
+      addReq.onsuccess = () => resolve(void 0);
+      tx.oncomplete = () => resolve(void 0);
+      tx.onerror = () => reject(tx.error);
+    });
+    await pruneBroadcastSessionSummaryForLive(db, lid);
+    await pruneBroadcastSessionSummaryGlobal(db);
+  }
+  async function listBroadcastSessionSummaryForLive(db, liveId, limit) {
+    const lid = String(liveId || "").trim().toLowerCase();
+    if (!lid) return [];
+    const lim = typeof limit === "number" && Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 30;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(BROADCAST_SUMMARY_STORE, "readonly");
+      const store = tx.objectStore(BROADCAST_SUMMARY_STORE);
+      const idx = store.index("byLiveCaptured");
+      const range = IDBKeyRange.bound([lid, 0], [lid, Number.MAX_SAFE_INTEGER]);
+      const req = idx.openCursor(range, "prev");
+      const out = [];
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        const cur = req.result;
+        if (!cur || out.length >= lim) {
+          resolve(out);
+          return;
+        }
+        out.push(
+          /** @type {BroadcastSessionSummaryRow} */
+          cur.value
+        );
+        cur.continue();
+      };
+    });
+  }
+  async function pruneBroadcastSessionSummaryForLive(db, liveId) {
+    const lid = String(liveId || "").trim().toLowerCase();
+    if (!lid) return;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(BROADCAST_SUMMARY_STORE, "readwrite");
+      const store = tx.objectStore(BROADCAST_SUMMARY_STORE);
+      const idx = store.index("byLiveCaptured");
+      const range = IDBKeyRange.bound([lid, 0], [lid, Number.MAX_SAFE_INTEGER]);
+      const req = idx.openCursor(range, "next");
+      const all = [];
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => {
+        const cur = req.result;
+        if (cur) {
+          all.push(
+            /** @type {BroadcastSessionSummaryRow} */
+            cur.value
+          );
+          cur.continue();
+          return;
+        }
+        if (all.length <= BROADCAST_SUMMARY_MAX_PER_LIVE) {
+          resolve(void 0);
+          return;
+        }
+        all.sort((a, b) => a.capturedAt - b.capturedAt);
+        const drop = all.length - BROADCAST_SUMMARY_MAX_PER_LIVE;
+        for (let i = 0; i < drop; i += 1) {
+          const id = all[i].id;
+          if (typeof id === "number") store.delete(id);
+        }
+        resolve(void 0);
+      };
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+  async function pruneBroadcastSessionSummaryGlobal(db) {
+    const total = await new Promise((resolve, reject) => {
+      const tx = db.transaction(BROADCAST_SUMMARY_STORE, "readonly");
+      const store = tx.objectStore(BROADCAST_SUMMARY_STORE);
+      const r = store.count();
+      r.onerror = () => reject(r.error);
+      r.onsuccess = () => resolve(r.result);
+    });
+    if (total <= BROADCAST_SUMMARY_MAX_ROWS) return;
+    const toDrop = total - BROADCAST_SUMMARY_MAX_ROWS;
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(BROADCAST_SUMMARY_STORE, "readwrite");
+      const store = tx.objectStore(BROADCAST_SUMMARY_STORE);
+      const idx = store.index("byCapturedAt");
+      const curReq = idx.openCursor();
+      let dropped = 0;
+      curReq.onerror = () => reject(curReq.error);
+      curReq.onsuccess = () => {
+        const cur = curReq.result;
+        if (!cur || dropped >= toDrop) {
+          resolve(void 0);
+          return;
+        }
+        const row = (
+          /** @type {BroadcastSessionSummaryRow} */
+          cur.value
+        );
+        const id = row.id;
+        if (typeof id === "number") {
+          store.delete(id);
+          dropped += 1;
+        }
+        cur.continue();
+      };
+      tx.onerror = () => reject(tx.error);
+    });
+  }
+
+  // src/lib/broadcastSessionSummaryFlush.js
+  var FLUSH_MIN_INTERVAL_MS = 6e4;
+  var lastFlushAt = 0;
+  function peakConcurrentEstimateFromSnapshot(snapshot) {
+    if (!snapshot || typeof snapshot !== "object") return null;
+    const vcRaw = snapshot.viewerCountFromDom;
+    const vc = typeof vcRaw === "number" && Number.isFinite(vcRaw) && vcRaw >= 0 ? vcRaw : void 0;
+    const recentActive = typeof snapshot.recentActiveUsers === "number" ? snapshot.recentActiveUsers : 0;
+    const officialVcRaw = snapshot.officialViewerCount;
+    const officialVc = typeof officialVcRaw === "number" && Number.isFinite(officialVcRaw) ? officialVcRaw : void 0;
+    const liveIdStr = typeof snapshot.liveId === "string" ? snapshot.liveId : "";
+    const show = shouldShowConcurrentEstimate({
+      recentActiveUsers: recentActive,
+      officialViewerCount: officialVc,
+      viewerCountFromDom: vc,
+      liveId: liveIdStr
+    });
+    if (!show) return null;
+    const streamAge = typeof snapshot.streamAgeMin === "number" && snapshot.streamAgeMin >= 0 ? snapshot.streamAgeMin : void 0;
+    const resolved = resolveConcurrentViewers({
+      nowMs: Date.now(),
+      officialViewers: typeof snapshot.officialViewerCount === "number" && Number.isFinite(snapshot.officialViewerCount) ? snapshot.officialViewerCount : void 0,
+      officialUpdatedAtMs: typeof snapshot.officialStatsUpdatedAt === "number" && Number.isFinite(snapshot.officialStatsUpdatedAt) ? snapshot.officialStatsUpdatedAt : void 0,
+      officialViewerIntervalMs: typeof snapshot.officialViewerIntervalMs === "number" && Number.isFinite(snapshot.officialViewerIntervalMs) && snapshot.officialViewerIntervalMs > 0 ? snapshot.officialViewerIntervalMs : void 0,
+      previousStatisticsComments: typeof snapshot.officialCommentCount === "number" && Number.isFinite(snapshot.officialCommentCount) && typeof snapshot.officialStatisticsCommentsDelta === "number" && Number.isFinite(snapshot.officialStatisticsCommentsDelta) ? Math.max(
+        0,
+        snapshot.officialCommentCount - snapshot.officialStatisticsCommentsDelta
+      ) : void 0,
+      currentStatisticsComments: typeof snapshot.officialCommentCount === "number" && Number.isFinite(snapshot.officialCommentCount) ? snapshot.officialCommentCount : void 0,
+      receivedCommentsDelta: typeof snapshot.officialReceivedCommentsDelta === "number" && Number.isFinite(snapshot.officialReceivedCommentsDelta) ? snapshot.officialReceivedCommentsDelta : void 0,
+      recentActiveUsers: recentActive,
+      totalVisitors: vc != null && vc > 0 ? vc : void 0,
+      streamAgeMin: streamAge
+    });
+    const est = resolved?.estimated;
+    return typeof est === "number" && Number.isFinite(est) ? Math.round(est) : null;
+  }
+  async function maybeFlushBroadcastSessionSummarySample(input) {
+    if (typeof indexedDB === "undefined") return;
+    const lid = String(input.liveId || "").trim().toLowerCase();
+    if (!lid) return;
+    const now = Date.now();
+    if (now - lastFlushAt < FLUSH_MIN_INTERVAL_MS) return;
+    lastFlushAt = now;
+    const comments = Array.isArray(input.comments) ? input.comments : [];
+    const st = summarizeRecordedCommenters(comments);
+    let giftUserCount = 0;
+    try {
+      if (typeof chrome !== "undefined" && chrome.storage?.local?.get) {
+        const bag = await chrome.storage.local.get(giftUsersStorageKey(lid));
+        const key = giftUsersStorageKey(lid);
+        const raw = bag[key];
+        giftUserCount = Array.isArray(raw) ? raw.length : 0;
+      }
+    } catch {
+      giftUserCount = 0;
+    }
+    const snap = input.snapshot;
+    const oc = snap && typeof snap.officialCommentCount === "number" ? snap.officialCommentCount : null;
+    const ov = snap && typeof snap.officialViewerCount === "number" ? snap.officialViewerCount : null;
+    let officialCaptureRatio = null;
+    if (snap && snap.officialCaptureRatio != null) {
+      const r = Number(snap.officialCaptureRatio);
+      if (Number.isFinite(r)) officialCaptureRatio = r;
+    }
+    const row = {
+      liveId: lid,
+      capturedAt: now,
+      watchUrl: String(input.watchUrl || "").trim(),
+      recording: Boolean(input.recording),
+      commentStorageCount: comments.length,
+      uniqueKnownCommenters: st.uniqueKnownUserIds,
+      giftUserCount,
+      peakConcurrentEstimate: peakConcurrentEstimateFromSnapshot(snap),
+      officialCommentCount: oc,
+      officialViewerCount: ov,
+      officialCaptureRatio
+    };
+    let db;
+    try {
+      db = await openBroadcastSessionSummaryDb();
+      await appendBroadcastSessionSummarySample(db, row);
+    } catch {
+    } finally {
+      try {
+        db?.close();
+      } catch {
+      }
+    }
   }
 
   // src/extension/popup-entry.js
@@ -1041,25 +2759,38 @@
       return false;
     }
   })();
+  var INLINE_EMBED_WATCH = (() => {
+    if (!INLINE_MODE) return false;
+    try {
+      return new URLSearchParams(window.location.search).get("dock") !== "sidepanel";
+    } catch {
+      return true;
+    }
+  })();
+  var INLINE_SIDE_PANEL = (() => {
+    if (!INLINE_MODE) return false;
+    try {
+      return new URLSearchParams(window.location.search).get("dock") === "sidepanel";
+    } catch {
+      return false;
+    }
+  })();
   function applyResponsivePopupLayout() {
     const root = document.documentElement;
     const body = document.body;
     if (!root || !body) return;
     root.classList.toggle("nl-inline", INLINE_MODE);
     body.classList.toggle("nl-inline", INLINE_MODE);
+    root.classList.toggle("nl-inline-embed-watch", INLINE_EMBED_WATCH);
+    body.classList.toggle("nl-inline-embed-watch", INLINE_EMBED_WATCH);
+    root.classList.toggle("nl-skin-panel-dark", !INLINE_MODE || INLINE_SIDE_PANEL);
+    body.classList.toggle("nl-skin-panel-dark", !INLINE_MODE || INLINE_SIDE_PANEL);
     if (INLINE_MODE) {
-      const width2 = Math.max(640, Math.round(window.innerWidth || 640));
-      const header2 = (
-        /** @type {HTMLElement|null} */
-        document.querySelector(".nl-header")
-      );
-      const main2 = (
-        /** @type {HTMLElement|null} */
-        document.querySelector(".nl-main")
-      );
-      const contentHeight2 = header2 && main2 ? Math.ceil(header2.scrollHeight + main2.scrollHeight + 6) : 760;
-      const height2 = Math.max(720, Math.min(1400, contentHeight2));
-      const baseFont2 = width2 >= 1600 ? 17.25 : width2 >= 1200 ? 16.5 : width2 >= 900 ? 15.75 : 15;
+      const iw = Math.round(window.innerWidth || 360);
+      const ih = Math.round(window.innerHeight || 400);
+      const width2 = Math.max(260, iw);
+      const height2 = Math.max(180, ih);
+      const baseFont2 = width2 >= 900 ? 15.5 : width2 >= 720 ? 15.25 : width2 >= 520 ? 15 : 14.5;
       root.style.setProperty("--nl-pop-width", `${width2}px`);
       root.style.setProperty("--nl-pop-height", `${height2}px`);
       root.style.setProperty("--nl-base-font", `${baseFont2}px`);
@@ -1149,6 +2880,7 @@
     /** @type {number|null} */
     null
   );
+  var _lastTopSupportRankStripStableKey = null;
   function setCountDisplay(value, watchSnapshot = null) {
     const countEl = $("count");
     if (countEl) {
@@ -1165,10 +2897,21 @@
       const oc = watchSnapshot?.officialCommentCount;
       if (typeof oc === "number" && Number.isFinite(oc) && oc >= 0) {
         officialEl.hidden = false;
-        officialEl.textContent = `\u516C\u5F0F ${oc.toLocaleString("ja-JP")} \u4EF6`;
+        const recorded = parseInt(value, 10);
+        let line = `\u516C\u5F0F ${oc.toLocaleString("ja-JP")} \u4EF6`;
+        if (!Number.isNaN(recorded) && recorded >= 0 && oc > 0) {
+          if (recorded <= oc) {
+            line += ` \xB7 \u8A18\u9332\u306F\u516C\u5F0F\u306E\u7D04${Math.round(recorded / oc * 100)}%`;
+          } else {
+            line += " \xB7 \u8A18\u9332\u304C\u5148\u884C\uFF08\u516C\u5F0F\u8868\u793A\u306E\u66F4\u65B0\u5F85\u3061\u306E\u3053\u3068\u304C\u3042\u308A\u307E\u3059\uFF09";
+          }
+        }
+        officialEl.textContent = line;
+        officialEl.title = "\u516C\u5F0F\u306F\u30CB\u30B3\u751F\u304C\u8868\u793A\u3059\u308B\u7D2F\u8A08\u30B3\u30E1\u30F3\u30C8\u4EF6\u6570\u3067\u3059\u3002\u5DE6\u306E\u5927\u304D\u3044\u6570\u5B57\u306F\u3001\u3053\u306EPC\u306E\u30B9\u30C8\u30EC\u30FC\u30B8\u306B\u6B8B\u3063\u3066\u3044\u308B\u884C\u6570\u3060\u3051\u3067\u3059\u3002\u30B3\u30E1\u30F3\u30C8\u6B04\u306F\u4EEE\u60F3\u30EA\u30B9\u30C8\u306E\u305F\u3081\u753B\u9762\u4E0A\u306B\u8F09\u3063\u3066\u3044\u308B\u884C\u3057\u304B\u53D6\u308A\u8FBC\u3081\u305A\u3001\u8A18\u9332OFF\u306E\u6642\u9593\u30FB\u30DA\u30FC\u30B8\u975E\u8868\u793A\u30FB\u30BF\u30A4\u30E0\u30B7\u30D5\u30C8\u958B\u59CB\u524D\u30FB\u30B7\u30B9\u30C6\u30E0\u884C\u306E\u6271\u3044\u306E\u5DEE\u3067\u3082\u4EF6\u6570\u306F\u4E26\u3073\u307E\u305B\u3093\u3002";
       } else {
         officialEl.hidden = true;
         officialEl.textContent = "";
+        officialEl.removeAttribute("title");
       }
     }
     const num = parseInt(value, 10);
@@ -1334,6 +3077,126 @@
     key: "",
     snapshot: null
   };
+  var watchPopupRefreshGeneration = 0;
+  function markPopupRefreshContentPainted() {
+    try {
+      document.documentElement.setAttribute("data-nl-popup-content-painted", "1");
+    } catch {
+    }
+  }
+  function hideCommentVelocityLine() {
+    const el = $("commentVelocityLine");
+    if (!el) return;
+    el.setAttribute("hidden", "");
+    el.textContent = "";
+  }
+  function updateCommentVelocityLine(displayEntries) {
+    const el = $("commentVelocityLine");
+    if (!el) return;
+    const windowMs = 6e4;
+    const now = Date.now();
+    const list = Array.isArray(displayEntries) ? displayEntries : [];
+    const n = countCommentsInWindowMs(list, now, windowMs);
+    if (n <= 0) {
+      el.setAttribute("hidden", "");
+      el.textContent = "";
+      return;
+    }
+    el.removeAttribute("hidden");
+    const perMin = commentsPerMinuteFromWindow(n, windowMs);
+    el.textContent = `\u76F4\u8FD11\u5206: \u7D04 ${perMin.toFixed(1)} \u4EF6/\u5206\uFF08${n}\u4EF6\uFF09`;
+  }
+  async function renderSessionSummaryComparePanel(liveId) {
+    const mount = $("sessionSummaryCompareMount");
+    if (!mount) return;
+    const lid = String(liveId || "").trim().toLowerCase();
+    if (!lid || typeof indexedDB === "undefined") {
+      mount.innerHTML = '<p class="nl-sub">\u8996\u8074\u30DA\u30FC\u30B8\u3092\u958B\u304F\u3068\u3001\u3053\u3053\u306B\u30B5\u30DE\u30EA\u306E\u63A8\u79FB\u304C\u51FA\u307E\u3059\u3002</p>';
+      return;
+    }
+    let db;
+    try {
+      db = await openBroadcastSessionSummaryDb();
+      const rows = await listBroadcastSessionSummaryForLive(db, lid, 24);
+      if (!rows.length) {
+        mount.innerHTML = '<p class="nl-sub">\u307E\u3060\u30B5\u30F3\u30D7\u30EB\u304C\u3042\u308A\u307E\u305B\u3093\uFF08\u66F4\u65B0\u304C\u9032\u3080\u3068\u6E9C\u307E\u308A\u307E\u3059\uFF09\u3002</p>';
+        return;
+      }
+      const header = '<table class="nl-session-summary-table"><thead><tr><th>\u6642\u523B</th><th>\u8A18\u9332\u30B3\u30E1\u30F3\u30C8</th><th>\u30E6\u30CB\u30FC\u30AFUID</th><th>\u30AE\u30D5\u30C8\u30E6\u30FC\u30B6\u30FC</th><th>\u540C\u63A5\u63A8\u5B9A</th><th>\u516C\u5F0F\u30B3\u30E1</th></tr></thead><tbody>';
+      const body = rows.map((r) => {
+        const t = new Date(r.capturedAt).toLocaleString("ja-JP");
+        const peak = r.peakConcurrentEstimate != null && Number.isFinite(r.peakConcurrentEstimate) ? String(r.peakConcurrentEstimate) : "\u2014";
+        const oc = r.officialCommentCount != null && Number.isFinite(r.officialCommentCount) ? String(r.officialCommentCount) : "\u2014";
+        return `<tr><td>${escapeHtml(t)}</td><td>${r.commentStorageCount}</td><td>${r.uniqueKnownCommenters}</td><td>${r.giftUserCount}</td><td>${escapeHtml(peak)}</td><td>${escapeHtml(oc)}</td></tr>`;
+      }).join("");
+      mount.innerHTML = `${header}${body}</tbody></table>`;
+    } catch {
+      mount.innerHTML = '<p class="nl-sub">IndexedDB \u306E\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002</p>';
+    } finally {
+      try {
+        db?.close();
+      } catch {
+      }
+    }
+  }
+  async function renderGiftQuickStatsPanel(liveId) {
+    const mount = $("giftQuickStatsMount");
+    if (!mount) return;
+    const lid = String(liveId || "").trim().toLowerCase();
+    if (!lid) {
+      mount.innerHTML = "";
+      return;
+    }
+    try {
+      const gk = giftUsersStorageKey(lid);
+      const bag = await chrome.storage.local.get(gk);
+      const raw = bag[gk];
+      const users = Array.isArray(raw) ? raw : [];
+      if (!users.length) {
+        mount.innerHTML = '<p class="nl-sub">\u307E\u3060\u30AE\u30D5\u30C8\u30FB\u5E83\u544A\u30E6\u30FC\u30B6\u30FC\u304C\u8A18\u9332\u3055\u308C\u3066\u3044\u307E\u305B\u3093\u3002</p>';
+        return;
+      }
+      const sorted = [...users].sort(
+        (a, b) => (b.capturedAt || 0) - (a.capturedAt || 0)
+      );
+      const top = sorted.slice(0, 15);
+      mount.innerHTML = `<p class="nl-sub">${users.length} \u540D\u3092\u8A18\u9332\u4E2D\uFF08\u76F4\u8FD1\u9806\u306B\u6700\u592715\u4EF6\uFF09</p><ul class="nl-gift-quick-list">` + top.map((u) => {
+        const nick = escapeHtml(String(u.nickname || "").trim() || "(noname)");
+        const uid = escapeHtml(String(u.userId || "").trim());
+        return `<li><span class="nl-gift-nick">${nick}</span> <code class="nl-gift-uid">${uid}</code></li>`;
+      }).join("") + "</ul>";
+    } catch {
+      mount.textContent = "\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002";
+    }
+  }
+  async function downloadSessionSummaryJson(liveId) {
+    const lid = String(liveId || "").trim().toLowerCase();
+    if (!lid || typeof indexedDB === "undefined") return;
+    let db;
+    try {
+      db = await openBroadcastSessionSummaryDb();
+      const rows = await listBroadcastSessionSummaryForLive(db, lid, 500);
+      const json = JSON.stringify(rows, null, 2);
+      const blob = new Blob([json], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      try {
+        await chrome.downloads.download({
+          url,
+          filename: `nicolivelog-session-summary-${lid}-${Date.now()}.json`,
+          saveAs: true,
+          conflictAction: "uniquify"
+        });
+      } finally {
+        window.setTimeout(() => URL.revokeObjectURL(url), 6e4);
+      }
+    } catch {
+    } finally {
+      try {
+        db?.close();
+      } catch {
+      }
+    }
+  }
   var INTERCEPT_BACKFILL_STATE = {
     liveId: "",
     deepTried: false
@@ -1641,9 +3504,22 @@
   }
   var STORY_RINK_FACE_IMG = "images/toumeilink.png";
   var STORY_GRID_DEFAULT_TILE_IMG = "images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-closed.png";
-  var STORY_REMOTE_FAILED_PLACEHOLDER_IMG = "images/nico-retro-tv-placeholder.svg";
+  var STORY_GUIDE_FACE_RINK = "images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-closed.png";
+  var STORY_GUIDE_FACE_KONTA = "images/yukkuri-charactore-english/konta/kitsune-yukkuri-half-eyes-mouth-closed.png";
+  var STORY_GUIDE_FACE_TANU = "images/yukkuri-charactore-english/tanunee/tanuki-yukkuri-half-eyes-mouth-closed.png";
+  var STORY_REMOTE_FAILED_PLACEHOLDER_IMG = NICONICO_OFFICIAL_DEFAULT_USERICON_HTTPS;
+  function storyTileUsesYukkuriTvStyle(requestedSrc, displaySrc) {
+    const r = String(requestedSrc || "");
+    const d = String(displaySrc || "");
+    return r.includes("yukkuri-charactore-english") || d.includes("yukkuri-charactore-english");
+  }
   function applyStoryAvatarTvFallbackClass(img) {
     if (!(img instanceof HTMLImageElement)) return;
+    try {
+      const s = String(img.currentSrc || img.src || "");
+      if (/nicoaccount\/usericon\/defaults\//i.test(s)) return;
+    } catch {
+    }
     if (img.classList.contains("nl-story-userlane-avatar")) {
       img.classList.add("nl-avatar--tv-fallback");
       return;
@@ -1713,9 +3589,8 @@
     SELF_POST_MATCH_CACHE.matchedIds = matchedIds;
     return matchedIds;
   }
-  async function loadSelfPostedRecentsIntoCache() {
+  function applySelfPostedRecentsFromBag(bag) {
     try {
-      const bag = await chrome.storage.local.get(KEY_SELF_POSTED_RECENTS);
       const raw = bag[KEY_SELF_POSTED_RECENTS];
       const items = raw && typeof raw === "object" && Array.isArray(raw.items) ? raw.items : [];
       const now = Date.now();
@@ -1794,16 +3669,97 @@
     }
     return false;
   }
+  var popupUserCommentProfileMap = (
+    /** @type {null|Record<string, { nickname?: string, avatarUrl?: string, updatedAt: number }>} */
+    null
+  );
+  function popupMergeUserCommentProfileCache(arr) {
+    if (!popupUserCommentProfileMap) {
+      return { arr, commentsPatched: false, cacheTouched: false };
+    }
+    let cacheTouched = false;
+    for (const e of arr) {
+      if (upsertUserCommentProfileFromEntry(popupUserCommentProfileMap, e)) {
+        cacheTouched = true;
+      }
+    }
+    const ap = applyUserCommentProfileMapToEntries(arr, popupUserCommentProfileMap);
+    const nextArr = ap.patched > 0 ? ap.next : arr;
+    const beforeK = Object.keys(popupUserCommentProfileMap).length;
+    popupUserCommentProfileMap = pruneUserCommentProfileMap(popupUserCommentProfileMap);
+    if (Object.keys(popupUserCommentProfileMap).length !== beforeK) {
+      cacheTouched = true;
+    }
+    return {
+      arr: nextArr,
+      commentsPatched: ap.patched > 0,
+      cacheTouched
+    };
+  }
+  async function runDeferredUserCommentProfileHydrate(ctx) {
+    const { refreshGen, commentsKey, getArr, setArr, paint } = ctx;
+    try {
+      if (!hasExtensionContext()) return;
+      if (refreshGen !== watchPopupRefreshGeneration) return;
+      const bag = await readStorageBagWithRetry(
+        () => chrome.storage.local.get(KEY_USER_COMMENT_PROFILE_CACHE),
+        { attempts: 4, delaysMs: [0, 60, 150, 300] }
+      );
+      if (refreshGen !== watchPopupRefreshGeneration) return;
+      if (!popupUserCommentProfileMap) return;
+      const late = normalizeUserCommentProfileMap(
+        bag[KEY_USER_COMMENT_PROFILE_CACHE]
+      );
+      if (!Object.keys(late).length) return;
+      const hydrated = hydrateUserCommentProfileMapFromStorage(
+        popupUserCommentProfileMap,
+        late
+      );
+      if (!hydrated) return;
+      const prof = popupMergeUserCommentProfileCache(getArr());
+      setArr(prof.arr);
+      const save = {};
+      if (prof.commentsPatched) save[commentsKey] = prof.arr;
+      if (prof.cacheTouched || hydrated) {
+        save[KEY_USER_COMMENT_PROFILE_CACHE] = popupUserCommentProfileMap;
+      }
+      if (Object.keys(save).length) {
+        await storageSetSafe(save);
+      }
+      if (refreshGen !== watchPopupRefreshGeneration) return;
+      paint();
+    } catch (e) {
+      if (isExtensionContextInvalidatedError(e)) return;
+    }
+  }
+  function scheduleDeferredUserCommentProfileHydrate(ctx) {
+    const run = () => {
+      void runDeferredUserCommentProfileHydrate(ctx);
+    };
+    if (typeof requestIdleCallback === "function") {
+      requestIdleCallback(run, { timeout: 900 });
+    } else {
+      setTimeout(run, 200);
+    }
+  }
   function rememberedAvatarUrlForUserId(userId) {
     const uid = String(userId || "").trim();
     if (!uid) return "";
+    const fromCache = String(
+      popupUserCommentProfileMap?.[uid]?.avatarUrl || ""
+    ).trim();
+    if (fromCache && isHttpOrHttpsUrl(fromCache) && !isWeakNiconicoUserIconHttpUrl(fromCache)) {
+      return fromCache;
+    }
     const list = STORY_SOURCE_STATE?.entries;
     if (!Array.isArray(list) || list.length === 0) return "";
     for (let i = list.length - 1; i >= 0; i -= 1) {
       const e = list[i];
       if (String(e?.userId || "").trim() !== uid) continue;
       const av = String(e?.avatarUrl || "").trim();
-      if (isHttpOrHttpsUrl(av)) return av;
+      if (av && isHttpOrHttpsUrl(av) && !isWeakNiconicoUserIconHttpUrl(av)) {
+        return av;
+      }
     }
     return "";
   }
@@ -2032,7 +3988,70 @@
     return isHttpOrHttpsUrl(src) ? src : "";
   }
   function storyGrowthTileSrcForEntry(entry, liveId, entries = STORY_SOURCE_STATE.entries) {
-    return storyGrowthAvatarSrcCandidate(entry, liveId, entries) || STORY_GRID_DEFAULT_TILE_IMG;
+    const candidate = storyGrowthAvatarSrcCandidate(entry, liveId, entries);
+    if (candidate) return candidate;
+    return pickSupportGrowthFallbackTileSrc(
+      entry?.userId,
+      "",
+      STORY_GRID_DEFAULT_TILE_IMG,
+      STORY_REMOTE_FAILED_PLACEHOLDER_IMG
+    );
+  }
+  function userLaneProfileCompletenessTier(entry, httpCandidate) {
+    const uid = String(entry?.userId || "").trim();
+    if (!uid) return 0;
+    const nick = String(entry?.nickname || "").trim();
+    const rawAv = String(entry?.avatarUrl || "").trim();
+    const t = supportGridDisplayTier({
+      userId: uid,
+      nickname: nick,
+      httpAvatarCandidate: httpCandidate,
+      storedAvatarUrl: rawAv
+    });
+    if (t === SUPPORT_GRID_TIER_RINK) return 3;
+    if (t === SUPPORT_GRID_TIER_KONTA) return 2;
+    return 1;
+  }
+  function storyUserLaneMetaLines(entry, httpCandidate, userLaneDedupeKey2 = "") {
+    const uid = String(entry?.userId || "").trim();
+    const nick = String(entry?.nickname || "").trim();
+    const hasHttp = isHttpOrHttpsUrl(httpCandidate);
+    const dk = String(userLaneDedupeKey2 || "");
+    if (!uid) {
+      if (dk.startsWith("t:")) {
+        return {
+          idLine: "\u2014",
+          nameLine: "\u30E6\u30FC\u30B6\u30FCID\u672A\u53D6\u5F97\uFF08\u30B5\u30E0\u30CDURL\u3067\u533A\u5225\uFF09"
+        };
+      }
+      if (dk.startsWith("s:")) {
+        return {
+          idLine: "\u2014",
+          nameLine: "\u30E6\u30FC\u30B6\u30FCID\u672A\u53D6\u5F97\uFF08\u884CID\u3067\u533A\u5225\uFF09"
+        };
+      }
+      return { idLine: "\u2014", nameLine: "ID\u672A\u53D6\u5F97" };
+    }
+    if (isAnonymousStyleNicoUserId(uid)) {
+      const idLine2 = compactNicoLaneUserId(uid);
+      const nameLine = anonymousNicknameFallback(uid, nick);
+      return {
+        idLine: idLine2 || "\u2014",
+        nameLine: nameLine || "\u2014"
+      };
+    }
+    const idLine = shortUserKeyDisplay(uid) || uid;
+    const numeric = /^\d{5,14}$/.test(uid);
+    if (numeric && hasHttp && nick) {
+      return { idLine, nameLine: nick };
+    }
+    if (numeric && !nick) {
+      return { idLine, nameLine: "\uFF08\u672A\u53D6\u5F97\uFF09" };
+    }
+    if (nick) {
+      return { idLine, nameLine: nick };
+    }
+    return { idLine, nameLine: "\uFF08\u672A\u53D6\u5F97\uFF09" };
   }
   var STORY_HOP_STATE = {
     clearTimer: (
@@ -2209,6 +4228,10 @@
       []
     )
   };
+  var lastDevMonitorPanelParams = (
+    /** @type {null|object} */
+    null
+  );
   var STORY_AVATAR_DIAG_STATE = {
     total: 0,
     withUid: 0,
@@ -2225,8 +4248,17 @@
     interceptWithAvatar: 0,
     mergedPatched: 0,
     mergedUidReplaced: 0,
-    stripped: 0
+    stripped: 0,
+    /** watch ページ content の interceptedUsers サイズ（スナップショット _debug.intercept）。未取得は -1 */
+    interceptMapOnPage: -1,
+    /** 直近の NLS_EXPORT_INTERCEPT_CACHE 成功時の export 行数（マージ前の配列長） */
+    interceptExportRows: 0,
+    /** 直近 export 試行の理由コード（no_watch_tab / export_rejected / message_failed / ok_empty / ok 等） */
+    interceptExportCode: "",
+    /** export 失敗時の短い補足（PII なし） */
+    interceptExportDetail: ""
   };
+  var storyUserLaneLastRenderSig = "";
   function commentStableId(entry) {
     return popupEntryStableId(entry);
   }
@@ -2377,96 +4409,293 @@
       renderStoryCommentDetailPanel();
     });
   }
+  function storyUserLaneRenderSignature(liveId, colorScheme, picked, sourceEntryCount) {
+    const lid = String(liveId || "").trim().toLowerCase();
+    const scheme = String(colorScheme || "light");
+    if (!picked.length) {
+      const n = Math.max(0, Math.floor(Number(sourceEntryCount) || 0));
+      return `${lid}|${scheme}|0|src:${n}`;
+    }
+    const parts = picked.map((p) => {
+      const sid = commentStableId(p.entry);
+      return [
+        sid,
+        p.displaySrc,
+        p.meta.idLine,
+        p.meta.nameLine,
+        String(p.profileTier)
+      ].join("");
+    });
+    return `${lid}|${scheme}|${picked.length}${parts.join("")}`;
+  }
   function renderStoryUserLane() {
-    const lane = (
+    const stack = (
       /** @type {HTMLElement|null} */
-      $("sceneStoryUserLane")
+      $("sceneStoryUserLaneStack")
     );
-    const guide = (
+    const laneRink = (
       /** @type {HTMLElement|null} */
-      $("sceneStoryUserLaneGuide")
+      $("sceneStoryUserLaneRink")
     );
-    const guideBubble = $("sceneStoryUserLaneGuideBubble");
-    if (!lane) return;
+    const laneKonta = (
+      /** @type {HTMLElement|null} */
+      $("sceneStoryUserLaneKonta")
+    );
+    const laneTanu = (
+      /** @type {HTMLElement|null} */
+      $("sceneStoryUserLaneTanu")
+    );
+    const hintRink = (
+      /** @type {HTMLElement|null} */
+      $("sceneStoryUserLaneRinkHint")
+    );
+    const rinkWrap = (
+      /** @type {HTMLElement|null} */
+      $("sceneStoryUserLaneRinkWrap")
+    );
+    const guideTop = (
+      /** @type {HTMLElement|null} */
+      $("sceneStoryUserLaneGuideTop")
+    );
+    const guideLinesTop = (
+      /** @type {HTMLElement|null} */
+      $("sceneStoryUserLaneGuideLinesTop")
+    );
+    const guideMidKonta = (
+      /** @type {HTMLElement|null} */
+      $("sceneStoryUserLaneGuideMidKonta")
+    );
+    const guideLinesMidKonta = (
+      /** @type {HTMLElement|null} */
+      $("sceneStoryUserLaneGuideLinesMidKonta")
+    );
+    const guideMidTanu = (
+      /** @type {HTMLElement|null} */
+      $("sceneStoryUserLaneGuideMidTanu")
+    );
+    const guideLinesMidTanu = (
+      /** @type {HTMLElement|null} */
+      $("sceneStoryUserLaneGuideLinesMidTanu")
+    );
+    const guideBottom = (
+      /** @type {HTMLElement|null} */
+      $("sceneStoryUserLaneGuideBottom")
+    );
+    const guideLinesBottom = (
+      /** @type {HTMLElement|null} */
+      $("sceneStoryUserLaneGuideLinesBottom")
+    );
+    if (!stack || !laneRink || !laneKonta || !laneTanu) return;
+    const clearMidGuides = () => {
+      if (guideMidKonta) guideMidKonta.hidden = true;
+      if (guideLinesMidKonta) guideLinesMidKonta.innerHTML = "";
+      if (guideMidTanu) guideMidTanu.hidden = true;
+      if (guideLinesMidTanu) guideLinesMidTanu.innerHTML = "";
+    };
+    const resetLaneTierCells = () => {
+      laneRink.innerHTML = "";
+      laneKonta.innerHTML = "";
+      laneTanu.innerHTML = "";
+      laneRink.hidden = true;
+      laneKonta.hidden = true;
+      laneTanu.hidden = true;
+      if (hintRink) hintRink.hidden = true;
+      if (rinkWrap) rinkWrap.hidden = true;
+    };
+    const hideUserLaneStackFully = () => {
+      resetLaneTierCells();
+      clearMidGuides();
+      stack.hidden = true;
+    };
     const entries = Array.isArray(STORY_SOURCE_STATE.entries) ? STORY_SOURCE_STATE.entries : [];
     if (!entries.length) {
-      lane.innerHTML = "";
-      lane.hidden = true;
-      if (guide) guide.hidden = true;
+      storyUserLaneLastRenderSig = "";
+      hideUserLaneStackFully();
+      if (guideTop) guideTop.hidden = true;
+      if (guideLinesTop) guideLinesTop.innerHTML = "";
+      if (guideBottom) guideBottom.hidden = true;
+      if (guideLinesBottom) guideLinesBottom.innerHTML = "";
       return;
     }
     const limit = INLINE_MODE ? 48 : 24;
-    const picked = [];
     const seen = /* @__PURE__ */ new Set();
     const liveId = String(STORY_SOURCE_STATE.liveId || "");
     const laneScheme = getStoryColorScheme();
-    for (let i = entries.length - 1; i >= 0 && picked.length < limit; i -= 1) {
+    const candidates = [];
+    for (let i = entries.length - 1; i >= 0; i -= 1) {
       const e = entries[i];
+      const uidRaw = String(e?.userId || "").trim();
+      if (!uidRaw) continue;
       const httpCandidate = storyGrowthAvatarSrcCandidate(e, liveId);
       const dedupeKey = userLaneDedupeKey({
-        userId: e?.userId,
-        avatarHttpCandidate: httpCandidate,
-        stableId: commentStableId(e)
+        userId: uidRaw,
+        avatarHttpCandidate: "",
+        stableId: ""
       });
       if (!dedupeKey) continue;
       if (seen.has(dedupeKey)) continue;
       seen.add(dedupeKey);
-      const displaySrc = pickUserLaneDisplayTileSrc(httpCandidate, STORY_GRID_DEFAULT_TILE_IMG);
+      const displaySrc = pickSupportGrowthFallbackTileSrc(
+        e?.userId,
+        httpCandidate,
+        STORY_GRID_DEFAULT_TILE_IMG,
+        STORY_REMOTE_FAILED_PLACEHOLDER_IMG
+      );
       if (!displaySrc) continue;
       const label = storyGrowthDisplayLabel(e, liveId) || "\u30E6\u30FC\u30B6\u30FC";
-      picked.push({ displaySrc, title: label, entry: e });
+      const meta = storyUserLaneMetaLines(e, httpCandidate, dedupeKey);
+      const thumbScore = userLaneResolvedThumbScore(e?.userId, httpCandidate);
+      const profileTier = userLaneProfileCompletenessTier(e, httpCandidate);
+      candidates.push({
+        entryIndex: i,
+        profileTier,
+        thumbScore,
+        displaySrc,
+        title: label,
+        entry: e,
+        meta
+      });
     }
-    lane.innerHTML = "";
-    if (!picked.length) {
-      lane.hidden = true;
-      if (guide) guide.hidden = true;
+    const laneUidSortRank = (uidRaw) => {
+      const s = String(uidRaw || "").trim();
+      if (/^\d{5,14}$/.test(s)) return 0;
+      if (/^a:/i.test(s)) return 1;
+      return 2;
+    };
+    candidates.sort((a, b) => {
+      if (b.profileTier !== a.profileTier) return b.profileTier - a.profileTier;
+      if (b.thumbScore !== a.thumbScore) return b.thumbScore - a.thumbScore;
+      const ua = String(a.entry?.userId || "").trim();
+      const ub = String(b.entry?.userId || "").trim();
+      const ra = laneUidSortRank(ua);
+      const rb = laneUidSortRank(ub);
+      if (ra !== rb) return ra - rb;
+      if (ua !== ub) return ua < ub ? -1 : ua > ub ? 1 : 0;
+      return b.entryIndex - a.entryIndex;
+    });
+    const buckets = bucketStoryUserLanePicks(candidates, limit);
+    const picked = flattenStoryUserLaneBuckets(buckets);
+    const laneSig = storyUserLaneRenderSignature(
+      liveId,
+      laneScheme,
+      picked,
+      entries.length
+    );
+    if (laneSig === storyUserLaneLastRenderSig) {
       return;
     }
-    const frag = document.createDocumentFragment();
-    for (const p of picked) {
-      const cell = document.createElement("span");
-      cell.className = "nl-story-userlane-cell";
-      const img = document.createElement("img");
-      img.className = "nl-story-userlane-avatar";
-      const requestedLane = p.displaySrc;
-      const displayLane = storyAvatarLoadGuard.pickDisplaySrc(requestedLane);
-      img.src = displayLane;
-      storyAvatarLoadGuard.noteRemoteAttempt(img, requestedLane);
-      img.classList.toggle(
-        "nl-avatar--tv-fallback",
-        displayLane === STORY_REMOTE_FAILED_PLACEHOLDER_IMG
-      );
-      img.alt = "";
-      img.title = p.title;
-      img.decoding = "async";
-      if (isHttpOrHttpsUrl(img.src)) {
-        img.referrerPolicy = "no-referrer";
+    storyUserLaneLastRenderSig = laneSig;
+    if (!picked.length) {
+      resetLaneTierCells();
+      stack.hidden = false;
+      if (guideLinesTop) {
+        guideLinesTop.innerHTML = buildStoryUserLaneGuideTopHtml(
+          STORY_GUIDE_FACE_RINK
+        );
       }
-      const stable = commentStableId(p.entry);
-      const requestedTile = storyGrowthTileSrcForEntry(p.entry, liveId);
-      const slot = accentSlotFromSupportEntry(p.entry, {
-        tileSrc: requestedTile,
-        stableId: stable || "",
-        defaultTileSrc: STORY_GRID_DEFAULT_TILE_IMG
-      });
-      const accentCss = slot != null ? accentColorForSlot(slot, laneScheme) : null;
-      if (accentCss) {
-        cell.classList.add("nl-story-userlane-cell--accent");
-        cell.style.setProperty("--nl-user-accent", accentCss);
+      if (guideTop) guideTop.hidden = false;
+      if (guideLinesMidKonta) {
+        guideLinesMidKonta.innerHTML = buildStoryUserLaneGuideKontaHtml(
+          STORY_GUIDE_FACE_KONTA
+        );
       }
-      cell.appendChild(img);
-      frag.appendChild(cell);
+      if (guideMidKonta) guideMidKonta.hidden = false;
+      if (guideLinesMidTanu) {
+        guideLinesMidTanu.innerHTML = buildStoryUserLaneGuideTanuHtml(
+          STORY_GUIDE_FACE_TANU
+        );
+      }
+      if (guideMidTanu) guideMidTanu.hidden = false;
+      if (guideLinesBottom) {
+        guideLinesBottom.innerHTML = buildStoryUserLaneGuideFootHtml(0);
+      }
+      if (guideBottom) guideBottom.hidden = false;
+      return;
     }
-    lane.appendChild(frag);
-    lane.setAttribute(
+    const fillLaneTier = (el, items) => {
+      el.innerHTML = "";
+      if (!items.length) {
+        el.hidden = true;
+        return;
+      }
+      el.hidden = false;
+      const frag = document.createDocumentFragment();
+      for (const p of items) {
+        const cell = document.createElement("span");
+        cell.className = "nl-story-userlane-cell";
+        const img = document.createElement("img");
+        img.className = "nl-story-userlane-avatar";
+        const requestedLane = p.displaySrc;
+        const displayLane = storyAvatarLoadGuard.pickDisplaySrc(requestedLane);
+        img.src = displayLane;
+        storyAvatarLoadGuard.noteRemoteAttempt(img, requestedLane);
+        img.classList.toggle(
+          "nl-avatar--tv-fallback",
+          storyTileUsesYukkuriTvStyle(requestedLane, displayLane)
+        );
+        img.alt = "";
+        const fullUid = String(p.entry?.userId || "").trim();
+        const tip = fullUid && fullUid !== p.meta.idLine ? `${p.title} | ${fullUid}` : p.title;
+        img.title = tip;
+        cell.title = tip;
+        img.decoding = "async";
+        if (isHttpOrHttpsUrl(img.src)) {
+          img.referrerPolicy = "no-referrer";
+        }
+        const metaEl = document.createElement("span");
+        metaEl.className = "nl-story-userlane-meta";
+        const idRow = document.createElement("span");
+        idRow.className = "nl-story-userlane-meta__id";
+        idRow.textContent = p.meta.idLine;
+        const nameRow = document.createElement("span");
+        nameRow.className = "nl-story-userlane-meta__name";
+        nameRow.textContent = p.meta.nameLine;
+        metaEl.appendChild(idRow);
+        metaEl.appendChild(nameRow);
+        cell.appendChild(img);
+        cell.appendChild(metaEl);
+        frag.appendChild(cell);
+      }
+      el.appendChild(frag);
+    };
+    fillLaneTier(laneRink, buckets.rink);
+    fillLaneTier(laneKonta, buckets.konta);
+    fillLaneTier(laneTanu, buckets.tanu);
+    if (hintRink) {
+      const showRinkHint = buckets.rink.length === 0 && (buckets.konta.length > 0 || buckets.tanu.length > 0);
+      hintRink.hidden = !showRinkHint;
+    }
+    if (rinkWrap) {
+      const showRinkWrap = !laneRink.hidden || hintRink && !hintRink.hidden;
+      rinkWrap.hidden = !showRinkWrap;
+    }
+    stack.setAttribute(
       "aria-label",
-      `\u6700\u8FD1\u306E\u5FDC\u63F4\u30E6\u30FC\u30B6\u30FC\u30B5\u30E0\u30CD\u30A4\u30EB ${picked.length}\u4EF6`
+      `\u6700\u8FD1\u306E\u5FDC\u63F4\u30E6\u30FC\u30B6\u30FC\u30B5\u30E0\u30CD\u30A4\u30EB \u5408\u8A08${picked.length}\u4EF6`
     );
-    if (guideBubble) {
-      guideBubble.innerHTML = `\u3053\u3093\u592A: \u3053\u3053\u306F\u8B58\u5225\u3067\u304D\u305F\u5FDC\u63F4\u30E6\u30FC\u30B6\u30FC\u306E\u5217\u3060\u3088 <span class="nl-story-userlane-guide__count">${picked.length}\u4EBA</span>`;
+    stack.hidden = false;
+    if (guideLinesTop) {
+      guideLinesTop.innerHTML = buildStoryUserLaneGuideTopHtml(
+        STORY_GUIDE_FACE_RINK
+      );
     }
-    if (guide) guide.hidden = false;
-    lane.hidden = false;
+    if (guideTop) guideTop.hidden = false;
+    if (guideLinesMidKonta) {
+      guideLinesMidKonta.innerHTML = buildStoryUserLaneGuideKontaHtml(
+        STORY_GUIDE_FACE_KONTA
+      );
+    }
+    if (guideMidKonta) guideMidKonta.hidden = false;
+    if (guideLinesMidTanu) {
+      guideLinesMidTanu.innerHTML = buildStoryUserLaneGuideTanuHtml(
+        STORY_GUIDE_FACE_TANU
+      );
+    }
+    if (guideMidTanu) guideMidTanu.hidden = false;
+    if (guideLinesBottom) {
+      guideLinesBottom.innerHTML = buildStoryUserLaneGuideFootHtml(picked.length);
+    }
+    if (guideBottom) guideBottom.hidden = false;
   }
   function renderStoryAvatarDiag() {
     const el = (
@@ -2474,14 +4703,13 @@
       $("storyAvatarDiag")
     );
     if (!el) return;
-    const s = STORY_AVATAR_DIAG_STATE;
-    const severe = s.total >= 50 && (s.withAvatar <= Math.max(2, Math.floor(s.total * 0.02)) || s.uniqueAvatar <= 2);
-    if (!severe) {
+    const html = buildStoryAvatarDiagHtml(STORY_AVATAR_DIAG_STATE);
+    if (html == null) {
       el.hidden = true;
-      el.textContent = "";
+      el.innerHTML = "";
       return;
     }
-    el.textContent = `\u8A3A\u65AD: avatar\u4FDD\u5B58 ${s.withAvatar}/${s.total}\uFF08\u7A2E\u985E ${s.uniqueAvatar}\uFF09 / avatar\u8868\u793A ${s.resolvedAvatar}/${s.total}\uFF08\u7A2E\u985E ${s.resolvedUniqueAvatar}\uFF09 / uid ${s.withUid}/${s.total} / self ${s.selfShown}\u4EF6\uFF08\u4FDD\u5B58 ${s.selfSaved}, \u4FDD\u7559 ${s.selfPending}, \u4E00\u81F4 ${s.selfPendingMatched}\uFF09 / intercept ${s.interceptItems}\u4EF6\uFF08uid ${s.interceptWithUid}, avatar ${s.interceptWithAvatar}\uFF09 / \u88DC\u5B8C ${s.mergedPatched}\u4EF6` + (s.mergedUidReplaced > 0 ? `\uFF08UID\u7F6E\u63DB ${s.mergedUidReplaced}\uFF09` : "") + (s.stripped > 0 ? ` / \u6C5A\u67D3\u9664\u53BB ${s.stripped}\u4EF6` : "");
+    el.innerHTML = html;
     el.hidden = false;
   }
   function resetStoryAvatarDiagState() {
@@ -2501,7 +4729,15 @@
     STORY_AVATAR_DIAG_STATE.mergedPatched = 0;
     STORY_AVATAR_DIAG_STATE.mergedUidReplaced = 0;
     STORY_AVATAR_DIAG_STATE.stripped = 0;
+    STORY_AVATAR_DIAG_STATE.interceptMapOnPage = -1;
+    STORY_AVATAR_DIAG_STATE.interceptExportRows = 0;
+    STORY_AVATAR_DIAG_STATE.interceptExportCode = "";
+    STORY_AVATAR_DIAG_STATE.interceptExportDetail = "";
     renderStoryAvatarDiag();
+  }
+  function syncInterceptMapDiagFromSnapshot(snap) {
+    const d = snap?._debug;
+    STORY_AVATAR_DIAG_STATE.interceptMapOnPage = d && typeof d.intercept === "number" && Number.isFinite(d.intercept) && d.intercept >= 0 ? Math.floor(d.intercept) : -1;
   }
   function syncStorySourceEntries(liveId, arr) {
     const nextLiveId = String(liveId || "");
@@ -2598,7 +4834,7 @@
       storyAvatarLoadGuard.noteRemoteAttempt(img, requestedDetail);
       img.classList.toggle(
         "nl-story-detail-img--tv-fallback",
-        displayDetail === STORY_REMOTE_FAILED_PLACEHOLDER_IMG
+        storyTileUsesYukkuriTvStyle(requestedDetail, displayDetail)
       );
       if (isHttpOrHttpsUrl(img.src)) {
         img.referrerPolicy = "no-referrer";
@@ -2886,12 +5122,12 @@
   }
   function storyGrowthStepDelayMs() {
     const remain = STORY_GROWTH_STATE.targetCount - STORY_GROWTH_STATE.renderedCount;
-    if (remain > 1500) return 1;
-    if (remain > 700) return 2;
-    if (remain > 300) return 4;
-    if (remain > 120) return 8;
-    if (remain > 40) return 14;
-    return 26;
+    if (remain > 800) return 22;
+    if (remain > 400) return 28;
+    if (remain > 200) return 34;
+    if (remain > 80) return 42;
+    if (remain > 30) return 55;
+    return 72;
   }
   function resolveStoryIconSize(count) {
     const total = Math.max(0, Math.floor(Number(count) || 0));
@@ -2934,6 +5170,22 @@
     if (!userId && nickname) return nickname;
     return displayUserLabel(userKey, nickname);
   }
+  function storyGrowthImgAssignSrc(img, nextSrc) {
+    const next = String(nextSrc || "").trim();
+    if (!next) {
+      if (!img.hasAttribute("src")) return;
+      img.removeAttribute("src");
+      return;
+    }
+    const attr = img.getAttribute("src");
+    if (attr === next) return;
+    try {
+      const resolvedNext = new URL(next, document.baseURI).href;
+      if (img.src === resolvedNext) return;
+    } catch {
+    }
+    img.src = next;
+  }
   function applyStoryGrowthIconAttributes(img, index, isNew) {
     const entry = getStoryEntryByIndex(index);
     const stable = commentStableId(entry);
@@ -2942,11 +5194,11 @@
     if (selected) img.classList.add("is-selected");
     const requestedTile = storyGrowthTileSrcForEntry(entry, STORY_SOURCE_STATE.liveId);
     const displayTile = storyAvatarLoadGuard.pickDisplaySrc(requestedTile);
-    img.src = displayTile;
+    storyGrowthImgAssignSrc(img, displayTile);
     storyAvatarLoadGuard.noteRemoteAttempt(img, requestedTile);
     img.classList.toggle(
       "nl-story-growth-icon--tv-fallback",
-      displayTile === STORY_REMOTE_FAILED_PLACEHOLDER_IMG
+      storyTileUsesYukkuriTvStyle(requestedTile, displayTile)
     );
     if (isHttpOrHttpsUrl(img.src)) {
       img.referrerPolicy = "no-referrer";
@@ -2958,26 +5210,12 @@
     const entries = STORY_SOURCE_STATE.entries;
     const storyKey = entry ? supportUserKeyFromEntry(entry) : UNKNOWN_USER_KEY;
     const ordinal = supportOrdinalForIndex(entries, index);
-    const slot = accentSlotFromSupportEntry(entry, {
-      tileSrc: requestedTile,
-      stableId: stable || "",
-      defaultTileSrc: STORY_GRID_DEFAULT_TILE_IMG
-    });
-    const scheme = getStoryColorScheme();
-    const accentCss = slot != null ? accentColorForSlot(slot, scheme) : null;
-    if (accentCss) img.classList.add("nl-story-growth-icon--user-accent");
-    else img.classList.remove("nl-story-growth-icon--user-accent");
+    img.classList.remove("nl-story-growth-icon--user-accent");
     const cell = img.closest(".nl-story-growth-cell");
     if (cell instanceof HTMLElement) {
-      if (accentCss) {
-        cell.style.setProperty("--nl-user-accent", accentCss);
-        cell.classList.add("nl-story-growth-cell--accent");
-        cell.classList.add("nl-story-growth-cell--user-accent");
-      } else {
-        cell.style.removeProperty("--nl-user-accent");
-        cell.classList.remove("nl-story-growth-cell--accent");
-        cell.classList.remove("nl-story-growth-cell--user-accent");
-      }
+      cell.style.removeProperty("--nl-user-accent");
+      cell.classList.remove("nl-story-growth-cell--accent");
+      cell.classList.remove("nl-story-growth-cell--user-accent");
       if (ordinal > 1) {
         cell.classList.add("nl-story-growth-cell--repeat");
         cell.setAttribute("data-support-ordinal", String(ordinal));
@@ -3057,7 +5295,10 @@
     if (STORY_GROWTH_STATE.renderedCount >= STORY_GROWTH_STATE.targetCount) return;
     const nextIndex = STORY_GROWTH_STATE.renderedCount;
     STORY_GROWTH_STATE.renderedCount += 1;
-    root.appendChild(createStoryGrowthCell(true, nextIndex));
+    try {
+      root.appendChild(createStoryGrowthCell(true, nextIndex));
+    } catch {
+    }
     if (STORY_GROWTH_STATE.renderedCount >= STORY_GROWTH_STATE.targetCount) return;
     STORY_GROWTH_STATE.timer = window.setTimeout(runStoryGrowthTick, storyGrowthStepDelayMs());
   }
@@ -3289,7 +5530,18 @@
     const recentActive = typeof snapshot.recentActiveUsers === "number" ? snapshot.recentActiveUsers : 0;
     if (concurrentEstEl) {
       const nowMs = Date.now();
-      if (recentActive > 0 || typeof snapshot.officialViewerCount === "number" && Number.isFinite(snapshot.officialViewerCount)) {
+      const showConcurrent = shouldShowConcurrentEstimate({
+        recentActiveUsers: recentActive,
+        officialViewerCount: snapshot.officialViewerCount,
+        viewerCountFromDom: vc,
+        liveId: snapshot.liveId
+      });
+      const sparseConcurrent = concurrentEstimateIsSparseSignal({
+        recentActiveUsers: recentActive,
+        officialViewerCount: snapshot.officialViewerCount,
+        viewerCountFromDom: vc
+      });
+      if (showConcurrent) {
         if (concurrentLoadingEl) concurrentLoadingEl.hidden = true;
         if (concurrentReadyEl) concurrentReadyEl.hidden = false;
         if (concurrentCard) concurrentCard.removeAttribute("aria-busy");
@@ -3342,6 +5594,9 @@
           parts.push(`base:${baseMethod}`);
         }
         parts.push(`\u4FE1\u983C\u5EA6 ${Math.round(resolved.confidence * 100)}%`);
+        if (sparseConcurrent) {
+          parts.push("\u6765\u5834\u8005\u30FB\u7D71\u8A08\u304C\u672A\u53D6\u5F97\u306E\u305F\u3081\u63A8\u5B9A\u306F\u53C2\u8003\u5024");
+        }
         concurrentEstEl.title = parts.join(" | ");
         if (concurrentSubEl) {
           if (resolved.method === "official") {
@@ -3387,11 +5642,10 @@
     if (audience) audience.hidden = false;
     wrap.hidden = false;
   }
-  async function renderStorageErrorBanner(viewerLiveId = "") {
+  function applyStorageErrorBannerFromBag(bag, viewerLiveId = "") {
     const banner = $("storageErrorBanner");
     const detail = $("storageErrorDetail");
     if (!banner || !detail) return;
-    const bag = await chrome.storage.local.get(KEY_STORAGE_WRITE_ERROR);
     const raw = bag[KEY_STORAGE_WRITE_ERROR];
     if (raw && typeof raw === "object" && "at" in raw && typeof /** @type {{ at: unknown }} */
     raw.at === "number") {
@@ -3414,11 +5668,10 @@
       detail.textContent = "";
     }
   }
-  async function renderCommentHarvestBanner(viewerLiveId = "") {
+  function applyCommentHarvestBannerFromBag(bag, viewerLiveId = "") {
     const banner = $("commentHarvestBanner");
     const detail = $("commentHarvestBannerDetail");
     if (!banner || !detail) return;
-    const bag = await chrome.storage.local.get(KEY_COMMENT_PANEL_STATUS);
     const payload = parseCommentPanelStatusPayload(bag[KEY_COMMENT_PANEL_STATUS]);
     if (payload && commentPanelStatusRelevantToLiveId(payload, viewerLiveId)) {
       banner.removeAttribute("hidden");
@@ -3467,35 +5720,28 @@
       "\u8A18\u9332\u3057\u305F\u5FDC\u63F4\u30B3\u30E1\u30F3\u30C8\u3092\u30E6\u30FC\u30B6\u30FC\u5225\u306B\u6570\u3048\u305F\u4EF6\u6570\u306E\u591A\u3044\u9806"
     );
     const rankScheme = getStoryColorScheme();
-    let knownRank = 0;
-    const html = stripRooms.map((r) => {
-      const label = displayUserLabel(r.userKey, r.nickname);
-      const isUnknown = r.userKey === UNKNOWN_USER_KEY;
-      if (!isUnknown) knownRank += 1;
-      const placeHtml = !isUnknown ? `<span class="nl-top-support-rank__place" aria-hidden="true">${knownRank}</span>` : `<span class="nl-top-support-rank__place nl-top-support-rank__place--empty" aria-hidden="true"></span>`;
-      const full = escapeAttr(label);
-      const rawAv = String(r.avatarUrl || "").trim();
-      const thumbSrc = isHttpOrHttpsUrl(rawAv) ? rawAv : STORY_GRID_DEFAULT_TILE_IMG;
-      const thumbRp = isHttpOrHttpsUrl(thumbSrc) ? ' referrerpolicy="no-referrer"' : "";
-      const idText = isUnknown ? "\u2014" : escapeHtml(shortUserKeyDisplay(r.userKey) || String(r.userKey));
-      const nickRaw = String(r.nickname || "").trim();
-      const nameText = isUnknown ? "\u2014" : escapeHtml(nickRaw || "\uFF08\u672A\u53D6\u5F97\uFF09");
-      const idTitle = isUnknown ? "" : escapeAttr(String(r.userKey));
-      let lineClass = `nl-top-support-rank__line${isUnknown ? " nl-top-support-rank__line--unknown" : ""}`;
+    const models = topSupportRankLineModels(stripRooms, {
+      defaultThumbSrc: STORY_GRID_DEFAULT_TILE_IMG,
+      colorScheme: rankScheme
+    });
+    const html = models.map((m) => {
+      const placeHtml = m.placeNumber != null ? `<span class="nl-top-support-rank__place" aria-hidden="true">${m.placeNumber}</span>` : `<span class="nl-top-support-rank__place nl-top-support-rank__place--empty" aria-hidden="true"></span>`;
+      const full = escapeAttr(m.fullLabelForTitle);
+      const thumbRp = m.thumbNeedsNoReferrer ? ' referrerpolicy="no-referrer"' : "";
+      const idText = escapeHtml(m.idShort);
+      const nameText = escapeHtml(m.nameLine);
+      const idTitle = m.isUnknown ? "" : escapeAttr(m.idTitle);
+      let lineClass = `nl-top-support-rank__line${m.isUnknown ? " nl-top-support-rank__line--unknown" : ""}`;
       let lineStyle = "";
-      if (!isUnknown) {
-        const slot = accentSlotFromUserKey(r.userKey);
-        const col = slot != null ? accentColorForSlot(slot, rankScheme) : null;
-        if (col) {
-          lineClass += " nl-top-support-rank__line--has-accent";
-          lineStyle = ` style="--nl-rank-accent:${escapeAttr(col)}"`;
-        }
+      if (m.hasAccent && m.accentColorCss) {
+        lineClass += " nl-top-support-rank__line--has-accent";
+        lineStyle = ` style="--nl-rank-accent:${escapeAttr(m.accentColorCss)}"`;
       }
       return `<div class="${lineClass}"${lineStyle} role="listitem" title="${full}">
         ${placeHtml}
-        <span class="nl-top-support-rank__count">${r.count}\u4EF6</span>
+        <span class="nl-top-support-rank__count">${m.count}\u4EF6</span>
         <span class="nl-top-support-rank__thumb-wrap">
-          <img class="nl-top-support-rank__thumb" src="${escapeAttr(thumbSrc)}" alt="" decoding="async"${thumbRp} />
+          <img class="nl-top-support-rank__thumb" src="${escapeAttr(m.thumbSrc)}" alt="" decoding="async"${thumbRp} />
         </span>
         <span class="nl-top-support-rank__id" title="${idTitle}">${idText}</span>
         <span class="nl-top-support-rank__name">${nameText}</span>
@@ -3503,7 +5749,7 @@
     }).join("");
     strip.innerHTML = `<p class="nl-top-support-rank__note">\u8A18\u9332\u5185\u30FB\u30E6\u30FC\u30B6\u30FC\u5225\u306E\u5FDC\u63F4\u4EF6\u6570\u304C\u591A\u3044\u9806\u3067\u3059\u3002</p><div class="nl-top-support-rank__list" role="list">${html}</div>`;
   }
-  function renderUserRooms(entries) {
+  function renderUserRooms(entries, liveId = "") {
     const ul = (
       /** @type {HTMLUListElement} */
       $("userRoomList")
@@ -3533,6 +5779,7 @@
     const rooms = aggregateCommentsByUser(list);
     ul.innerHTML = "";
     if (!rooms.length) {
+      _lastTopSupportRankStripStableKey = null;
       renderTopSupportRankStrip([]);
       const li = document.createElement("li");
       li.className = "empty-hint";
@@ -3545,14 +5792,23 @@
       recentCount: recentMap.get(room.userKey) || 0
     })).sort((a, b) => {
       if (b.count !== a.count) return b.count - a.count;
+      const uidA = a.userKey === UNKNOWN_USER_KEY ? "" : a.userKey;
+      const uidB = b.userKey === UNKNOWN_USER_KEY ? "" : b.userKey;
+      const scoreA = userLaneResolvedThumbScore(uidA, a.avatarUrl);
+      const scoreB = userLaneResolvedThumbScore(uidB, b.avatarUrl);
+      if (scoreB !== scoreA) return scoreB - scoreA;
       if (b.recentCount !== a.recentCount) return b.recentCount - a.recentCount;
       return b.lastAt - a.lastAt;
     });
     const denseLayout = document.body?.classList.contains("nl-tight") || document.body?.classList.contains("nl-compact");
     const compactRooms = !INLINE_MODE;
     const MAX_VISIBLE_ROOMS = compactRooms ? 1 : denseLayout ? 2 : 3;
-    const stripMax = denseLayout ? 2 : 3;
-    renderTopSupportRankStrip(rankedRooms.slice(0, stripMax));
+    const stripSlice = rankedRooms.slice(0, TOP_SUPPORT_RANK_STRIP_MAX);
+    const stripKey = topSupportRankStripStableKey(liveId, list.length, stripSlice);
+    if (stripKey !== _lastTopSupportRankStripStableKey) {
+      _lastTopSupportRankStripStableKey = stripKey;
+      renderTopSupportRankStrip(stripSlice);
+    }
     const visibleRooms = rankedRooms.slice(0, MAX_VISIBLE_ROOMS);
     const maxTotal = Math.max(1, ...visibleRooms.map((v) => v.count));
     const maxRecent = Math.max(1, ...visibleRooms.map((v) => v.recentCount));
@@ -3561,32 +5817,47 @@
       li.classList.add("room-card");
       const label = displayUserLabel(r.userKey, r.nickname);
       const isUnknown = r.userKey === UNKNOWN_USER_KEY;
+      const uidForThumb = isUnknown ? "" : r.userKey;
+      const thumbSrc = pickSupportGrowthFallbackTileSrc(
+        uidForThumb,
+        r.avatarUrl,
+        STORY_GRID_DEFAULT_TILE_IMG,
+        STORY_REMOTE_FAILED_PLACEHOLDER_IMG
+      );
+      const thumbRp = isHttpOrHttpsUrl(thumbSrc) ? ' referrerpolicy="no-referrer"' : "";
+      const avatarHtml = `<img class="nl-ticker-latest__avatar room-card__avatar" alt="" src="${escapeAttr(thumbSrc)}" decoding="async"${thumbRp}>`;
       const totalPercent = Math.max(6, Math.min(100, r.count / maxTotal * 100));
       const recentPercent = r.recentCount > 0 ? Math.max(4, Math.min(100, r.recentCount / maxRecent * 100)) : 0;
       const deltaLabel = r.recentCount > 0 ? `+${r.recentCount} / 5\u5206` : "\xB10 / 5\u5206";
       const hint = isUnknown ? '<div class="room-hint">\u6295\u7A3F\u8005ID\u672A\u53D6\u5F97\u306E\u30B3\u30E1\u30F3\u30C8\u3092\u3053\u3053\u306B\u307E\u3068\u3081\u3066\u3044\u307E\u3059\u3002</div>' : "";
       li.innerHTML = compactRooms ? `
-      <div class="room-main">
-        <div class="room-name-row">
-          <span class="room-name" title="${escapeHtml(r.userKey)}">${escapeHtml(label)}</span>
+      <div class="room-card__row">
+        ${avatarHtml}
+        <div class="room-main">
+          <div class="room-name-row">
+            <span class="room-name" title="${escapeHtml(r.userKey)}">${escapeHtml(label)}</span>
+          </div>
+          ${r.lastText ? `<div class="room-preview">${escapeHtml(r.lastText)}</div>` : ""}
+          ${hint}
         </div>
-        ${r.lastText ? `<div class="room-preview">${escapeHtml(r.lastText)}</div>` : ""}
-        ${hint}
       </div>
     ` : `
-      <div class="room-main">
-        <div class="room-name-row">
-          <span class="room-name" title="${escapeHtml(r.userKey)}">${escapeHtml(label)}</span>
-        </div>
-        <div class="room-bar-row">
-          <div class="room-bar-track">
-            <div class="room-bar-total" style="width:${totalPercent.toFixed(2)}%"></div>
-            <div class="room-bar-recent" style="width:${recentPercent.toFixed(2)}%"></div>
+      <div class="room-card__row">
+        ${avatarHtml}
+        <div class="room-main">
+          <div class="room-name-row">
+            <span class="room-name" title="${escapeHtml(r.userKey)}">${escapeHtml(label)}</span>
           </div>
-          <span class="room-delta ${r.recentCount > 0 ? "up" : ""}">${deltaLabel}</span>
+          <div class="room-bar-row">
+            <div class="room-bar-track">
+              <div class="room-bar-total" style="width:${totalPercent.toFixed(2)}%"></div>
+              <div class="room-bar-recent" style="width:${recentPercent.toFixed(2)}%"></div>
+            </div>
+            <span class="room-delta ${r.recentCount > 0 ? "up" : ""}">${deltaLabel}</span>
+          </div>
+          ${r.lastText ? `<div class="room-preview">${escapeHtml(r.lastText)}</div>` : ""}
+          ${hint}
         </div>
-        ${r.lastText ? `<div class="room-preview">${escapeHtml(r.lastText)}</div>` : ""}
-        ${hint}
       </div>
     `;
       ul.appendChild(li);
@@ -3654,9 +5925,16 @@
     return [...byNo.values()];
   }
   async function requestInterceptCacheFromOpenTab(watchUrl, opts = {}) {
+    const diag = { code: "no_watch_tab", detail: "" };
     const candidates = await collectWatchTabCandidates(watchUrl);
-    if (!candidates.length) return [];
+    if (!candidates.length) {
+      return { items: [], diag };
+    }
     const merged = [];
+    let sawOkTrue = false;
+    let sawOkFalse = false;
+    let lastRejectError = "";
+    let sawSendError = false;
     for (const candidate of candidates) {
       try {
         const ranked = await listWatchFramesWithInnerText(candidate.id);
@@ -3667,7 +5945,7 @@
           tried.add(fid);
           try {
             const res = (
-              /** @type {{ ok?: boolean, items?: unknown }|null} */
+              /** @type {{ ok?: boolean, items?: unknown, error?: unknown }|null} */
               await tabsSendMessageWithRetry(
                 candidate.id,
                 {
@@ -3677,15 +5955,44 @@
                 { frameId: fid, maxAttempts: 5, delayMs: 90 }
               )
             );
-            if (!res || res.ok !== true) continue;
-            merged.push(...normalizeInterceptCacheItems(res.items));
+            if (!res) continue;
+            if (res.ok === true) {
+              sawOkTrue = true;
+              const chunk = normalizeInterceptCacheItems(res.items);
+              merged.push(...chunk);
+              continue;
+            }
+            if (res.ok === false) {
+              sawOkFalse = true;
+              const er = String(res.error || "").trim();
+              if (er) lastRejectError = er;
+            }
           } catch {
+            sawSendError = true;
           }
         }
       } catch {
+        sawSendError = true;
       }
     }
-    return mergeInterceptCacheItems(merged);
+    const items = mergeInterceptCacheItems(merged);
+    if (items.length > 0) {
+      diag.code = "ok";
+      diag.detail = "";
+    } else if (sawOkTrue) {
+      diag.code = "ok_empty";
+      diag.detail = "\u53D6\u308A\u8FBC\u307F\u306F\u6210\u529F\u3057\u307E\u3057\u305F\u304C0\u4EF6\u3067\u3057\u305F\u3002watch\u3092\u958B\u3044\u305F\u307E\u307E\u30DD\u30C3\u30D7\u30A2\u30C3\u30D7\u3092\u66F4\u65B0\u3059\u308B\u304B\u3001\u30DA\u30FC\u30B8\u3092\u518D\u8AAD\u307F\u8FBC\u307F\u3057\u3066\u304F\u3060\u3055\u3044\u3002";
+    } else if (sawOkFalse) {
+      diag.code = "export_rejected";
+      diag.detail = lastRejectError ? lastRejectError.slice(0, 120) : "\u30DA\u30FC\u30B8\u5074\u304C\u53D6\u308A\u8FBC\u307F\u3092\u62D2\u5426\u3057\u307E\u3057\u305F";
+    } else if (sawSendError) {
+      diag.code = "message_failed";
+      diag.detail = "\u30DA\u30FC\u30B8\u3068\u306E\u901A\u4FE1\u306B\u5931\u6557\u3057\u307E\u3057\u305F\uFF08\u30BF\u30D6\u306E\u518D\u8AAD\u307F\u8FBC\u307F\u3092\u8A66\u3057\u3066\u304F\u3060\u3055\u3044\uFF09";
+    } else {
+      diag.code = "no_success_response";
+      diag.detail = "\u30DA\u30FC\u30B8\u304B\u3089\u5FDC\u7B54\u304C\u3042\u308A\u307E\u305B\u3093\uFF08\u5BFE\u8C61\u306Ewatch\u30BF\u30D6\u304C\u958B\u3044\u3066\u3044\u308B\u304B\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044\uFF09";
+    }
+    return { items, diag };
   }
   function mergeCommentsWithInterceptCache(entries, items, opts = {}) {
     if (!Array.isArray(entries) || entries.length === 0 || items.length === 0) {
@@ -3750,18 +6057,28 @@
       const curAv = String(e?.avatarUrl || "").trim();
       let changed = false;
       let out = e;
-      if (hit.uid && (!curUid || shouldReplaceUid(curUid))) {
-        if (curUid && curUid !== hit.uid) uidReplaced += 1;
-        out = { ...out, userId: hit.uid };
-        changed = true;
+      if (hit.uid) {
+        const tie = shouldReplaceUid(curUid) ? "incoming" : "existing";
+        const chosen = pickStrongerUserId(curUid, hit.uid, tie);
+        if (chosen && chosen !== curUid) {
+          if (curUid) uidReplaced += 1;
+          out = { ...out, userId: chosen };
+          changed = true;
+        }
       }
       if (hit.name && !curName) {
         out = { ...out, nickname: hit.name };
         changed = true;
       }
-      if (hit.av && !curAv) {
-        out = { ...out, avatarUrl: hit.av };
-        changed = true;
+      const uidForAv = String(out.userId || "").trim();
+      const hitAv = String(hit.av || "").trim();
+      if (hitAv && isHttpOrHttpsUrl(hitAv)) {
+        const curSc = commentEnrichmentAvatarScore(uidForAv, curAv);
+        const hitSc = commentEnrichmentAvatarScore(uidForAv, hitAv);
+        if (hitSc > curSc) {
+          out = { ...out, avatarUrl: hitAv };
+          changed = true;
+        }
       }
       if (changed) patched += 1;
       return out;
@@ -3920,40 +6237,22 @@
       supportVisualScrollObserver = null;
     }
   }
-  var usageTermsGateWired = false;
   function setUsageTermsGateDismissedUi() {
     document.documentElement.setAttribute("data-nl-usage-terms-ack", "1");
   }
+  function writeUsageTermsAckToLocalMirror() {
+    try {
+      globalThis.localStorage?.setItem(KEY_USAGE_TERMS_ACK, "1");
+    } catch {
+    }
+  }
   async function applyUsageTermsGateState() {
-    if (!hasExtensionContext()) {
-      setUsageTermsGateDismissedUi();
-      return;
-    }
-    const gate = $("usageTermsGate");
-    const chk = (
-      /** @type {HTMLInputElement|null} */
-      $("usageTermsAckCheckbox")
-    );
-    const btn = (
-      /** @type {HTMLButtonElement|null} */
-      $("usageTermsContinueBtn")
-    );
-    if (!usageTermsGateWired && gate && chk && btn) {
-      usageTermsGateWired = true;
-      const syncBtn = () => {
-        btn.disabled = !chk.checked;
-      };
-      chk.addEventListener("change", syncBtn);
-      btn.addEventListener("click", async () => {
-        if (!chk.checked || !hasExtensionContext()) return;
-        const ok = await storageSetSafe({ [KEY_USAGE_TERMS_ACK]: true });
-        if (!ok) return;
-        setUsageTermsGateDismissedUi();
-      });
-    }
-    const bag = await storageGetSafe(KEY_USAGE_TERMS_ACK, {});
-    if (isUsageTermsAcknowledged(bag[KEY_USAGE_TERMS_ACK])) {
-      setUsageTermsGateDismissedUi();
+    setUsageTermsGateDismissedUi();
+    if (!hasExtensionContext()) return;
+    writeUsageTermsAckToLocalMirror();
+    try {
+      await storageSetSafe({ [KEY_USAGE_TERMS_ACK]: true });
+    } catch {
     }
   }
   function correctSupportVisualScrollIfOpen() {
@@ -4057,18 +6356,311 @@
       setVoiceDeviceCheckStatus(statusEl, "\u30C7\u30D0\u30A4\u30B9\u4E00\u89A7\u3092\u53D6\u5F97\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002", "error");
     }
   }
-  async function resolveWatchContextUrl() {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    const url = tab?.url || "";
-    if (isNicoLiveWatchUrl(url)) {
-      return { url, fromActiveTab: true };
+  function renderAcquisitionDashboard(p) {
+    const host = $("devMonitorAcquisition");
+    if (!host) return;
+    const liveId = String(p.liveId || "").trim();
+    if (!liveId) {
+      host.innerHTML = '<section class="nl-acquisition nl-acquisition--empty" aria-label="\u30C7\u30FC\u30BF\u53D6\u5F97\u7387"><p class="nl-acquisition__empty">\u30CB\u30B3\u751F watch \u3092\u958B\u3044\u305F\u72B6\u614B\u3067\u30DD\u30C3\u30D7\u30A2\u30C3\u30D7\u3092\u958B\u304F\u3068\u3001\u53D6\u5F97\u7387\u30C1\u30E3\u30FC\u30C8\u304C\u8868\u793A\u3055\u308C\u307E\u3059\uFF08\u8A18\u93320\u4EF6\u3067\u3082\u8868\u793A\uFF09\u3002</p></section>';
+      return;
     }
-    const stash = await chrome.storage.local.get(KEY_LAST_WATCH_URL);
-    const last = stash[KEY_LAST_WATCH_URL];
-    if (typeof last === "string" && isNicoLiveWatchUrl(last)) {
-      return { url: last, fromActiveTab: false };
+    const avs = p.avatarStats;
+    const t = avs && typeof avs.total === "number" ? Math.max(0, avs.total) : 0;
+    const thumb = t > 0 ? avs.withHttpAvatar / t * 100 : 0;
+    const idPct = t > 0 ? (t - avs.missingUserId) / t * 100 : 0;
+    const nick = t > 0 ? avs.withNickname / t * 100 : 0;
+    const oc = p.snapshot && typeof p.snapshot.officialCommentCount === "number" && Number.isFinite(p.snapshot.officialCommentCount) ? p.snapshot.officialCommentCount : null;
+    let commentPct = null;
+    if (oc != null && oc > 0) {
+      commentPct = Math.min(100, p.displayCount / oc * 100);
     }
-    return { url: "", fromActiveTab: true };
+    const radarComment = commentPct != null ? commentPct : 0;
+    const cx = 60;
+    const cy = 60;
+    const R = 44;
+    const vals = [thumb, idPct, nick, radarComment];
+    const polyPts = vals.map((pct, i) => {
+      const th = -Math.PI / 2 + i * Math.PI / 2;
+      const rr = Math.max(0, Math.min(100, pct)) / 100 * R;
+      const x = cx + rr * Math.cos(th);
+      const y = cy + rr * Math.sin(th);
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    }).join(" ");
+    const ringPts = [0, 1, 2, 3].map((i) => {
+      const th = -Math.PI / 2 + i * Math.PI / 2;
+      const x = cx + R * Math.cos(th);
+      const y = cy + R * Math.sin(th);
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    }).join(" ");
+    const midR = R * 0.5;
+    const midPts = [0, 1, 2, 3].map((i) => {
+      const th = -Math.PI / 2 + i * Math.PI / 2;
+      const x = cx + midR * Math.cos(th);
+      const y = cy + midR * Math.sin(th);
+      return `${x.toFixed(2)},${y.toFixed(2)}`;
+    }).join(" ");
+    const axisLines = [0, 1, 2, 3].map((i) => {
+      const th = -Math.PI / 2 + i * Math.PI / 2;
+      const x2 = cx + R * Math.cos(th);
+      const y2 = cy + R * Math.sin(th);
+      return `<line x1="${cx}" y1="${cy}" x2="${x2.toFixed(2)}" y2="${y2.toFixed(
+        2
+      )}" stroke="#94a3b8" stroke-width="0.45" opacity="0.4"/>`;
+    }).join("");
+    const fmt = (n) => `${n.toFixed(1)}%`;
+    const commentBar = commentPct != null ? fmt(commentPct) : "\u2014";
+    const wThumb = Math.max(0, thumb);
+    const wId = Math.max(0, idPct);
+    const wNick = Math.max(0, nick);
+    const wComm = commentPct != null ? Math.max(0, commentPct) : 0;
+    const wSum = wThumb + wId + wNick + wComm;
+    let pieDiskBackground = "#94a3b8";
+    if (wSum > 1e-3) {
+      let a = 0;
+      const segs = [];
+      const pushSeg = (frac, color) => {
+        const deg = frac / wSum * 360;
+        const b = a + deg;
+        segs.push(`${color} ${a}deg ${b}deg`);
+        a = b;
+      };
+      pushSeg(wThumb, "#0f8fd8");
+      pushSeg(wId, "#6366f1");
+      pushSeg(wNick, "#ea580c");
+      pushSeg(wComm, "#0d9488");
+      pieDiskBackground = `conic-gradient(${segs.join(",")})`;
+    }
+    const footExtra = t <= 0 ? "\u8A18\u93320\u4EF6\u306E\u305F\u3081\u30B5\u30E0\u30CD\u30FBID\u30FB\u540D\u524D\u306F0%\u3002\u30ED\u30B0\u30A4\u30F3\u4E0D\u8981\u3067\u8868\u793A\u3057\u307E\u3059\u3002" : "";
+    const footMain = commentPct != null ? "\u30B3\u30E1\u30F3\u30C8\uFF1D\u8A18\u9332\u306E\u8868\u793A\u4EF6\u6570\xF7\u516C\u5F0F\u30B3\u30E1\u30F3\u30C8\u6570\uFF08\u4E0A\u9650100%\uFF09\u3002" : "\u30B3\u30E1\u30F3\u30C8\u7387\u306F\u516C\u5F0F\u4EF6\u6570\u304C\u7121\u3044\u3068\u304D\u300C\u2014\u300D\uFF08\u30EC\u30FC\u30C0\u30FC\u30FB\u5186\u306E\u30B3\u30E1\u30F3\u30C8\u5206\u306F0\u6271\u3044\uFF09\u3002";
+    const foot = escapeHtml(footExtra ? `${footMain} ${footExtra}` : footMain);
+    host.innerHTML = '<section class="nl-acquisition" aria-label="\u30C7\u30FC\u30BF\u53D6\u5F97\u7387"><h3 class="nl-acquisition__title">\u73FE\u5728\u306E\u30C7\u30FC\u30BF\u53D6\u5F97\u7387</h3><div class="nl-acquisition__charts"><div class="nl-acquisition__radar"><svg viewBox="0 0 120 120" aria-hidden="true">' + axisLines + `<polygon fill="none" stroke="#94a3b8" stroke-width="0.55" opacity="0.45" points="${ringPts}" /><polygon fill="none" stroke="#94a3b8" stroke-width="0.45" opacity="0.32" points="${midPts}" /><polygon fill="rgb(15 143 216 / 22%)" stroke="#0f8fd8" stroke-width="1.2" points="${polyPts}" /></svg><span class="nl-acquisition__cap">4\u9805\u76EE\u30D0\u30E9\u30F3\u30B9\uFF08\u30EC\u30FC\u30C0\u30FC\uFF09</span></div><div class="nl-acquisition__bars"><div class="nl-acquisition__bar-row"><p class="nl-acquisition__bar-label">\u30B5\u30E0\u30CD</p><div class="nl-acquisition__bar-track"><div class="nl-acquisition__bar-fill nl-acquisition__bar-fill--thumb" style="width:${Math.min(
+      100,
+      thumb
+    )}%"></div></div><p class="nl-acquisition__bar-pct">${escapeHtml(
+      fmt(thumb)
+    )}</p></div><div class="nl-acquisition__bar-row"><p class="nl-acquisition__bar-label">ID</p><div class="nl-acquisition__bar-track"><div class="nl-acquisition__bar-fill nl-acquisition__bar-fill--id" style="width:${Math.min(
+      100,
+      idPct
+    )}%"></div></div><p class="nl-acquisition__bar-pct">${escapeHtml(
+      fmt(idPct)
+    )}</p></div><div class="nl-acquisition__bar-row"><p class="nl-acquisition__bar-label">\u540D\u524D</p><div class="nl-acquisition__bar-track"><div class="nl-acquisition__bar-fill nl-acquisition__bar-fill--nick" style="width:${Math.min(
+      100,
+      nick
+    )}%"></div></div><p class="nl-acquisition__bar-pct">${escapeHtml(
+      fmt(nick)
+    )}</p></div><div class="nl-acquisition__bar-row"><p class="nl-acquisition__bar-label">\u30B3\u30E1</p><div class="nl-acquisition__bar-track"><div class="nl-acquisition__bar-fill nl-acquisition__bar-fill--comment" style="width:${commentPct != null ? Math.min(100, commentPct) : 0}%"></div></div><p class="nl-acquisition__bar-pct">${escapeHtml(
+      commentBar
+    )}</p></div></div><div class="nl-acquisition__pie"><div class="nl-acquisition__pie-disk"></div><span class="nl-acquisition__cap">\u69CB\u6210\u6BD4\uFF08\u5186\uFF09</span></div></div><ul class="nl-acquisition__legend"><li><span class="nl-acquisition__dot nl-acquisition__dot--thumb" aria-hidden="true"></span>\u30A2\u30A4\u30B3\u30F3\u753B\u50CF\u306EURL\uFF08\u53D6\u308C\u3066\u3044\u308B\u5272\u5408\uFF09</li><li><span class="nl-acquisition__dot nl-acquisition__dot--id" aria-hidden="true"></span>\u30E6\u30FC\u30B6\u30FCID\uFF08\u53D6\u308C\u3066\u3044\u308B\u5272\u5408\uFF09</li><li><span class="nl-acquisition__dot nl-acquisition__dot--nick" aria-hidden="true"></span>\u8868\u793A\u540D\u30FB\u30CB\u30C3\u30AF\u30CD\u30FC\u30E0\uFF08\u4ED8\u3044\u3066\u3044\u308B\u5272\u5408\uFF09</li><li><span class="nl-acquisition__dot nl-acquisition__dot--comment" aria-hidden="true"></span>\u30B3\u30E1\u30F3\u30C8\uFF08\u8A18\u9332\xF7\u516C\u5F0F\uFF09</li></ul><p class="nl-acquisition__footnote">${foot}</p></section>`;
+    const disk = host.querySelector(".nl-acquisition__pie-disk");
+    if (disk instanceof HTMLElement) {
+      disk.style.background = pieDiskBackground;
+    }
+    const win = typeof globalThis !== "undefined" ? globalThis : window;
+    appendTrendPoint(win, liveId, {
+      thumb,
+      idPct,
+      nick,
+      commentPct,
+      displayCount: p.displayCount,
+      storageCount: p.storageCount
+    });
+    void persistTrendPointChrome(liveId, {
+      thumb,
+      idPct,
+      nick,
+      commentPct,
+      displayCount: p.displayCount,
+      storageCount: p.storageCount
+    });
+  }
+  function renderDevMonitorSecondaryViz(p, opts = {}) {
+    const vizHost = $("devMonitorViz");
+    if (!vizHost) return;
+    const liveId = String(p.liveId || "").trim();
+    if (!liveId) {
+      vizHost.innerHTML = '<div class="nl-dev-monitor-viz"><p class="nl-viz-block__empty">\u30CB\u30B3\u751F\u306E\u8996\u8074\u30DA\u30FC\u30B8\uFF08watch\uFF09\u3092\u958B\u304F\u3068\u3001\u4EF6\u6570\u306E\u6BD4\u8F03\u3084\u63A8\u79FB\u306E\u30B0\u30E9\u30D5\u304C\u8868\u793A\u3055\u308C\u307E\u3059\u3002</p></div>';
+      return;
+    }
+    const win = typeof globalThis !== "undefined" ? globalThis : window;
+    const trend = opts.mergedTrend != null ? opts.mergedTrend : readTrendSeries(win, liveId);
+    const persisted = Boolean(opts.mergedTrend);
+    const snap = p.snapshot;
+    const oc = snap && typeof snap.officialCommentCount === "number" && Number.isFinite(snap.officialCommentCount) ? snap.officialCommentCount : null;
+    const parts = [];
+    parts.push(
+      htmlOfficialVsRecordedBar(
+        officialVsRecordedBarState({
+          displayCount: p.displayCount,
+          officialCount: oc
+        })
+      )
+    );
+    if (snap && typeof snap.officialCaptureRatio === "number" && Number.isFinite(snap.officialCaptureRatio)) {
+      parts.push(htmlCaptureRatioBar(snap.officialCaptureRatio));
+    }
+    const gaps = p.profileGaps;
+    if (gaps && p.storageCount > 0) {
+      parts.push(htmlProfileGapBars(profileGapBarSeries(gaps)));
+    }
+    const dbg = snap?._debug && typeof snap._debug === "object" ? (
+      /** @type {Record<string, unknown>} */
+      snap._debug
+    ) : null;
+    if (dbg && dbg.commentTypeVisibleSample != null && typeof dbg.commentTypeVisibleSample === "object") {
+      parts.push(
+        htmlCommentTypeBars(
+          commentTypeDistribution(
+            /** @type {Record<string, unknown>} */
+            dbg.commentTypeVisibleSample
+          )
+        )
+      );
+    }
+    if (dbg && typeof dbg.wsAge === "number") {
+      parts.push(htmlWsStalenessBar(wsStalenessState(dbg.wsAge)));
+    }
+    if (trend.length >= 1) {
+      const series = trendToSparklineArrays(trend);
+      parts.push(htmlAcquisitionSparklines(series, { persisted }));
+      if (trendHasCountSamples(trend)) {
+        parts.push(htmlDualCountSparklines(series.displaySeries, series.storageSeries));
+      }
+    }
+    vizHost.innerHTML = `<div class="nl-dev-monitor-viz">${parts.filter(Boolean).join("")}</div>`;
+  }
+  function renderDevMonitorPanel(p) {
+    lastDevMonitorPanelParams = p;
+    const mktBtn = (
+      /** @type {HTMLButtonElement|null} */
+      $("devMonitorExportMarketingBtn")
+    );
+    if (mktBtn) mktBtn.disabled = !String(p.liveId || "").trim();
+    const statsEl = $("devMonitorStats");
+    const jsonEl = $("devMonitorJson");
+    const dlChartsEl = $("devMonitorDlCharts");
+    renderAcquisitionDashboard(p);
+    renderDevMonitorSecondaryViz(p);
+    if (dlChartsEl) {
+      dlChartsEl.innerHTML = buildDevMonitorDlChartsHtml(p);
+    }
+    if (!statsEl || !jsonEl) return;
+    const win = typeof globalThis !== "undefined" ? globalThis : window;
+    const lid = String(p.liveId || "").trim();
+    if (lid) {
+      void readMergedTrendSeries(win, lid).then((merged) => {
+        renderDevMonitorSecondaryViz(p, { mergedTrend: merged });
+      });
+    }
+    const snap = p.snapshot;
+    const oc = snap && typeof snap.officialCommentCount === "number" && Number.isFinite(snap.officialCommentCount) ? snap.officialCommentCount : null;
+    const gap = oc != null && p.liveId ? oc - p.displayCount : null;
+    const rows = [];
+    rows.push(["\u914D\u4FE1ID\uFF08lv\u2026\uFF09", p.liveId || "\u2014"]);
+    rows.push(["\u3053\u306EPC\u306B\u4FDD\u5B58\u3057\u305F\u4EF6\u6570", String(p.storageCount)]);
+    rows.push(["\u4E00\u89A7\u306B\u51FA\u3057\u3066\u3044\u308B\u4EF6\u6570", String(p.displayCount)]);
+    rows.push(["\u516C\u5F0F\u306E\u7D2F\u8A08\u30B3\u30E1\u30F3\u30C8\u6570", oc != null ? String(oc) : "\u2014"]);
+    rows.push(["\u516C\u5F0F\u3068\u306E\u5DEE\uFF08\u516C\u5F0F\u2212\u4E00\u89A7\uFF09", gap != null ? String(gap) : "\u2014"]);
+    rows.push([
+      "\u5DEE\u304C\u51FA\u308B\u4E3B\u306A\u7406\u7531\uFF08\u53C2\u8003\uFF09",
+      "\u753B\u9762\u306B\u8F09\u3063\u3066\u3044\u306A\u3044\u30B3\u30E1\u30F3\u30C8\u306F\u53D6\u308A\u8FBC\u3081\u307E\u305B\u3093\u3002\u7A2E\u985E\u306E\u6271\u3044\u306E\u9055\u3044\u30FB\u901A\u4FE1\u306E\u5207\u308C\u30FB\u30B5\u30A4\u30C8\u306E\u4F5C\u308A\u5909\u308F\u308A\u306A\u3069\u304C\u91CD\u306A\u308A\u5F97\u307E\u3059\uFF08\u4E0B\u306E\u300C\u7A2E\u985E\u306E\u5185\u8A33\u300D\u3082\u53C2\u7167\uFF09\u3002"
+    ]);
+    rows.push([
+      "\u516C\u5F0F\u3068\u300C\u8A18\u9332\u300D\u306E\u3061\u304C\u3044",
+      "\u516C\u5F0F\u306F\u653E\u9001\u306E\u7D2F\u8A08\u3067\u3059\u3002\u8A18\u9332\u306F\u3001\u3053\u306EPC\u306E\u62E1\u5F35\u304C\u5B9F\u969B\u306B\u53D6\u308C\u305F\u884C\u3060\u3051\u3067\u3059\uFF08\u30BF\u30A4\u30E0\u30B7\u30D5\u30C8\u30FB\u5225\u30BF\u30D6\u30FB\u9AD8\u6D41\u91CF\u30FB\u4ED5\u69D8\u5909\u66F4\u3067\u5DEE\u304C\u51FA\u307E\u3059\uFF09\u3002"
+    ]);
+    const avs = p.avatarStats;
+    if (avs && avs.total > 0) {
+      rows.push(["\u30A2\u30A4\u30B3\u30F3URL\u304C\u6B8B\u3063\u3066\u3044\u308B\u4EF6\u6570", String(avs.withHttpAvatar)]);
+      rows.push(["\u30A2\u30A4\u30B3\u30F3URL\u304C\u7121\u3044\u4EF6\u6570", String(avs.withoutHttpAvatar)]);
+      rows.push([
+        "\u30A2\u30A4\u30B3\u30F3URL\u304C\u3042\u308B\u5272\u5408",
+        `${(avs.withHttpAvatar / avs.total * 100).toFixed(1)}%`
+      ]);
+      rows.push(["\u65E2\u5B9A\u30A2\u30A4\u30B3\u30F3\u76F8\u5F53\u306E\u307F\u306E\u4EF6\u6570", String(avs.syntheticDefaultAvatar)]);
+      rows.push(["\u8868\u793A\u540D\uFF08\u30CB\u30C3\u30AF\u30CD\u30FC\u30E0\uFF09\u304C\u3042\u308B\u4EF6\u6570", String(avs.withNickname)]);
+      rows.push(["\u8868\u793A\u540D\u304C\u7121\u3044\u4EF6\u6570", String(avs.withoutNickname)]);
+      rows.push(["\u30E6\u30FC\u30B6\u30FCID\u304C\u6570\u5B57\u306E\u4EF6\u6570", String(avs.numericUserId)]);
+      rows.push(["\u30E6\u30FC\u30B6\u30FCID\u304C\u533F\u540D\u98A8\u306A\u3069\u306E\u4EF6\u6570", String(avs.nonNumericUserId)]);
+      rows.push(["\u30E6\u30FC\u30B6\u30FCID\u304C\u53D6\u308C\u3066\u3044\u306A\u3044\u4EF6\u6570", String(avs.missingUserId)]);
+    }
+    const gaps = p.profileGaps;
+    if (gaps && p.storageCount > 0) {
+      rows.push(["\u2500\u2500 \u5229\u7528\u8005\u306E\u7A2E\u985E\u5225\uFF08ID\u304C\u3042\u308B\u884C\u3060\u3051\uFF09", "\u2500\u2500"]);
+      rows.push(["\u6570\u5B57ID\u30FB\u30A2\u30A4\u30B3\u30F3\u3042\u308A", String(gaps.numericUidWithHttpAvatar)]);
+      rows.push(["\u6570\u5B57ID\u30FB\u30A2\u30A4\u30B3\u30F3\u306A\u3057", String(gaps.numericUidWithoutHttpAvatar)]);
+      rows.push(["\u533F\u540D\u98A8ID\u30FB\u30A2\u30A4\u30B3\u30F3\u3042\u308A", String(gaps.anonStyleUidWithHttpAvatar)]);
+      rows.push(["\u533F\u540D\u98A8ID\u30FB\u30A2\u30A4\u30B3\u30F3\u306A\u3057", String(gaps.anonStyleUidWithoutHttpAvatar)]);
+      rows.push(["\u6570\u5B57ID\u30FB\u540D\u524D\u3042\u308A", String(gaps.numericWithNickname)]);
+      rows.push(["\u6570\u5B57ID\u30FB\u540D\u524D\u306A\u3057", String(gaps.numericWithoutNickname)]);
+      rows.push(["\u533F\u540D\u98A8\u30FB\u540D\u524D\u3042\u308A", String(gaps.anonWithNickname)]);
+      rows.push(["\u533F\u540D\u98A8\u30FB\u540D\u524D\u306A\u3057", String(gaps.anonWithoutNickname)]);
+    }
+    if (snap?._debug && typeof snap._debug === "object") {
+      const d = (
+        /** @type {Record<string, unknown>} */
+        snap._debug
+      );
+      if (typeof d.wsAge === "number")
+        rows.push(["\u914D\u4FE1\u30DA\u30FC\u30B8\u306E\u66F4\u65B0\u304B\u3089\u306E\u7D4C\u904E\uFF08ms\u30FB\u53C2\u8003\uFF09", String(d.wsAge)]);
+      if (d.intercept != null)
+        rows.push(["\u8996\u8074\u30DA\u30FC\u30B8\u5185\u306E\u5229\u7528\u8005\u30E1\u30E2\uFF08\u4EF6\u6570\uFF09", String(d.intercept)]);
+      if (d.ndgr != null && String(d.ndgr).trim())
+        rows.push(["\u914D\u4FE1\u30C7\u30FC\u30BF\u306E\u5185\u90E8\u72B6\u614B\uFF08\u8A18\u53F7\u30FB\u958B\u767A\u5411\u3051\uFF09", String(d.ndgr)]);
+      if (d.ndgrLdStream != null && String(d.ndgrLdStream).trim()) {
+        rows.push(["\u914D\u4FE1\u30C7\u30FC\u30BF\u306E\u53D7\u4FE1\u72B6\u6CC1\uFF08\u8A18\u53F7\u30FB\u958B\u767A\u5411\u3051\uFF09", String(d.ndgrLdStream)]);
+      }
+      if (d.commentTypeVisibleSample != null && typeof d.commentTypeVisibleSample === "object" && Object.keys(d.commentTypeVisibleSample).length) {
+        rows.push([
+          "\u3044\u307E\u753B\u9762\u306B\u51FA\u3066\u3044\u308B\u30B3\u30E1\u30F3\u30C8\u306E\u7A2E\u985E\uFF08\u5185\u90E8\u30AD\u30FC\uFF09",
+          JSON.stringify(d.commentTypeVisibleSample)
+        ]);
+      }
+      if (d.piPost != null) {
+        rows.push(["\u30DA\u30FC\u30B8\u304C\u53D7\u3051\u53D6\u3063\u305F\u53D6\u308A\u8FBC\u307F\u6307\u793A\uFF08\u4EF6\u6570\uFF09", String(d.piPost)]);
+      }
+      if (d.piEnq != null) {
+        rows.push(["\u30DA\u30FC\u30B8\u304C\u51E6\u7406\u5F85\u3061\u306B\u3057\u305F\u4EF6\u6570", String(d.piEnq)]);
+      }
+    }
+    {
+      const st = STORY_AVATAR_DIAG_STATE;
+      if (p.liveId && (st.interceptMapOnPage >= 0 || st.interceptExportCode || st.interceptExportRows > 0)) {
+        rows.push(["\u2500\u2500 \u76F4\u8FD1\u306E\u53D6\u308A\u8FBC\u307F\uFF08\u30DD\u30C3\u30D7\u30A2\u30C3\u30D7\u304B\u3089\uFF09", "\u2500\u2500"]);
+        rows.push([
+          "watch\u30BF\u30D6\u5185\u306E\u4E00\u6642\u5BFE\u5FDC\u8868\uFF08\u4EF6\u6570\uFF09",
+          st.interceptMapOnPage >= 0 ? String(st.interceptMapOnPage) : "\u2014"
+        ]);
+        rows.push(["\u53D6\u308A\u8FBC\u3093\u3060\u884C\u6570", String(st.interceptExportRows)]);
+        rows.push(["\u7D50\u679C\u30B3\u30FC\u30C9", st.interceptExportCode || "\u2014"]);
+        if (String(st.interceptExportDetail || "").trim()) {
+          rows.push(["\u88DC\u8DB3\u30E1\u30C3\u30BB\u30FC\u30B8", String(st.interceptExportDetail).trim()]);
+        }
+      }
+    }
+    statsEl.innerHTML = rows.map(
+      ([dt, dd]) => `<div class="nl-dev-monitor__row"><dt>${escapeHtml(dt)}</dt><dd>${escapeHtml(dd)}</dd></div>`
+    ).join("");
+    if (!p.liveId) {
+      jsonEl.textContent = "watch \u3092\u958B\u3044\u3066\u3044\u308B\u3068\u304D\u306B\u30B9\u30CA\u30C3\u30D7\u30B7\u30E7\u30C3\u30C8\u304C\u5165\u308A\u307E\u3059\u3002\u672C\u6587\u306F\u51FA\u3057\u307E\u305B\u3093\u3002";
+      return;
+    }
+    const debugSub = pickDevMonitorDebugSubset(
+      snap?._debug && typeof snap._debug === "object" ? (
+        /** @type {Record<string, unknown>} */
+        snap._debug
+      ) : void 0
+    );
+    const outJson = { ...debugSub };
+    if (avs && avs.total > 0) {
+      outJson.avatarStats = avs;
+    }
+    if (gaps && p.storageCount > 0) {
+      outJson.profileGaps = gaps;
+    }
+    jsonEl.textContent = JSON.stringify(outJson, null, 2);
+  }
+  function applyCalmPanelMotionClass(enabled) {
+    document.documentElement.classList.toggle("nl-calm-motion", Boolean(enabled));
   }
   async function refresh() {
     if (!hasExtensionContext()) {
@@ -4098,25 +6690,106 @@
       /** @type {HTMLButtonElement} */
       $("postCommentBtn")
     );
-    const reloadWatchBtn = (
-      /** @type {HTMLButtonElement|null} */
-      $("reloadWatchTabBtn")
-    );
     try {
-      await loadSelfPostedRecentsIntoCache();
-      const { url, fromActiveTab } = await resolveWatchContextUrl();
+      let paintWatchPopupUi = function() {
+        syncInterceptMapDiagFromSnapshot(watchSnapshot);
+        STORY_AVATAR_DIAG_STATE.total = arr.length;
+        STORY_AVATAR_DIAG_STATE.withUid = countEntriesWithUserId(arr);
+        STORY_AVATAR_DIAG_STATE.withAvatar = countEntriesWithAvatar(arr);
+        STORY_AVATAR_DIAG_STATE.uniqueAvatar = countUniqueAvatarEntries(arr);
+        {
+          const resolvedAvatar = countResolvedAvatarEntries(arr, lv);
+          STORY_AVATAR_DIAG_STATE.resolvedAvatar = resolvedAvatar.total;
+          STORY_AVATAR_DIAG_STATE.resolvedUniqueAvatar = resolvedAvatar.unique;
+        }
+        STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(arr, lv);
+        STORY_AVATAR_DIAG_STATE.selfSaved = countSavedOwnPostedEntries(arr);
+        STORY_AVATAR_DIAG_STATE.selfPending = countPendingSelfPostedRecentsForLive(lv);
+        STORY_AVATAR_DIAG_STATE.selfPendingMatched = getOwnPostedMatchedIdSet(arr, lv).size;
+        const displayEntries = buildDisplayCommentEntries(arr, lv);
+        STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(displayEntries, lv);
+        setCountDisplay(String(displayEntries.length), watchSnapshot);
+        renderCommentTicker(
+          /** @type {PopupCommentEntry[]} */
+          displayEntries
+        );
+        exportBtn.disabled = false;
+        exportBtn.dataset.liveId = lv;
+        exportBtn.dataset.storageKey = key;
+        exportBtn.dataset.watchUrl = url;
+        if (captureBtn) {
+          captureBtn.disabled = false;
+          captureBtn.dataset.watchUrl = url;
+        }
+        if (postBtn) postBtn.disabled = COMMENT_POST_UI_STATE.submitting;
+        setReloadWatchTabUiDisabled(false);
+        syncVoiceCommentButton();
+        if (commentInput) {
+          commentInput.placeholder = "\u30B3\u30E1\u30F3\u30C8\u3092\u5165\u529B\u3057\u3066\u9001\u4FE1";
+        }
+        syncStorySourceEntries(lv, displayEntries);
+        renderUserRooms(arr, lv);
+        renderCharacterScene({
+          hasWatch: true,
+          recording: toggle.checked,
+          commentCount: displayEntries.length,
+          liveId: lv,
+          snapshot: watchSnapshot
+        });
+        renderWatchMetaCard(watchSnapshot, arr);
+        const growthEl = (
+          /** @type {HTMLElement|null} */
+          $("sceneStoryGrowth")
+        );
+        if (growthEl) patchStoryGrowthIconsFromSource(growthEl);
+        renderDevMonitorPanel({
+          snapshot: watchSnapshot,
+          liveId: lv,
+          displayCount: displayEntries.length,
+          storageCount: arr.length,
+          avatarStats: summarizeStoredCommentAvatarStats(arr),
+          profileGaps: summarizeStoredCommentProfileGaps(arr)
+        });
+        updateCommentVelocityLine(
+          /** @type {PopupCommentEntry[]} */
+          displayEntries
+        );
+      };
+      document.documentElement.removeAttribute("data-nl-popup-content-painted");
+      const [tabs, openBag] = await Promise.all([
+        chrome.tabs.query({ active: true, currentWindow: true }),
+        chrome.storage.local.get([
+          KEY_SELF_POSTED_RECENTS,
+          KEY_LAST_WATCH_URL,
+          KEY_RECORDING,
+          KEY_INLINE_PANEL_WIDTH_MODE,
+          KEY_CALM_PANEL_MOTION,
+          KEY_STORAGE_WRITE_ERROR,
+          KEY_COMMENT_PANEL_STATUS
+        ])
+      ]);
+      applySelfPostedRecentsFromBag(openBag);
+      const calmOn = normalizeCalmPanelMotion(openBag[KEY_CALM_PANEL_MOTION], {
+        inlineDefault: INLINE_MODE
+      });
+      applyCalmPanelMotionClass(calmOn);
+      const calmMotionElHydrate = (
+        /** @type {HTMLInputElement|null} */
+        $("calmPanelMotion")
+      );
+      if (calmMotionElHydrate) calmMotionElHydrate.checked = calmOn;
+      const { url, fromActiveTab } = resolveWatchUrlFromTabAndStash(
+        tabs[0],
+        openBag[KEY_LAST_WATCH_URL]
+      );
       const resolvedLv = extractLiveIdFromUrl(url);
       const viewerLvForError = isNicoLiveWatchUrl(url) && resolvedLv ? resolvedLv : "";
-      await renderStorageErrorBanner(viewerLvForError);
-      await renderCommentHarvestBanner(viewerLvForError);
-      const bagRec = await chrome.storage.local.get([
-        KEY_RECORDING,
-        KEY_INLINE_PANEL_WIDTH_MODE
-      ]);
-      toggle.checked = isRecordingEnabled(bagRec[KEY_RECORDING]);
+      applyStorageErrorBannerFromBag(openBag, viewerLvForError);
+      applyCommentHarvestBannerFromBag(openBag, viewerLvForError);
+      toggle.checked = isRecordingEnabled(openBag[KEY_RECORDING]);
       toggle.disabled = false;
       const panelMode = normalizeInlinePanelWidthMode(
-        bagRec[KEY_INLINE_PANEL_WIDTH_MODE]
+        openBag[KEY_INLINE_PANEL_WIDTH_MODE]
       );
       const radioPlayerRow = (
         /** @type {HTMLInputElement|null} */
@@ -4145,6 +6818,7 @@
         watchMetaCache.key = "";
         watchMetaCache.snapshot = null;
         clearWatchMetaCard();
+        popupUserCommentProfileMap = null;
         syncStorySourceEntries("", []);
         resetStoryAvatarDiagState();
         renderCharacterScene({
@@ -4155,12 +6829,24 @@
           snapshot: null
         });
         if (postBtn) postBtn.disabled = true;
-        if (reloadWatchBtn) reloadWatchBtn.disabled = true;
+        setReloadWatchTabUiDisabled(true);
         syncVoiceCommentButton();
         if (commentInput) {
           commentInput.placeholder = "watch\u30DA\u30FC\u30B8\u3092\u958B\u304F\u3068\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1\u3067\u304D\u307E\u3059";
         }
-        renderUserRooms([]);
+        renderUserRooms([], "");
+        renderDevMonitorPanel({
+          snapshot: null,
+          liveId: "",
+          displayCount: 0,
+          storageCount: 0,
+          avatarStats: null,
+          profileGaps: null
+        });
+        hideCommentVelocityLine();
+        void renderSessionSummaryComparePanel("");
+        void renderGiftQuickStatsPanel("");
+        markPopupRefreshContentPainted();
         return;
       }
       const lv = extractLiveIdFromUrl(url);
@@ -4180,6 +6866,7 @@
         watchMetaCache.key = "";
         watchMetaCache.snapshot = null;
         clearWatchMetaCard();
+        popupUserCommentProfileMap = null;
         syncStorySourceEntries("", []);
         resetStoryAvatarDiagState();
         renderCharacterScene({
@@ -4190,31 +6877,62 @@
           snapshot: null
         });
         if (postBtn) postBtn.disabled = true;
-        if (reloadWatchBtn) reloadWatchBtn.disabled = true;
+        setReloadWatchTabUiDisabled(true);
         syncVoiceCommentButton();
         if (commentInput) {
           commentInput.placeholder = "\u30B3\u30E1\u30F3\u30C8\u3092\u5165\u529B\u3057\u3066\u9001\u4FE1";
         }
-        renderUserRooms([]);
+        renderUserRooms([], "");
+        renderDevMonitorPanel({
+          snapshot: null,
+          liveId: "",
+          displayCount: 0,
+          storageCount: 0,
+          avatarStats: null,
+          profileGaps: null
+        });
+        hideCommentVelocityLine();
+        void renderSessionSummaryComparePanel("");
+        void renderGiftQuickStatsPanel("");
+        markPopupRefreshContentPainted();
         return;
       }
       const snapshotKey = `${lv}|${url}|s17`;
-      if (watchMetaCache.key !== snapshotKey || !watchMetaCache.snapshot) {
-        watchMetaCache.key = snapshotKey;
-        const { snapshot } = await requestWatchPageSnapshotFromOpenTab(url);
-        watchMetaCache.snapshot = snapshot;
-      }
-      const watchSnapshot = watchMetaCache.snapshot;
       const key = commentsStorageKey(lv);
-      const data = await chrome.storage.local.get(key);
+      const snapshotCacheHit = watchMetaCache.key === snapshotKey && watchMetaCache.snapshot != null;
+      let watchSnapshot = snapshotCacheHit ? watchMetaCache.snapshot : null;
+      if (!snapshotCacheHit) {
+        watchMetaCache.key = snapshotKey;
+        watchMetaCache.snapshot = null;
+      }
+      const data = await readStorageBagWithRetry(
+        () => chrome.storage.local.get([key, KEY_USER_COMMENT_PROFILE_CACHE]),
+        { attempts: 4, delaysMs: [0, 50, 120, 280] }
+      );
       let arr = Array.isArray(data[key]) ? data[key] : [];
+      popupUserCommentProfileMap = normalizeUserCommentProfileMap(
+        data[KEY_USER_COMMENT_PROFILE_CACHE]
+      );
       const normalizedStored = normalizeStoredCommentEntries(
         /** @type {PopupCommentEntry[]} */
         arr
       );
       if (normalizedStored.changed) {
         arr = normalizedStored.next;
-        await storageSetSafe({ [key]: arr });
+      }
+      const profAfterNormalize = popupMergeUserCommentProfileCache(arr);
+      arr = profAfterNormalize.arr;
+      if (normalizedStored.changed || profAfterNormalize.commentsPatched || profAfterNormalize.cacheTouched) {
+        const save = {};
+        if (normalizedStored.changed || profAfterNormalize.commentsPatched) {
+          save[key] = arr;
+        }
+        if (profAfterNormalize.cacheTouched) {
+          save[KEY_USER_COMMENT_PROFILE_CACHE] = popupUserCommentProfileMap;
+        }
+        if (Object.keys(save).length) {
+          await storageSetSafe(save);
+        }
       }
       STORY_AVATAR_DIAG_STATE.total = arr.length;
       STORY_AVATAR_DIAG_STATE.withUid = countEntriesWithUserId(arr);
@@ -4235,6 +6953,10 @@
       STORY_AVATAR_DIAG_STATE.mergedPatched = 0;
       STORY_AVATAR_DIAG_STATE.mergedUidReplaced = 0;
       STORY_AVATAR_DIAG_STATE.stripped = 0;
+      STORY_AVATAR_DIAG_STATE.interceptExportRows = 0;
+      STORY_AVATAR_DIAG_STATE.interceptExportCode = "";
+      STORY_AVATAR_DIAG_STATE.interceptExportDetail = "";
+      syncInterceptMapDiagFromSnapshot(watchSnapshot);
       const strippedViewerAvatar = stripViewerAvatarContamination(
         arr,
         lv,
@@ -4242,7 +6964,13 @@
       );
       if (strippedViewerAvatar.patched > 0) {
         arr = strippedViewerAvatar.next;
-        await storageSetSafe({ [key]: arr });
+        const profAfterStrip = popupMergeUserCommentProfileCache(arr);
+        arr = profAfterStrip.arr;
+        const saveStrip = { [key]: arr };
+        if (profAfterStrip.cacheTouched) {
+          saveStrip[KEY_USER_COMMENT_PROFILE_CACHE] = popupUserCommentProfileMap;
+        }
+        await storageSetSafe(saveStrip);
       }
       STORY_AVATAR_DIAG_STATE.stripped = strippedViewerAvatar.patched;
       if (INTERCEPT_BACKFILL_STATE.liveId !== lv) {
@@ -4254,111 +6982,139 @@
         0
       );
       const shouldDeep = !INTERCEPT_BACKFILL_STATE.deepTried && arr.length >= 30 && missingIdCount >= Math.ceil(arr.length * 0.4);
-      const interceptItems = await requestInterceptCacheFromOpenTab(url, {
-        deep: shouldDeep
-      });
-      if (shouldDeep) {
-        INTERCEPT_BACKFILL_STATE.deepTried = true;
-      }
-      if (interceptItems.length > 0) {
-        STORY_AVATAR_DIAG_STATE.interceptItems = interceptItems.length;
-        STORY_AVATAR_DIAG_STATE.interceptWithUid = interceptItems.reduce(
-          (sum, it) => it.uid ? sum + 1 : sum,
-          0
+      if (!snapshotCacheHit) {
+        paintWatchPopupUi();
+        markPopupRefreshContentPainted();
+        const snapResult = await requestWatchPageSnapshotFromOpenTab(url);
+        watchMetaCache.snapshot = snapResult.snapshot;
+        watchSnapshot = watchMetaCache.snapshot;
+        const strippedAfterSnap = stripViewerAvatarContamination(
+          arr,
+          lv,
+          watchSnapshot
         );
-        STORY_AVATAR_DIAG_STATE.interceptWithAvatar = interceptItems.reduce(
-          (sum, it) => it.av ? sum + 1 : sum,
-          0
-        );
-        const suspectUidSet = new Set(
-          [
-            String(watchSnapshot?.viewerUserId || "").trim(),
-            String(watchSnapshot?.broadcasterUserId || "").trim()
-          ].filter(Boolean)
-        );
-        const merged = mergeCommentsWithInterceptCache(arr, interceptItems, {
-          preferInterceptUidSet: suspectUidSet
-        });
-        STORY_AVATAR_DIAG_STATE.mergedPatched = merged.patched;
-        STORY_AVATAR_DIAG_STATE.mergedUidReplaced = merged.uidReplaced;
-        if (merged.patched > 0) {
-          arr = merged.next;
+        if (strippedAfterSnap.patched > 0) {
+          arr = strippedAfterSnap.next;
           await storageSetSafe({ [key]: arr });
         }
+        STORY_AVATAR_DIAG_STATE.stripped += strippedAfterSnap.patched;
       }
-      const reconciledOwnPosted = reconcileStoredOwnPostedEntries(arr, lv);
-      if (reconciledOwnPosted.changed || reconciledOwnPosted.pendingChanged) {
-        arr = reconciledOwnPosted.next;
-        selfPostedRecentsCache = reconciledOwnPosted.remaining;
-        await storageSetSafe({
-          [key]: arr,
-          [KEY_SELF_POSTED_RECENTS]: { items: selfPostedRecentsCache }
-        });
-      }
-      STORY_AVATAR_DIAG_STATE.total = arr.length;
-      STORY_AVATAR_DIAG_STATE.withUid = countEntriesWithUserId(arr);
-      STORY_AVATAR_DIAG_STATE.withAvatar = countEntriesWithAvatar(arr);
-      STORY_AVATAR_DIAG_STATE.uniqueAvatar = countUniqueAvatarEntries(arr);
-      {
-        const resolvedAvatar = countResolvedAvatarEntries(arr, lv);
-        STORY_AVATAR_DIAG_STATE.resolvedAvatar = resolvedAvatar.total;
-        STORY_AVATAR_DIAG_STATE.resolvedUniqueAvatar = resolvedAvatar.unique;
-      }
-      STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(arr, lv);
-      STORY_AVATAR_DIAG_STATE.selfSaved = countSavedOwnPostedEntries(arr);
-      STORY_AVATAR_DIAG_STATE.selfPending = countPendingSelfPostedRecentsForLive(lv);
-      STORY_AVATAR_DIAG_STATE.selfPendingMatched = getOwnPostedMatchedIdSet(arr, lv).size;
-      const displayEntries = buildDisplayCommentEntries(arr, lv);
-      STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(displayEntries, lv);
-      setCountDisplay(String(displayEntries.length), watchSnapshot);
-      renderCommentTicker(
-        /** @type {PopupCommentEntry[]} */
-        displayEntries
-      );
-      exportBtn.disabled = false;
-      exportBtn.dataset.liveId = lv;
-      exportBtn.dataset.storageKey = key;
-      exportBtn.dataset.watchUrl = url;
-      if (captureBtn) {
-        captureBtn.disabled = false;
-        captureBtn.dataset.watchUrl = url;
-      }
-      const stats = (
-        /** @type {{ ok?: boolean, count?: number }|null} */
-        await sendMessageToWatchTabs(url, { type: "NLS_THUMB_STATS" })
-      );
-      if (thumbCountEl) {
-        thumbCountEl.textContent = stats && stats.ok === true && typeof stats.count === "number" ? String(stats.count) : "0";
-      }
-      if (postBtn) postBtn.disabled = COMMENT_POST_UI_STATE.submitting;
-      if (reloadWatchBtn) reloadWatchBtn.disabled = false;
-      syncVoiceCommentButton();
-      if (commentInput) {
-        commentInput.placeholder = "\u30B3\u30E1\u30F3\u30C8\u3092\u5165\u529B\u3057\u3066\u9001\u4FE1";
-      }
-      syncStorySourceEntries(lv, displayEntries);
-      renderUserRooms(arr);
-      renderCharacterScene({
-        hasWatch: true,
-        recording: toggle.checked,
-        commentCount: displayEntries.length,
-        liveId: lv,
-        snapshot: watchSnapshot
+      const refreshGen = ++watchPopupRefreshGeneration;
+      if (thumbCountEl) thumbCountEl.textContent = "\u2026";
+      paintWatchPopupUi();
+      markPopupRefreshContentPainted();
+      scheduleDeferredUserCommentProfileHydrate({
+        refreshGen,
+        commentsKey: key,
+        getArr: () => arr,
+        setArr: (next) => {
+          arr = next;
+        },
+        paint: () => paintWatchPopupUi()
       });
-      renderWatchMetaCard(watchSnapshot, arr);
-      renderStoryUserLane();
-      renderCharacterScene({
-        hasWatch: true,
-        recording: toggle.checked,
-        commentCount: displayEntries.length,
+      void maybeFlushBroadcastSessionSummarySample({
         liveId: lv,
-        snapshot: watchSnapshot
+        watchUrl: url,
+        comments: arr,
+        snapshot: watchSnapshot,
+        recording: toggle.checked
       });
-      const growthEl = (
-        /** @type {HTMLElement|null} */
-        $("sceneStoryGrowth")
-      );
-      if (growthEl) patchStoryGrowthIconsFromSource(growthEl);
+      void renderSessionSummaryComparePanel(lv);
+      void renderGiftQuickStatsPanel(lv);
+      void (async () => {
+        try {
+          if (refreshGen !== watchPopupRefreshGeneration) return;
+          const interceptResult = await requestInterceptCacheFromOpenTab(url, {
+            deep: shouldDeep
+          });
+          const interceptItems = interceptResult.items;
+          const interceptDiag = interceptResult.diag;
+          if (refreshGen !== watchPopupRefreshGeneration) return;
+          if (shouldDeep) {
+            INTERCEPT_BACKFILL_STATE.deepTried = true;
+          }
+          STORY_AVATAR_DIAG_STATE.interceptExportRows = interceptItems.length;
+          STORY_AVATAR_DIAG_STATE.interceptExportCode = interceptDiag.code;
+          STORY_AVATAR_DIAG_STATE.interceptExportDetail = interceptDiag.detail || "";
+          syncInterceptMapDiagFromSnapshot(watchSnapshot);
+          if (interceptItems.length > 0) {
+            STORY_AVATAR_DIAG_STATE.interceptItems = interceptItems.length;
+            STORY_AVATAR_DIAG_STATE.interceptWithUid = interceptItems.reduce(
+              (sum, it) => it.uid ? sum + 1 : sum,
+              0
+            );
+            STORY_AVATAR_DIAG_STATE.interceptWithAvatar = interceptItems.reduce(
+              (sum, it) => it.av ? sum + 1 : sum,
+              0
+            );
+            const suspectUidSet = new Set(
+              [
+                String(watchSnapshot?.viewerUserId || "").trim(),
+                String(watchSnapshot?.broadcasterUserId || "").trim()
+              ].filter(Boolean)
+            );
+            const merged = mergeCommentsWithInterceptCache(arr, interceptItems, {
+              preferInterceptUidSet: suspectUidSet
+            });
+            STORY_AVATAR_DIAG_STATE.mergedPatched = merged.patched;
+            STORY_AVATAR_DIAG_STATE.mergedUidReplaced = merged.uidReplaced;
+            if (merged.patched > 0) {
+              arr = merged.next;
+            }
+            let interceptCacheTouched = false;
+            for (const it of interceptItems) {
+              if (upsertUserCommentProfileFromIntercept(popupUserCommentProfileMap, it)) {
+                interceptCacheTouched = true;
+              }
+            }
+            const profAfterIntercept = popupMergeUserCommentProfileCache(arr);
+            arr = profAfterIntercept.arr;
+            if (merged.patched > 0 || profAfterIntercept.commentsPatched || profAfterIntercept.cacheTouched || interceptCacheTouched) {
+              const saveIc = {};
+              if (merged.patched > 0 || profAfterIntercept.commentsPatched) {
+                saveIc[key] = arr;
+              }
+              if (profAfterIntercept.cacheTouched || interceptCacheTouched) {
+                saveIc[KEY_USER_COMMENT_PROFILE_CACHE] = popupUserCommentProfileMap;
+              }
+              if (Object.keys(saveIc).length) {
+                await storageSetSafe(saveIc);
+              }
+            }
+          } else {
+            STORY_AVATAR_DIAG_STATE.interceptItems = 0;
+            STORY_AVATAR_DIAG_STATE.interceptWithUid = 0;
+            STORY_AVATAR_DIAG_STATE.interceptWithAvatar = 0;
+          }
+          const reconciledOwnPosted = reconcileStoredOwnPostedEntries(arr, lv);
+          if (reconciledOwnPosted.changed || reconciledOwnPosted.pendingChanged) {
+            arr = reconciledOwnPosted.next;
+            selfPostedRecentsCache = reconciledOwnPosted.remaining;
+            await storageSetSafe({
+              [key]: arr,
+              [KEY_SELF_POSTED_RECENTS]: { items: selfPostedRecentsCache }
+            });
+          }
+          if (refreshGen !== watchPopupRefreshGeneration) return;
+          const stats = (
+            /** @type {{ ok?: boolean, count?: number }|null} */
+            await sendMessageToWatchTabs(url, { type: "NLS_THUMB_STATS" })
+          );
+          if (refreshGen !== watchPopupRefreshGeneration) return;
+          if (thumbCountEl) {
+            thumbCountEl.textContent = stats && stats.ok === true && typeof stats.count === "number" ? String(stats.count) : "0";
+          }
+          paintWatchPopupUi();
+        } catch (e) {
+          if (isExtensionContextInvalidatedError(e)) {
+            renderExtensionContextBanner(true);
+            return;
+          }
+          if (thumbCountEl && refreshGen === watchPopupRefreshGeneration) {
+            thumbCountEl.textContent = "0";
+          }
+        }
+      })();
     } catch (e) {
       if (isExtensionContextInvalidatedError(e)) {
         renderExtensionContextBanner(true);
@@ -4453,6 +7209,53 @@
       ok: false,
       error: "watch\u30BF\u30D6\u306E\u518D\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002\u30BF\u30D6\u3092\u624B\u52D5\u3067\u66F4\u65B0\u3057\u3066\u304F\u3060\u3055\u3044\u3002"
     };
+  }
+  function setReloadWatchTabUiDisabled(disabled) {
+    const v = Boolean(disabled);
+    const main = (
+      /** @type {HTMLButtonElement|null} */
+      $("reloadWatchTabBtn")
+    );
+    const panel = (
+      /** @type {HTMLButtonElement|null} */
+      $("reloadWatchTabPanelBtn")
+    );
+    if (main) main.disabled = v;
+    if (panel) panel.disabled = v;
+  }
+  var _reloadWatchTabFromPopupInFlight = false;
+  async function triggerReloadWatchTabFromPopup() {
+    const exportBtnEl = (
+      /** @type {HTMLButtonElement|null} */
+      $("exportJson")
+    );
+    const watchUrl = exportBtnEl?.dataset.watchUrl || "";
+    if (!watchUrl || _reloadWatchTabFromPopupInFlight) return;
+    _reloadWatchTabFromPopupInFlight = true;
+    setReloadWatchTabUiDisabled(true);
+    setPostStatus("watch\u30DA\u30FC\u30B8\u3092\u518D\u8AAD\u307F\u8FBC\u307F\u3057\u3066\u3044\u307E\u3059\u2026", "idle");
+    try {
+      const r = await reloadWatchTabForUrl(watchUrl);
+      if (r.ok) {
+        setPostStatus(
+          "\u518D\u8AAD\u307F\u8FBC\u307F\u3092\u5B9F\u884C\u3057\u307E\u3057\u305F\u3002\u6570\u79D2\u5F8C\u306B\u30DD\u30C3\u30D7\u30A2\u30C3\u30D7\u3092\u958B\u304D\u76F4\u3059\u3068\u53CD\u6620\u3055\u308C\u307E\u3059\u3002",
+          "success"
+        );
+      } else {
+        setPostStatus(
+          withCommentSendTroubleshootHint(r.error || "\u518D\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002"),
+          "error"
+        );
+      }
+    } catch {
+      setPostStatus(
+        withCommentSendTroubleshootHint("\u518D\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002"),
+        "error"
+      );
+    } finally {
+      _reloadWatchTabFromPopupInFlight = false;
+      setReloadWatchTabUiDisabled(false);
+    }
   }
   async function listWatchFramesWithInnerText(tabId) {
     try {
@@ -5340,8 +8143,65 @@
     a.click();
     URL.revokeObjectURL(blobUrl);
   }
+  var storageRefreshCoalesceTimer = null;
+  var storageRefreshMaxWaitTimer = null;
+  var STORAGE_REFRESH_COALESCE_MS = 550;
+  var STORAGE_REFRESH_MAX_WAIT_MS = 2200;
+  function isHighFrequencyCommentRelatedStorageKey(key) {
+    const k = String(key || "");
+    if (/^nls_comments_/i.test(k)) return true;
+    if (/^nls_gift_users_/i.test(k)) return true;
+    if (k === KEY_SELF_POSTED_RECENTS) return true;
+    if (k.startsWith(KEY_DEV_MONITOR_TREND_PREFIX)) return true;
+    return false;
+  }
+  function scheduleCoalescedStorageRefresh(changes, runRefresh) {
+    const keys = Object.keys(changes || {});
+    if (!keys.length) return;
+    const allHighFreq = keys.every(
+      (k) => isHighFrequencyCommentRelatedStorageKey(k)
+    );
+    if (!allHighFreq) {
+      if (storageRefreshCoalesceTimer) {
+        clearTimeout(storageRefreshCoalesceTimer);
+        storageRefreshCoalesceTimer = null;
+      }
+      if (storageRefreshMaxWaitTimer) {
+        clearTimeout(storageRefreshMaxWaitTimer);
+        storageRefreshMaxWaitTimer = null;
+      }
+      runRefresh();
+      return;
+    }
+    if (storageRefreshCoalesceTimer) clearTimeout(storageRefreshCoalesceTimer);
+    storageRefreshCoalesceTimer = setTimeout(() => {
+      storageRefreshCoalesceTimer = null;
+      if (storageRefreshMaxWaitTimer) {
+        clearTimeout(storageRefreshMaxWaitTimer);
+        storageRefreshMaxWaitTimer = null;
+      }
+      runRefresh();
+    }, STORAGE_REFRESH_COALESCE_MS);
+    if (!storageRefreshMaxWaitTimer) {
+      storageRefreshMaxWaitTimer = setTimeout(() => {
+        storageRefreshMaxWaitTimer = null;
+        if (storageRefreshCoalesceTimer) {
+          clearTimeout(storageRefreshCoalesceTimer);
+          storageRefreshCoalesceTimer = null;
+        }
+        runRefresh();
+      }, STORAGE_REFRESH_MAX_WAIT_MS);
+    }
+  }
   function initPopup() {
     installExtensionContextErrorGuard();
+    void chrome.storage.local.get(KEY_CALM_PANEL_MOTION).then((b) => {
+      applyCalmPanelMotionClass(
+        normalizeCalmPanelMotion(b[KEY_CALM_PANEL_MOTION], {
+          inlineDefault: INLINE_MODE
+        })
+      );
+    });
     ensureStoryGrowthColorSchemeListener();
     applyResponsivePopupLayout();
     void applyUsageTermsGateState();
@@ -5378,10 +8238,6 @@
     const postBtn = (
       /** @type {HTMLButtonElement} */
       $("postCommentBtn")
-    );
-    const reloadWatchBtn = (
-      /** @type {HTMLButtonElement|null} */
-      $("reloadWatchTabBtn")
     );
     const voiceBtn = (
       /** @type {HTMLButtonElement|null} */
@@ -5441,8 +8297,8 @@
     );
     const applyFrameCodeBtn = $("applyFrameCode");
     const safeRefresh = () => {
-      if (!hasExtensionContext()) return;
-      refresh().catch((e) => {
+      if (!hasExtensionContext()) return Promise.resolve();
+      return refresh().catch((e) => {
         if (!isExtensionContextInvalidatedError(e)) {
         }
       }).finally(() => {
@@ -5452,6 +8308,87 @@
         });
       });
     };
+    $("devMonitorRefresh")?.addEventListener("click", () => {
+      watchMetaCache.key = "";
+      watchMetaCache.snapshot = null;
+      safeRefresh();
+    });
+    $("devMonitorExportTrendBtn")?.addEventListener("click", async () => {
+      const prm = lastDevMonitorPanelParams;
+      const stEl = (
+        /** @type {HTMLElement|null} */
+        $("devMonitorExportTrendStatus")
+      );
+      if (!prm || !String(prm.liveId || "").trim()) {
+        if (stEl) stEl.textContent = "liveId \u306A\u3057";
+        return;
+      }
+      try {
+        const w = typeof globalThis !== "undefined" ? globalThis : window;
+        const trend = await readMergedTrendSeries(w, String(prm.liveId));
+        const out = {
+          exportedAt: (/* @__PURE__ */ new Date()).toISOString(),
+          liveId: prm.liveId,
+          displayCount: prm.displayCount,
+          storageCount: prm.storageCount,
+          trendPointCount: trend.length,
+          trend
+        };
+        await navigator.clipboard.writeText(JSON.stringify(out, null, 2));
+        if (stEl) stEl.textContent = `\u30B3\u30D4\u30FC\u6E08\u307F\uFF08${trend.length} \u70B9\uFF09`;
+      } catch {
+        if (stEl) stEl.textContent = "\u30B3\u30D4\u30FC\u306B\u5931\u6557\u3057\u307E\u3057\u305F";
+      }
+    });
+    $("devMonitorExportMarketingBtn")?.addEventListener("click", async () => {
+      const prm = lastDevMonitorPanelParams;
+      const stEl = (
+        /** @type {HTMLElement|null} */
+        $("devMonitorExportTrendStatus")
+      );
+      const btn = (
+        /** @type {HTMLButtonElement|null} */
+        $("devMonitorExportMarketingBtn")
+      );
+      const lid = String(prm?.liveId || "").trim();
+      if (!lid) {
+        if (stEl) stEl.textContent = "liveId \u306A\u3057";
+        return;
+      }
+      if (btn) btn.disabled = true;
+      if (stEl) stEl.textContent = "\u5206\u6790\u4E2D\u2026";
+      try {
+        const sKey = commentsStorageKey(lid);
+        const data = await chrome.storage.local.get(sKey);
+        const comments = (
+          /** @type {import('../lib/commentRecord.js').StoredComment[]} */
+          Array.isArray(data[sKey]) ? data[sKey] : []
+        );
+        if (comments.length === 0) {
+          if (stEl) stEl.textContent = "\u30B3\u30E1\u30F3\u30C8\u304C0\u4EF6\u3067\u3059";
+          if (btn) btn.disabled = false;
+          return;
+        }
+        const report = aggregateMarketingReport(comments, lid);
+        const html = buildMarketingDashboardHtml(report);
+        const blob = new Blob([html], { type: "text/html;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `nicolivelog-marketing-${lid}-${Date.now()}.html`;
+        document.body.appendChild(a);
+        a.click();
+        setTimeout(() => {
+          URL.revokeObjectURL(url);
+          a.remove();
+        }, 1e3);
+        if (stEl) stEl.textContent = `DL\u5B8C\u4E86\uFF08${report.totalComments}\u4EF6 / ${report.uniqueUsers}\u4EBA\uFF09`;
+      } catch (e) {
+        if (stEl) stEl.textContent = "\u30A8\u30E9\u30FC: " + String(e?.message || e);
+      } finally {
+        if (btn) btn.disabled = false;
+      }
+    });
     const readCustomFrameInputs = () => sanitizeCustomFrame({
       headerStart: (
         /** @type {HTMLInputElement|null} */
@@ -5494,6 +8431,31 @@
       } catch {
       }
     });
+    $("extensionCacheClearBtn")?.addEventListener("click", async () => {
+      const statusEl = $("extensionCacheClearStatus");
+      if (statusEl) statusEl.textContent = "";
+      const confirmMsg = "\u300C\u8868\u793A\u30AD\u30E3\u30C3\u30B7\u30E5\u300D\u3092\u6D88\u3059\u3068\u3001\u3053\u306EPC\u304C\u899A\u3048\u305F\u30E6\u30FC\u30B6\u30FC\u540D\u30FB\u30A2\u30A4\u30B3\u30F3URL\u3060\u3051\u3092\u5FD8\u308C\u307E\u3059\u3002\n\u8A18\u9332\u3057\u305F\u5FDC\u63F4\u30B3\u30E1\u30F3\u30C8\u30FB\u8A2D\u5B9A\u30FB\u5B9A\u671F\u30B5\u30E0\u30CD\u306F\u6D88\u3048\u307E\u305B\u3093\u3002\n\u307E\u305A\u8A66\u3057\u3066\u3044\u306A\u3044\u306A\u3089\u3001\u30AD\u30E3\u30F3\u30BB\u30EB\u3057\u3066\u4E0A\u306E\u300Cwatch \u3092\u518D\u8AAD\u307F\u8FBC\u307F\u300D\u3060\u3051\u3067\u3082\u69CB\u3044\u307E\u305B\u3093\u3002\n\u6D88\u3057\u307E\u3059\u304B\uFF1F";
+      if (!window.confirm(confirmMsg)) return;
+      try {
+        const keys = (
+          /** @type {string[]} */
+          [...EXTENSION_SOFT_CACHE_STORAGE_KEYS]
+        );
+        const ok = await storageRemoveSafe(keys);
+        if (!ok) {
+          if (statusEl) {
+            statusEl.textContent = "\u524A\u9664\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002chrome://extensions \u3067\u62E1\u5F35\u3092\u66F4\u65B0\u3057\u3066\u304B\u3089\u304A\u8A66\u3057\u304F\u3060\u3055\u3044\u3002";
+          }
+          return;
+        }
+        if (statusEl) {
+          statusEl.textContent = "\u6D88\u3057\u307E\u3057\u305F\u3002\u7D9A\u3051\u3066\u300Cwatch \u3092\u518D\u8AAD\u307F\u8FBC\u307F\u300D\u3092\u62BC\u3059\u304B\u3001watch \u30BF\u30D6\u3092 F5 \u3067\u66F4\u65B0\u3057\u3066\u304F\u3060\u3055\u3044\u3002";
+        }
+        safeRefresh();
+      } catch {
+        if (statusEl) statusEl.textContent = "\u524A\u9664\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002";
+      }
+    });
     toggle.addEventListener("change", async () => {
       try {
         const ok = await storageSetSafe({ [KEY_RECORDING]: toggle.checked });
@@ -5520,6 +8482,18 @@
       const t = e.target;
       if (t instanceof HTMLInputElement && t.checked) {
         void saveInlinePanelWidthMode(INLINE_PANEL_WIDTH_VIDEO);
+      }
+    });
+    const calmMotionEl = (
+      /** @type {HTMLInputElement|null} */
+      $("calmPanelMotion")
+    );
+    calmMotionEl?.addEventListener("change", async () => {
+      try {
+        const on = Boolean(calmMotionEl.checked);
+        applyCalmPanelMotionClass(on);
+        await storageSetSafe({ [KEY_CALM_PANEL_MOTION]: on });
+      } catch {
       }
     });
     for (const chip of frameChips) {
@@ -5659,6 +8633,14 @@
       if (!lv || !key || exportBtn.disabled) return;
       try {
         await downloadCommentsHtml(lv, key, watchUrl);
+      } catch {
+      }
+    });
+    $("exportSessionSummaryJsonBtn")?.addEventListener("click", async () => {
+      const lv = exportBtn.dataset.liveId;
+      if (!lv || exportBtn.disabled) return;
+      try {
+        await downloadSessionSummaryJson(lv);
       } catch {
       }
     });
@@ -6023,29 +9005,11 @@
         }
       })();
     });
-    reloadWatchBtn?.addEventListener("click", async () => {
-      const watchUrl = exportBtn.dataset.watchUrl || "";
-      if (!watchUrl || reloadWatchBtn.disabled) return;
-      reloadWatchBtn.disabled = true;
-      setPostStatus("watch\u30DA\u30FC\u30B8\u3092\u518D\u8AAD\u307F\u8FBC\u307F\u3057\u3066\u3044\u307E\u3059\u2026", "idle");
-      try {
-        const r = await reloadWatchTabForUrl(watchUrl);
-        if (r.ok) {
-          setPostStatus("\u518D\u8AAD\u307F\u8FBC\u307F\u3092\u5B9F\u884C\u3057\u307E\u3057\u305F\u3002\u6570\u79D2\u5F8C\u306B\u30DD\u30C3\u30D7\u30A2\u30C3\u30D7\u3092\u958B\u304D\u76F4\u3059\u3068\u53CD\u6620\u3055\u308C\u307E\u3059\u3002", "success");
-        } else {
-          setPostStatus(
-            withCommentSendTroubleshootHint(r.error || "\u518D\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002"),
-            "error"
-          );
-        }
-      } catch {
-        setPostStatus(
-          withCommentSendTroubleshootHint("\u518D\u8AAD\u307F\u8FBC\u307F\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002"),
-          "error"
-        );
-      } finally {
-        reloadWatchBtn.disabled = false;
-      }
+    $("reloadWatchTabBtn")?.addEventListener("click", () => {
+      void triggerReloadWatchTabFromPopup();
+    });
+    $("reloadWatchTabPanelBtn")?.addEventListener("click", () => {
+      void triggerReloadWatchTabFromPopup();
     });
     postBtn?.addEventListener("click", () => {
       submitComment().catch(() => {
@@ -6080,21 +9044,22 @@
       applyPopupFrame(popupFrameState.id, popupFrameState.custom);
     }).finally(() => {
       void (async () => {
+        const refreshDone = safeRefresh();
         await applySupportVisualExpandedFromStorage().catch(() => {
         });
         wireSupportVisualUi();
         document.documentElement.setAttribute("data-nl-support-wired", "");
-        applyThumbSelectFromStorage().catch(() => {
+        void applyThumbSelectFromStorage().catch(() => {
         });
-        applyVoiceAutosendFromStorage().catch(() => {
+        void applyVoiceAutosendFromStorage().catch(() => {
         });
-        applyCommentEnterSendFromStorage().catch(() => {
+        void applyCommentEnterSendFromStorage().catch(() => {
         });
-        applyStoryGrowthCollapsedFromStorage().catch(() => {
+        void applyStoryGrowthCollapsedFromStorage().catch(() => {
         });
-        refreshVoiceInputDeviceList().catch(() => {
+        void refreshVoiceInputDeviceList().catch(() => {
         });
-        safeRefresh();
+        await refreshDone;
       })();
     });
     try {
@@ -6125,7 +9090,9 @@
           const skipVisualExternalSync = changes[KEY_SUPPORT_VISUAL_EXPANDED] && ownSupportVisualPersistInFlight;
           const changedKeys = Object.keys(changes);
           const onlyVisualExpanded = changedKeys.length === 1 && changedKeys[0] === KEY_SUPPORT_VISUAL_EXPANDED;
-          if (!skipVisualExternalSync || !onlyVisualExpanded) safeRefresh();
+          if (!skipVisualExternalSync || !onlyVisualExpanded) {
+            scheduleCoalescedStorageRefresh(changes, () => safeRefresh());
+          }
         });
       }
     } catch {

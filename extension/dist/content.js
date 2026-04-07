@@ -74,6 +74,10 @@
   var KEY_THUMB_AUTO = "nls_thumb_auto_enabled";
   var KEY_THUMB_INTERVAL_MS = "nls_thumb_interval_ms";
   var KEY_SELF_POSTED_RECENTS = "nls_self_posted_recents";
+  var KEY_USER_COMMENT_PROFILE_CACHE = "nls_user_comment_profile_v1";
+  var EXTENSION_SOFT_CACHE_STORAGE_KEYS = Object.freeze([
+    KEY_USER_COMMENT_PROFILE_CACHE
+  ]);
   var KEY_INLINE_PANEL_WIDTH_MODE = "nls_inline_panel_width_mode";
   var INLINE_PANEL_WIDTH_PLAYER_ROW = "player_row";
   var INLINE_PANEL_WIDTH_VIDEO = "video";
@@ -88,6 +92,10 @@
   function commentsStorageKey(liveId2) {
     const id = String(liveId2 || "").trim().toLowerCase();
     return `nls_comments_${id}`;
+  }
+  function giftUsersStorageKey(liveId2) {
+    const id = String(liveId2 || "").trim().toLowerCase();
+    return `nls_gift_users_${id}`;
   }
 
   // src/lib/videoCapture.js
@@ -293,6 +301,99 @@
     const bucket = Math.max(1, Math.floor(n / 1e4));
     return `https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/${bucket}/${s}.jpg`;
   }
+  function looksLikeNiconicoUserIconHttpUrl(url) {
+    const s = String(url || "").trim();
+    if (!isHttpOrHttpsUrl(s)) return false;
+    return /nicoaccount\/usericon|\/usericon\/|usericon\.nicovideo|\/usericon\/defaults\//i.test(
+      s
+    );
+  }
+  function isWeakNiconicoUserIconHttpUrl(url) {
+    const s = String(url || "").trim();
+    if (!isHttpOrHttpsUrl(s)) return false;
+    return /\/usericon\/defaults\//i.test(s);
+  }
+  function isNiconicoSyntheticDefaultUserIconUrl(avatarUrl, userId) {
+    const url = String(avatarUrl || "").trim();
+    const uid = String(userId || "").trim();
+    if (!isHttpOrHttpsUrl(url) || !/^\d{5,14}$/.test(uid)) return false;
+    const expected = niconicoDefaultUserIconUrl(uid);
+    return Boolean(expected && url === expected);
+  }
+  function commentEnrichmentAvatarScore(userId, url) {
+    const c = String(url || "").trim();
+    if (!isHttpOrHttpsUrl(c)) return 0;
+    if (isWeakNiconicoUserIconHttpUrl(c)) return 1;
+    const u = String(userId || "").trim();
+    if (/^\d{5,14}$/.test(u) && isNiconicoSyntheticDefaultUserIconUrl(c, u)) return 1;
+    return 2;
+  }
+  function pickStrongestAvatarUrlForUser(userId, orderedCandidates) {
+    const u = String(userId || "").trim();
+    let best = "";
+    let bestSc = 0;
+    if (!Array.isArray(orderedCandidates)) return "";
+    for (const raw of orderedCandidates) {
+      const c = String(raw || "").trim();
+      if (!c) continue;
+      const sc = commentEnrichmentAvatarScore(u, c);
+      if (sc > bestSc) {
+        bestSc = sc;
+        best = c;
+      }
+    }
+    return best;
+  }
+
+  // src/lib/userIdPreference.js
+  function userIdObservationStrength(userId) {
+    const s = String(userId ?? "").trim();
+    if (!s) return 0;
+    if (/^\d{5,14}$/.test(s)) return 2;
+    return 1;
+  }
+  function pickStrongerUserId(existing, incoming, tiePrefer = "incoming") {
+    const ex = String(existing ?? "").trim();
+    const inc = String(incoming ?? "").trim();
+    if (!inc) return ex;
+    if (!ex) return inc;
+    const se = userIdObservationStrength(ex);
+    const si = userIdObservationStrength(inc);
+    if (si > se) return inc;
+    if (si < se) return ex;
+    if (inc === ex) return ex;
+    return tiePrefer === "existing" ? ex : inc;
+  }
+  function mergeUserIdForEnrichment(rowUid, interceptedUid, rowLikelyContaminated) {
+    const int = String(interceptedUid ?? "").trim();
+    const row = String(rowUid ?? "").trim();
+    if (rowLikelyContaminated) {
+      if (int) return int;
+      return row || null;
+    }
+    const dom = row;
+    if (!dom && !int) return null;
+    if (!dom) return int;
+    if (!int) return dom;
+    const sd = userIdObservationStrength(dom);
+    const si = userIdObservationStrength(int);
+    if (si > sd) return int;
+    if (sd > si) return dom;
+    return dom;
+  }
+
+  // src/lib/nicoAnonymousDisplay.js
+  function isNiconicoAnonymousUserId(userId) {
+    const s = String(userId ?? "").trim();
+    if (!s.startsWith("a:")) return false;
+    const rest = s.slice(2).trim();
+    return rest.length >= 2;
+  }
+  function anonymousNicknameFallback(userId, nickname) {
+    const nick = String(nickname ?? "").trim();
+    if (nick) return nick;
+    return isNiconicoAnonymousUserId(userId) ? "\u533F\u540D" : "";
+  }
 
   // src/lib/commentRecord.js
   function userIdFromNicoUserIconHttpUrl(url) {
@@ -324,7 +425,6 @@
     const text = normalizeCommentText(p.text);
     const commentNo = String(p.commentNo ?? "").trim();
     const liveId2 = String(p.liveId || "").trim().toLowerCase();
-    const nickname = p.nickname ? String(p.nickname).trim() : "";
     const av = String(p.avatarUrl || "").trim();
     const avatarUrl = isHttpOrHttpsUrl(av) ? av : "";
     let uid = p.userId ? String(p.userId).trim() : "";
@@ -332,6 +432,7 @@
       const fromAv = userIdFromNicoUserIconHttpUrl(avatarUrl);
       if (fromAv) uid = fromAv;
     }
+    const nickname = anonymousNicknameFallback(uid, p.nickname);
     const entry = {
       id: randomId(),
       liveId: liveId2,
@@ -340,6 +441,9 @@
       userId: uid || null,
       ...nickname ? { nickname } : {},
       ...avatarUrl ? { avatarUrl } : {},
+      ...p.vpos != null ? { vpos: p.vpos } : {},
+      ...p.accountStatus != null ? { accountStatus: p.accountStatus } : {},
+      ...p.is184 ? { is184: true } : {},
       capturedAt
     };
     return entry;
@@ -394,20 +498,35 @@
           let patched = ex;
           let touched = false;
           if (validAvatar) {
-            const hasAv = Boolean(
-              ex.avatarUrl && isHttpOrHttpsUrl(String(ex.avatarUrl))
-            );
+            const exAv = String(ex.avatarUrl || "").trim();
+            const hasAv = Boolean(exAv && isHttpOrHttpsUrl(exAv));
+            let uidForSynthetic = String(ex.userId || incUid || "").trim();
+            if (!uidForSynthetic && exAv) {
+              uidForSynthetic = userIdFromNicoUserIconHttpUrl(exAv);
+            }
+            const canUpgradeSynthetic = hasAv && looksLikeNiconicoUserIconHttpUrl(validAvatar) && validAvatar !== exAv && isNiconicoSyntheticDefaultUserIconUrl(exAv, uidForSynthetic);
+            const canUpgradeWeakPlaceholder = hasAv && isWeakNiconicoUserIconHttpUrl(exAv) && looksLikeNiconicoUserIconHttpUrl(validAvatar) && !isWeakNiconicoUserIconHttpUrl(validAvatar) && validAvatar !== exAv;
             if (!hasAv) {
+              patched = { ...patched, avatarUrl: validAvatar };
+              touched = true;
+            } else if (canUpgradeSynthetic) {
+              patched = { ...patched, avatarUrl: validAvatar };
+              touched = true;
+            } else if (canUpgradeWeakPlaceholder) {
               patched = { ...patched, avatarUrl: validAvatar };
               touched = true;
             }
           }
-          if (incUid && String(patched.userId || "").trim() !== incUid) {
-            patched = { ...patched, userId: incUid };
+          const exUid = String(patched.userId || "").trim();
+          const chosenUid = pickStrongerUserId(exUid, incUid);
+          if (incUid && chosenUid !== exUid) {
+            patched = { ...patched, userId: chosenUid ? chosenUid : null };
             touched = true;
           }
-          const incNick = String(row.nickname || "").trim();
-          if (incNick && !String(patched.nickname || "").trim()) {
+          const incNickRaw = String(row.nickname || "").trim();
+          const incNick = incNickRaw || anonymousNicknameFallback(String(patched.userId || incUid || ""), "");
+          const exNick = String(patched.nickname || "").trim();
+          if (incNick && (!exNick || incNick.length > exNick.length)) {
             patched = { ...patched, nickname: incNick };
             touched = true;
           }
@@ -435,12 +554,204 @@
         text,
         userId: row.userId ?? null,
         nickname: row.nickname || "",
-        avatarUrl: validAvatar || void 0
+        avatarUrl: validAvatar || void 0,
+        vpos: row.vpos,
+        accountStatus: row.accountStatus,
+        is184: row.is184
       });
       added.push(entry);
       next.push(entry);
     }
     if (added.length) storageTouched = true;
+    return { next, added, storageTouched };
+  }
+
+  // src/lib/userCommentProfileCache.js
+  var USER_COMMENT_PROFILE_CACHE_MAX = 5e3;
+  function normalizeUserCommentProfileMap(raw) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+    const src = (
+      /** @type {Record<string, unknown>} */
+      raw
+    );
+    const out = {};
+    for (const [k, v] of Object.entries(src)) {
+      const uid = String(k || "").trim();
+      if (!uid || uid.length > 128) continue;
+      if (!v || typeof v !== "object" || Array.isArray(v)) continue;
+      const o = (
+        /** @type {Record<string, unknown>} */
+        v
+      );
+      const updatedAt = Number(o.updatedAt);
+      if (!Number.isFinite(updatedAt) || updatedAt <= 0) continue;
+      const nick = String(o.nickname || "").trim().slice(0, 200);
+      const av = String(o.avatarUrl || "").trim();
+      const avatarUrl = av && isHttpOrHttpsUrl(av) && !isWeakNiconicoUserIconHttpUrl(av) ? av.slice(0, 2e3) : "";
+      if (!nick && !avatarUrl) continue;
+      out[uid] = {
+        updatedAt,
+        ...nick ? { nickname: nick } : {},
+        ...avatarUrl ? { avatarUrl } : {}
+      };
+    }
+    return out;
+  }
+  function mergeIntoMap(map, uid, p) {
+    const nickIn = String(p.nickname || "").trim();
+    const avIn = String(p.avatarUrl || "").trim();
+    const strongAv = avIn && isHttpOrHttpsUrl(avIn) && !isWeakNiconicoUserIconHttpUrl(avIn) ? avIn : "";
+    if (!nickIn && !strongAv) return false;
+    const now = Date.now();
+    const prev = map[uid] || { updatedAt: 0 };
+    let nextNick = String(prev.nickname || "").trim();
+    let nextAv = String(prev.avatarUrl || "").trim();
+    let changed = false;
+    if (nickIn) {
+      if (!nextNick || nickIn.length > nextNick.length) {
+        nextNick = nickIn;
+        changed = true;
+      }
+    }
+    if (strongAv) {
+      const prevStrong = nextAv && isHttpOrHttpsUrl(nextAv) && !isWeakNiconicoUserIconHttpUrl(nextAv);
+      if (!prevStrong) {
+        nextAv = strongAv;
+        changed = true;
+      }
+    }
+    if (!changed) return false;
+    const entry = { updatedAt: now };
+    if (nextNick) entry.nickname = nextNick;
+    if (nextAv && isHttpOrHttpsUrl(nextAv)) entry.avatarUrl = nextAv;
+    map[uid] = entry;
+    return true;
+  }
+  function upsertUserCommentProfileFromEntry(map, entry) {
+    const uid = String(entry?.userId || "").trim();
+    if (!uid) return false;
+    return mergeIntoMap(map, uid, {
+      nickname: String(entry?.nickname || "").trim(),
+      avatarUrl: String(entry?.avatarUrl || "").trim()
+    });
+  }
+  function applyUserCommentProfileMapToEntries(entries, map) {
+    if (!Array.isArray(entries) || !entries.length || !Object.keys(map).length) {
+      return { next: entries, patched: 0 };
+    }
+    let patched = 0;
+    const next = entries.map((e) => {
+      const uid = String(
+        /** @type {{ userId?: string|null }} */
+        e?.userId || ""
+      ).trim();
+      if (!uid) return e;
+      const hit = map[uid];
+      if (!hit) return e;
+      const curNick = String(
+        /** @type {{ nickname?: string }} */
+        e?.nickname || ""
+      ).trim();
+      const candNick = String(hit.nickname || "").trim();
+      const curAv = String(
+        /** @type {{ avatarUrl?: string }} */
+        e?.avatarUrl || ""
+      ).trim();
+      const candAv = String(hit.avatarUrl || "").trim();
+      let out = (
+        /** @type {T} */
+        e
+      );
+      let changed = false;
+      if (candNick && (!curNick || candNick.length > curNick.length)) {
+        out = { ...out, nickname: candNick };
+        changed = true;
+      }
+      if (candAv && isHttpOrHttpsUrl(candAv) && !isWeakNiconicoUserIconHttpUrl(candAv)) {
+        const curStrong = curAv && isHttpOrHttpsUrl(curAv) && !isWeakNiconicoUserIconHttpUrl(curAv);
+        if (!curStrong) {
+          out = { ...out, avatarUrl: candAv };
+          changed = true;
+        }
+      }
+      if (changed) patched += 1;
+      return out;
+    });
+    return { next, patched };
+  }
+  function pruneUserCommentProfileMap(map, max = USER_COMMENT_PROFILE_CACHE_MAX) {
+    const raw = Number(max);
+    const lim = Math.max(
+      1,
+      Math.min(
+        Number.isFinite(raw) && raw > 0 ? raw : USER_COMMENT_PROFILE_CACHE_MAX,
+        2e4
+      )
+    );
+    const ids = Object.keys(map);
+    if (ids.length <= lim) return map;
+    ids.sort((a, b) => (map[b].updatedAt || 0) - (map[a].updatedAt || 0));
+    const keep = new Set(ids.slice(0, lim));
+    const out = {};
+    for (const id of keep) {
+      out[id] = map[id];
+    }
+    return out;
+  }
+  async function readStorageBagWithRetry(readFn, opts = {}) {
+    const attempts = Math.max(1, Math.min(Number(opts.attempts) || 4, 8));
+    const delays = Array.isArray(opts.delaysMs) && opts.delaysMs.length ? opts.delaysMs : [0, 50, 120, 280];
+    for (let i = 0; i < attempts; i += 1) {
+      if (i > 0) {
+        const ms = Math.max(
+          0,
+          Number(delays[Math.min(i - 1, delays.length - 1)]) || 0
+        );
+        if (ms > 0) {
+          await new Promise((r) => setTimeout(r, ms));
+        }
+      }
+      try {
+        const bag = await readFn();
+        if (bag && typeof bag === "object" && !Array.isArray(bag)) {
+          return (
+            /** @type {Record<string, unknown>} */
+            bag
+          );
+        }
+      } catch {
+      }
+    }
+    return {};
+  }
+
+  // src/lib/giftRecord.js
+  function mergeGiftUsers(existing, incoming) {
+    const byId = /* @__PURE__ */ new Map();
+    for (const e of existing) {
+      byId.set(e.userId, e);
+    }
+    const added = [];
+    let storageTouched = false;
+    const now = Date.now();
+    for (const inc of incoming) {
+      const uid = String(inc.userId || "").trim();
+      if (!uid) continue;
+      const nick = String(inc.nickname || "").trim();
+      const ex = byId.get(uid);
+      if (ex) {
+        if (nick && !ex.nickname) {
+          byId.set(uid, { ...ex, nickname: nick });
+          storageTouched = true;
+        }
+        continue;
+      }
+      const entry = { userId: uid, nickname: nick, capturedAt: now };
+      byId.set(uid, entry);
+      added.push(entry);
+    }
+    if (added.length) storageTouched = true;
+    const next = [...byId.values()];
     return { next, added, storageTouched };
   }
 
@@ -530,16 +841,17 @@
     }
     return null;
   }
+  var NICO_USER_ICON_IMG_LAZY_ATTRS = Object.freeze([
+    "src",
+    "data-src",
+    "data-lazy-src",
+    "data-original",
+    "data-url"
+  ]);
   function collectNicoUserIconUrlPartsFromImg(img) {
     if (!(img instanceof HTMLImageElement)) return [];
     const urls = [];
-    for (const a of [
-      "src",
-      "data-src",
-      "data-original",
-      "data-lazy-src",
-      "data-url"
-    ]) {
+    for (const a of NICO_USER_ICON_IMG_LAZY_ATTRS) {
       const v = img.getAttribute(a);
       if (v) urls.push(String(v).trim());
     }
@@ -814,6 +1126,57 @@
     if (!userId) userId = extractUserIdFromOuterHtml(row);
     return userId;
   }
+  function cleanNicknameCandidate(raw) {
+    const t = String(raw ?? "").replace(/\u00a0/g, " ").replace(/\s+/g, " ").trim();
+    if (!t || t.length > 128) return "";
+    if (/^https?:\/\//i.test(t)) return "";
+    return t;
+  }
+  function extractNicknameFromNicoLiveCommentRow(row, commentText) {
+    if (!row || row.nodeType !== 1) return "";
+    const bodyNorm = String(commentText || "").replace(/\s+/g, " ").trim();
+    const accept = (n) => {
+      const s = cleanNicknameCandidate(n);
+      if (!s) return "";
+      if (bodyNorm && s === bodyNorm) return "";
+      return s;
+    };
+    try {
+      const links = row.querySelectorAll('a[href*="/user/"]');
+      for (const a of links) {
+        const t = accept(a.getAttribute("title") || "");
+        if (t) return t;
+        const ar = accept(a.getAttribute("aria-label") || "");
+        if (ar) return ar;
+      }
+    } catch {
+    }
+    const dataHints = [
+      row.getAttribute("data-user-name"),
+      row.getAttribute("data-username"),
+      row.getAttribute("data-display-name")
+    ];
+    for (const d of dataHints) {
+      const t = accept(d || "");
+      if (t) return t;
+    }
+    try {
+      const namedChild = row.querySelector("[data-user-name]");
+      if (namedChild) {
+        const t = accept(namedChild.getAttribute("data-user-name") || "");
+        if (t) return t;
+      }
+    } catch {
+    }
+    const fromFiber = extractNicknameFromReactFiberInSubtree(row, 56, {
+      skipRoot: true
+    });
+    if (fromFiber) {
+      const t = accept(fromFiber);
+      if (t) return t;
+    }
+    return "";
+  }
   function getReactFiber(el) {
     if (!el) return null;
     const keys = Object.keys(el);
@@ -881,6 +1244,81 @@
     }
     return null;
   }
+  var NICKNAME_PROP_KEYS = [
+    "name",
+    "nickname",
+    "nickName",
+    "userName",
+    "screenName",
+    "handleName",
+    "displayName",
+    "userNickname",
+    "senderName",
+    "profileName"
+  ];
+  function pickNicknameFromBag(bag) {
+    if (!bag || typeof bag !== "object") return "";
+    const obj = (
+      /** @type {Record<string, unknown>} */
+      bag
+    );
+    for (const key of NICKNAME_PROP_KEYS) {
+      const v = obj[key];
+      if (v == null) continue;
+      const s = cleanNicknameCandidate(String(v));
+      if (s) return s;
+    }
+    for (const key of ["comment", "data", "item", "chat", "message"]) {
+      const nested = obj[key];
+      if (!nested || typeof nested !== "object") continue;
+      const nestedObj = (
+        /** @type {Record<string, unknown>} */
+        nested
+      );
+      for (const nk of NICKNAME_PROP_KEYS) {
+        const v = nestedObj[nk];
+        if (v == null) continue;
+        const s = cleanNicknameCandidate(String(v));
+        if (s) return s;
+      }
+    }
+    return "";
+  }
+  function pickNicknameFromFiber(fiber) {
+    if (!fiber || typeof fiber !== "object") return "";
+    const f = (
+      /** @type {{ memoizedProps?: unknown, pendingProps?: unknown }} */
+      fiber
+    );
+    for (const bag of [f.memoizedProps, f.pendingProps]) {
+      const n = pickNicknameFromBag(bag);
+      if (n) return n;
+    }
+    return "";
+  }
+  function extractNicknameFromReactFiberSelfOnly(el) {
+    if (!el || el.nodeType !== 1) return "";
+    const fiber = getReactFiber(el);
+    if (!fiber) return "";
+    return pickNicknameFromFiber(fiber);
+  }
+  function extractNicknameFromReactFiberInSubtree(root, maxNodes = 56, opts = {}) {
+    if (!root || root.nodeType !== 1) return "";
+    const skipRoot = Boolean(opts.skipRoot);
+    const queue = [];
+    if (!skipRoot) queue.push(root);
+    for (const c of root.children) queue.push(c);
+    let seen = 0;
+    while (queue.length > 0 && seen < maxNodes) {
+      const el = queue.shift();
+      if (!el || el.nodeType !== 1) continue;
+      seen += 1;
+      const n = extractNicknameFromReactFiberSelfOnly(el);
+      if (n) return n;
+      for (const c of el.children) queue.push(c);
+    }
+    return "";
+  }
   function extractUserIdFromOuterHtml(el, maxLen = 12e3) {
     if (!el || el.nodeType !== 1) return null;
     let html = "";
@@ -928,7 +1366,6 @@
     if (!el || el.nodeType !== 1) return null;
     const row = el.matches?.(".table-row") ? el : el.closest?.('div.table-row[role="row"]') || el.closest?.(".table-row");
     if (!row) return null;
-    if (row.getAttribute("data-comment-type") !== "normal") return null;
     const numEl = row.querySelector(".comment-number");
     const textEl = row.querySelector(".comment-text");
     if (!numEl || !textEl) return null;
@@ -939,7 +1376,9 @@
     const userId = resolveUserIdForNicoLiveCommentRow(row);
     const base = documentBaseHref(row.ownerDocument) || "https://live.nicovideo.jp/";
     const avatarUrl = extractUserIconUrlFromElement(row, base);
+    const nickname = extractNicknameFromNicoLiveCommentRow(row, text);
     const out = { commentNo, text, userId };
+    if (nickname) out.nickname = nickname;
     if (avatarUrl) out.avatarUrl = avatarUrl;
     return out;
   }
@@ -970,6 +1409,14 @@
     if (p) return withAv(p);
     return null;
   }
+  function closestHarvestableNicoCommentRow(el) {
+    if (!el || el.nodeType !== 1) return null;
+    const row = el.closest?.('div.table-row[role="row"]') || el.closest?.("div.table-row");
+    if (!row) return null;
+    if (!row.querySelector?.(".comment-number") || !row.querySelector?.(".comment-text"))
+      return null;
+    return row;
+  }
   var ROW_QUERY = [
     "li",
     '[role="listitem"]',
@@ -979,11 +1426,14 @@
   function collectNicoLiveTableRows(el) {
     if (!el || el.nodeType !== 1) return [];
     const set = /* @__PURE__ */ new Set();
+    const maybeAdd = (r) => {
+      if (!r.querySelector?.(".comment-number") || !r.querySelector?.(".comment-text"))
+        return;
+      set.add(r);
+    };
     try {
-      if (el.matches?.('div.table-row[data-comment-type="normal"]')) set.add(el);
-      el.querySelectorAll?.('div.table-row[data-comment-type="normal"]').forEach(
-        (r) => set.add(r)
-      );
+      if (el.matches?.("div.table-row")) maybeAdd(el);
+      el.querySelectorAll?.("div.table-row").forEach((r) => maybeAdd(r));
     } catch {
     }
     return [...set];
@@ -1383,10 +1833,32 @@
     if (!win?.requestAnimationFrame) return Promise.resolve();
     return new Promise((r) => win.requestAnimationFrame(() => r()));
   }
+  function pageUserLikelyTypingIn(doc) {
+    const ae = doc.activeElement;
+    if (!ae || ae.nodeType !== Node.ELEMENT_NODE) return false;
+    const el = (
+      /** @type {Element} */
+      ae
+    );
+    const tag = el.tagName;
+    if (tag === "TEXTAREA") return true;
+    if (tag === "INPUT") {
+      const t = (
+        /** @type {HTMLInputElement} */
+        el.type
+      );
+      return t === "text" || t === "search" || t === "email" || t === "url" || t === "tel" || t === "";
+    }
+    return (
+      /** @type {HTMLElement} */
+      el.isContentEditable === true
+    );
+  }
   async function harvestVirtualCommentList(opts) {
     const doc = opts.document || document;
     const extract = opts.extractCommentsFromNode;
     const waitMs = opts.waitMs ?? 50;
+    const respectTyping = opts.respectTyping !== false;
     const panel = findNicoCommentPanel(doc);
     const scanRoot = panel || doc.body;
     if (!extract) return [];
@@ -1410,10 +1882,16 @@
       mergeInto(m, extract(scanRoot));
       return [...m.values()];
     }
+    if (respectTyping && pageUserLikelyTypingIn(doc)) {
+      const m = /* @__PURE__ */ new Map();
+      mergeInto(m, extract(scanRoot));
+      return [...m.values()];
+    }
     const out = /* @__PURE__ */ new Map();
     const saved = host.scrollTop;
     const max = Math.max(0, host.scrollHeight - host.clientHeight);
     const step = Math.max(64, Math.floor(host.clientHeight * 0.72));
+    const focusEl = doc.activeElement instanceof HTMLElement ? doc.activeElement : null;
     host.scrollTop = 0;
     await raf(doc);
     await delay(waitMs);
@@ -1431,6 +1909,16 @@
     host.scrollTop = saved;
     await raf(doc);
     await delay(30);
+    if (focusEl && focusEl.isConnected) {
+      try {
+        focusEl.focus({ preventScroll: true });
+      } catch {
+        try {
+          focusEl.focus();
+        } catch {
+        }
+      }
+    }
     return [...out.values()];
   }
 
@@ -1743,11 +2231,34 @@
     };
   }
 
+  // src/lib/watchSnapshotOfficialFields.js
+  function buildWatchSnapshotOfficialFields(p) {
+    const {
+      nowMs,
+      officialViewerCount: officialViewerCount2,
+      officialCommentCount: officialCommentCount2,
+      officialStatsUpdatedAt: officialStatsUpdatedAt2,
+      officialViewerIntervalMs: officialViewerIntervalMs2,
+      officialCommentSummary
+    } = p;
+    return {
+      officialViewerCount: typeof officialViewerCount2 === "number" && Number.isFinite(officialViewerCount2) && officialViewerCount2 >= 0 ? officialViewerCount2 : null,
+      officialCommentCount: typeof officialCommentCount2 === "number" && Number.isFinite(officialCommentCount2) && officialCommentCount2 >= 0 ? officialCommentCount2 : null,
+      officialStatsUpdatedAt: officialStatsUpdatedAt2 > 0 ? officialStatsUpdatedAt2 : null,
+      officialStatsFreshnessMs: officialStatsUpdatedAt2 > 0 ? Math.max(0, nowMs - officialStatsUpdatedAt2) : null,
+      officialViewerIntervalMs: typeof officialViewerIntervalMs2 === "number" && officialViewerIntervalMs2 > 0 ? officialViewerIntervalMs2 : null,
+      officialStatisticsCommentsDelta: officialCommentSummary?.statisticsCommentsDelta ?? null,
+      officialReceivedCommentsDelta: officialCommentSummary?.receivedCommentsDelta ?? null,
+      officialCommentSampleWindowMs: officialCommentSummary?.sampleWindowMs ?? null,
+      officialCaptureRatio: typeof officialCommentSummary?.captureRatio === "number" ? officialCommentSummary.captureRatio : null
+    };
+  }
+
   // src/extension/content-entry.js
-  var DEBOUNCE_MS = 400;
+  var DEBOUNCE_MS = 140;
   var LIVE_POLL_MS = 4e3;
   var STATS_POLL_MS = 45e3;
-  var LIVE_PANEL_SCAN_MS = 2e3;
+  var LIVE_PANEL_SCAN_MS = 800;
   var DEEP_HARVEST_DELAY_MS = 1200;
   var BOOTSTRAP_DELAYS_MS = [400, 2e3, 4500];
   var MAX_SELF_POSTED_ITEMS = 48;
@@ -2060,7 +2571,8 @@
   var INTERCEPT_MAP_MAX = 8e3;
   var ndgrChatRowsPending = [];
   var ndgrChatRowsFlushTimer = null;
-  var NDGR_CHAT_ROWS_FLUSH_MS = 120;
+  var NDGR_CHAT_ROWS_FLUSH_MS = 150;
+  var NDGR_PENDING_FLUSH_THRESHOLD = 240;
   function clearNdgrChatRowsPending() {
     ndgrChatRowsPending.length = 0;
     if (ndgrChatRowsFlushTimer != null) {
@@ -2098,12 +2610,31 @@
         ...mNick ? { nickname: mNick } : {}
       });
     }
-    const merged = [...byKey.values()];
+    const merged = [...byKey.values()].map((r) => {
+      const uid = String(r.userId || "").trim();
+      const nick = anonymousNicknameFallback(uid, r.nickname);
+      return nick ? { ...r, nickname: nick } : r;
+    });
+    for (const r of merged) {
+      const u = String(r.userId || "").trim();
+      const n = String(r.nickname || "").trim();
+      if (u && n) interceptedNicknames.set(u, n);
+    }
     await persistCommentRows(merged);
   }
   function schedulePersistNdgrChatRows(rows) {
     if (!Array.isArray(rows) || !rows.length) return;
     ndgrChatRowsPending.push(...rows);
+    if (ndgrChatRowsPending.length >= NDGR_PENDING_FLUSH_THRESHOLD) {
+      if (ndgrChatRowsFlushTimer != null) {
+        clearTimeout(ndgrChatRowsFlushTimer);
+        ndgrChatRowsFlushTimer = null;
+      }
+      const slice = ndgrChatRowsPending;
+      ndgrChatRowsPending = [];
+      void flushNdgrChatRowsBatch(slice);
+      return;
+    }
     if (ndgrChatRowsFlushTimer != null) return;
     ndgrChatRowsFlushTimer = setTimeout(() => {
       ndgrChatRowsFlushTimer = null;
@@ -2129,6 +2660,17 @@
   function resetOfficialCommentSamplingState() {
     officialCommentHistory.length = 0;
     observedRecordedCommentCount = 0;
+  }
+  function maybeFillProgramBeginFromEmbeddedData() {
+    if (programBeginAtMs != null && Number.isFinite(programBeginAtMs) && programBeginAtMs > 0) {
+      return;
+    }
+    const props = extractEmbeddedDataProps(document);
+    if (!props) return;
+    const t = pickProgramBeginAt(props);
+    if (t != null && Number.isFinite(t) && t > 0) {
+      programBeginAtMs = t;
+    }
   }
   function noteOfficialViewerTick(at) {
     if (!(at > 0)) return;
@@ -2227,9 +2769,36 @@
           const row = { commentNo, text, userId: uid || null };
           const nick = String(x.nickname ?? "").trim();
           if (nick) row.nickname = nick;
+          if (x.vpos != null) row.vpos = x.vpos;
+          if (x.accountStatus != null) row.accountStatus = x.accountStatus;
+          if (x.is184) row.is184 = true;
           cleaned.push(row);
         }
         if (cleaned.length) schedulePersistNdgrChatRows(cleaned);
+      }
+      return;
+    }
+    if (e.data.type === "NLS_INTERCEPT_GIFT_USERS") {
+      const raw = e.data.users;
+      if (Array.isArray(raw) && raw.length && liveId && hasExtensionContext()) {
+        const key = giftUsersStorageKey(liveId);
+        chrome.storage.local.get(key).then((bag) => {
+          const existing = Array.isArray(bag[key]) ? bag[key] : [];
+          const { next, storageTouched } = mergeGiftUsers(existing, raw);
+          if (storageTouched) {
+            chrome.storage.local.set({ [key]: next }).catch((err) => {
+              if (!isContextInvalidatedError(err) && hasExtensionContext()) {
+                try {
+                  chrome.storage.local.set({
+                    [KEY_STORAGE_WRITE_ERROR]: buildStorageWriteErrorPayload(liveId, err)
+                  });
+                } catch {
+                }
+              }
+            });
+          }
+        }).catch(() => {
+        });
       }
       return;
     }
@@ -2450,7 +3019,10 @@
     }
     #${INLINE_POPUP_HOST_ID} iframe {
       width: 100%;
-      height: 820px;
+      /* \u5FDC\u63F4\u30B0\u30EA\u30C3\u30C9\u304C\u898B\u3048\u308B\u9AD8\u3055\u306B\u3057\u3064\u3064\u3001\u65E7 820px \u7D1A\u306E\u5854\u306F\u907F\u3051\u308B\uFF08\u5185\u5074\u30B9\u30AF\u30ED\u30FC\u30EB\uFF09 */
+      height: min(560px, 58vh);
+      min-height: 240px;
+      max-height: min(720px, 72vh);
       border: none !important;
       border-radius: 0;
       box-shadow: none !important;
@@ -2553,12 +3125,12 @@
     } catch {
     }
     const ar = insertAfter.getBoundingClientRect();
-    if (ar.width >= vr.width * 1.06 && ar.width >= best.width * 0.95) {
+    if (ar.width >= 260 && best.width > ar.width + 4) {
       best = {
         left: ar.left,
-        top: ar.top,
+        top: Math.min(best.top, ar.top),
         width: ar.width,
-        height: ar.height
+        height: Math.max(best.height, ar.height)
       };
     }
     return best;
@@ -2738,7 +3310,18 @@
     stableFrameTarget = best;
     return best;
   }
+  function isWatchInlinePanelTopFrame() {
+    try {
+      return window.self === window.top;
+    } catch {
+      return false;
+    }
+  }
   function renderPageFrameOverlay() {
+    if (!isWatchInlinePanelTopFrame()) {
+      hidePageFrameOverlay();
+      return;
+    }
     if (!isNicoLiveWatchUrl(window.location.href)) {
       hidePageFrameOverlay();
       return;
@@ -2756,6 +3339,7 @@
     const overlay = ensurePageFrameOverlay();
     overlay.style.display = "none";
     renderInlinePopupHost(target);
+    startPageFrameLoop();
   }
   async function loadPageFrameSettings() {
     if (!hasExtensionContext()) return;
@@ -3281,6 +3865,10 @@
         wsAge: wsViewerCountUpdatedAt ? Date.now() - wsViewerCountUpdatedAt : -1,
         intercept: interceptedUsers.size,
         embeddedVC: _edProps ? pickViewerCountFromEmbeddedData(_edProps) : null,
+        officialVsRecorded: officialCommentCount != null && Number.isFinite(officialCommentCount) && officialCommentCount >= 0 ? {
+          officialComments: officialCommentCount,
+          recordedComments: observedRecordedCommentCount
+        } : null,
         programBeginAtMs,
         embeddedBeginAt: _edProps ? pickProgramBeginAt(_edProps) : null,
         startAtText,
@@ -3378,6 +3966,16 @@
         _debug.fetchOther = docEl.getAttribute("data-nls-fetch-other") || "";
         _debug.piPhase = docEl.getAttribute("data-nls-pi-phase") || "";
         _debug.ndgr = docEl.getAttribute("data-nls-ndgr") || "";
+        _debug.ndgrLdStream = docEl.getAttribute("data-nls-ld-stream") || "";
+      }
+      try {
+        const ctHist = {};
+        document.querySelectorAll("div.table-row[data-comment-type]").forEach((el) => {
+          const t = el.getAttribute("data-comment-type") || "?";
+          ctHist[t] = (ctHist[t] || 0) + 1;
+        });
+        _debug.commentTypeVisibleSample = ctHist;
+      } catch {
       }
     } catch {
     }
@@ -3400,15 +3998,14 @@
       broadcasterUserId,
       viewerCountFromDom,
       viewerCountSource,
-      officialViewerCount: typeof officialViewerCount === "number" && Number.isFinite(officialViewerCount) && officialViewerCount >= 0 ? officialViewerCount : null,
-      officialCommentCount: typeof officialCommentCount === "number" && Number.isFinite(officialCommentCount) && officialCommentCount >= 0 ? officialCommentCount : null,
-      officialStatsUpdatedAt: officialStatsUpdatedAt > 0 ? officialStatsUpdatedAt : null,
-      officialStatsFreshnessMs: officialStatsUpdatedAt > 0 ? Math.max(0, Date.now() - officialStatsUpdatedAt) : null,
-      officialViewerIntervalMs: typeof officialViewerIntervalMs === "number" && officialViewerIntervalMs > 0 ? officialViewerIntervalMs : null,
-      officialStatisticsCommentsDelta: officialCommentSummary?.statisticsCommentsDelta ?? null,
-      officialReceivedCommentsDelta: officialCommentSummary?.receivedCommentsDelta ?? null,
-      officialCommentSampleWindowMs: officialCommentSummary?.sampleWindowMs ?? null,
-      officialCaptureRatio: typeof officialCommentSummary?.captureRatio === "number" ? officialCommentSummary.captureRatio : null,
+      ...buildWatchSnapshotOfficialFields({
+        nowMs: Date.now(),
+        officialViewerCount,
+        officialCommentCount,
+        officialStatsUpdatedAt,
+        officialViewerIntervalMs,
+        officialCommentSummary
+      }),
       totalComments: wsCommentCount,
       streamAgeMin: (() => {
         if (programBeginAtMs != null && Number.isFinite(programBeginAtMs)) {
@@ -3588,7 +4185,8 @@
             const rows = await harvestVirtualCommentList({
               document,
               extractCommentsFromNode,
-              waitMs: 42
+              waitMs: 42,
+              respectTyping: false
             });
             for (const r of rows) {
               const no = String(r?.commentNo || "").trim();
@@ -3609,8 +4207,15 @@
             }
           }
           sendResponse({ ok: true, items: buildInterceptCacheExportItems() });
-        } catch {
-          sendResponse({ ok: true, items: [] });
+        } catch (err) {
+          const msg2 = err && typeof err === "object" && "message" in err ? String(
+            /** @type {{ message?: unknown }} */
+            err.message || "intercept_export_error"
+          ) : "intercept_export_error";
+          sendResponse({
+            ok: false,
+            error: msg2.length > 220 ? `${msg2.slice(0, 220)}\u2026` : msg2
+          });
         }
       })();
       return true;
@@ -3632,6 +4237,34 @@
     const r = await chrome.storage.local.get(KEY_RECORDING);
     return isRecordingEnabled(r[KEY_RECORDING]);
   }
+  function bindCommentRowUserIconLoadOnce(img) {
+    if (!(img instanceof HTMLImageElement)) return;
+    if (img.dataset.nlsCommentAvBound === "1") return;
+    img.dataset.nlsCommentAvBound = "1";
+    img.addEventListener("load", onCommentPanelUserIconLoaded, { passive: true });
+  }
+  function onCommentPanelUserIconLoaded(ev) {
+    if (!recording || !liveId || !locationAllowsCommentRecording()) return;
+    const t = ev.target;
+    if (!(t instanceof HTMLImageElement)) return;
+    const row = closestHarvestableNicoCommentRow(t);
+    if (row) {
+      pendingRoots.add(row);
+      scheduleFlush();
+    }
+  }
+  function bindCommentPanelUserIconLoads(root) {
+    if (!root || !root.querySelectorAll) return;
+    try {
+      root.querySelectorAll("img").forEach((img) => {
+        bindCommentRowUserIconLoadOnce(
+          /** @type {HTMLImageElement} */
+          img
+        );
+      });
+    } catch {
+    }
+  }
   function reconnectMutationObserver() {
     if (!mutationObserver) return;
     const nextRoot = pickCommentMutationObserverRoot(document);
@@ -3643,14 +4276,9 @@
       subtree: true,
       characterData: true,
       attributes: true,
-      attributeFilter: [
-        "src",
-        "data-src",
-        "data-lazy-src",
-        "data-original",
-        "srcset"
-      ]
+      attributeFilter: [...NICO_USER_ICON_IMG_LAZY_ATTRS, "srcset"]
     });
+    bindCommentPanelUserIconLoads(observedMutationRoot);
   }
   function detectBroadcasterUserIdFromDom() {
     const now = Date.now();
@@ -3682,18 +4310,27 @@
       const rowUid = r.userId ? String(r.userId).trim() : "";
       const interceptedUid = entry?.uid ? String(entry.uid).trim() : "";
       const rowLikelyContaminated = Boolean(rowUid && broadcasterUid && rowUid === broadcasterUid);
-      const userId = (interceptedUid && (!rowUid || rowLikelyContaminated) ? interceptedUid : rowUid) || interceptedUid || null;
+      const mergedUid = mergeUserIdForEnrichment(
+        rowUid,
+        interceptedUid,
+        rowLikelyContaminated
+      );
+      const userId = mergedUid;
       const canUseInterceptMeta = Boolean(
         entry && (interceptedUid && userId === interceptedUid || String(entry?.name || "").trim() || isHttpAvatarUrl(entry?.av))
       );
       const rowNick = r.nickname ? String(r.nickname).trim() : "";
-      const nickname = (canUseInterceptMeta ? String(entry?.name || "").trim() : "") || rowNick || (userId ? interceptedNicknames.get(String(userId)) : "") || "";
+      const nickname = (canUseInterceptMeta ? String(entry?.name || "").trim() : "") || rowNick || (userId ? interceptedNicknames.get(String(userId)) : "") || anonymousNicknameFallback(userId, "") || "";
       const rowAv = String(r.avatarUrl || "").trim();
-      let av = rowAv || (canUseInterceptMeta && isHttpAvatarUrl(entry?.av) ? String(entry?.av || "").trim() : userId && isHttpAvatarUrl(interceptedAvatars.get(String(userId))) ? String(interceptedAvatars.get(String(userId)) || "").trim() : "");
-      if (!av && userId) {
-        const derivedIcon = niconicoDefaultUserIconUrl(String(userId));
-        if (derivedIcon) av = derivedIcon;
-      }
+      const interceptEntryAv = canUseInterceptMeta && isHttpAvatarUrl(entry?.av) ? String(entry?.av || "").trim() : "";
+      const interceptMapAv = userId && isHttpAvatarUrl(interceptedAvatars.get(String(userId))) ? String(interceptedAvatars.get(String(userId)) || "").trim() : "";
+      const derivedIcon = userId ? niconicoDefaultUserIconUrl(String(userId)) : "";
+      const av = pickStrongestAvatarUrlForUser(userId, [
+        interceptEntryAv,
+        interceptMapAv,
+        rowAv,
+        derivedIcon
+      ]);
       return {
         ...r,
         userId,
@@ -3806,19 +4443,33 @@
     state.lives = Object.fromEntries(entries.slice(0, AUTO_BACKUP_LIVES_MAX));
     return state;
   }
+  var persistCommentRowsChain = Promise.resolve();
   async function persistCommentRows(rows) {
+    if (!rows?.length || !recording || !liveId || !locationAllowsCommentRecording() || !hasExtensionContext()) {
+      return;
+    }
+    const job = persistCommentRowsChain.then(() => persistCommentRowsImpl(rows));
+    persistCommentRowsChain = job.catch(() => {
+    });
+    await job;
+  }
+  async function persistCommentRowsImpl(rows) {
     if (!rows?.length || !recording || !liveId || !locationAllowsCommentRecording() || !hasExtensionContext()) {
       return;
     }
     const enriched = enrichRowsWithInterceptedUserIds(rows);
     const key = commentsStorageKey(liveId);
     try {
-      const bag = await chrome.storage.local.get([
-        key,
-        KEY_SELF_POSTED_RECENTS,
-        KEY_AUTO_BACKUP_STATE,
-        KEY_LAST_WATCH_URL
-      ]);
+      const bag = await readStorageBagWithRetry(
+        () => chrome.storage.local.get([
+          key,
+          KEY_SELF_POSTED_RECENTS,
+          KEY_AUTO_BACKUP_STATE,
+          KEY_LAST_WATCH_URL,
+          KEY_USER_COMMENT_PROFILE_CACHE
+        ]),
+        { attempts: 4, delaysMs: [0, 50, 120, 280] }
+      );
       const existing = Array.isArray(bag[key]) ? bag[key] : [];
       const pendingRaw = bag[KEY_SELF_POSTED_RECENTS];
       const pendingItems = pendingRaw && typeof pendingRaw === "object" && Array.isArray(pendingRaw.items) ? pendingRaw.items.filter(
@@ -3843,7 +4494,25 @@
         storageTouched = true;
       }
       const pendingTouched = consumed.changed;
-      if (!storageTouched && !pendingTouched) return;
+      let profileMap = normalizeUserCommentProfileMap(
+        bag[KEY_USER_COMMENT_PROFILE_CACHE]
+      );
+      let cacheTouched = false;
+      for (const r of enriched) {
+        if (upsertUserCommentProfileFromEntry(profileMap, r)) cacheTouched = true;
+      }
+      for (const e of next) {
+        if (upsertUserCommentProfileFromEntry(profileMap, e)) cacheTouched = true;
+      }
+      const profileApplied = applyUserCommentProfileMapToEntries(next, profileMap);
+      if (profileApplied.patched > 0) {
+        next = profileApplied.next;
+        storageTouched = true;
+      }
+      const profileKeysBefore = Object.keys(profileMap).length;
+      profileMap = pruneUserCommentProfileMap(profileMap);
+      if (Object.keys(profileMap).length !== profileKeysBefore) cacheTouched = true;
+      if (!storageTouched && !pendingTouched && !cacheTouched) return;
       const updatedAt = Date.now();
       const lastCommentAt = Math.max(0, Number(next[next.length - 1]?.capturedAt || 0));
       const rememberedWatchUrl = String(bag[KEY_LAST_WATCH_URL] || "").trim();
@@ -3865,11 +4534,18 @@
         lastBackupCount: Math.max(0, Number(prevBackupMeta.lastBackupCount) || 0)
       };
       pruneAutoBackupLives(autoBackupState);
-      await chrome.storage.local.set({
-        [key]: next,
-        [KEY_AUTO_BACKUP_STATE]: autoBackupState,
-        ...pendingTouched ? { [KEY_SELF_POSTED_RECENTS]: { items: consumed.remainingItems } } : {}
-      });
+      if (storageTouched || pendingTouched) {
+        await chrome.storage.local.set({
+          [key]: next,
+          [KEY_AUTO_BACKUP_STATE]: autoBackupState,
+          ...pendingTouched ? { [KEY_SELF_POSTED_RECENTS]: { items: consumed.remainingItems } } : {},
+          ...cacheTouched ? { [KEY_USER_COMMENT_PROFILE_CACHE]: profileMap } : {}
+        });
+      } else if (cacheTouched) {
+        await chrome.storage.local.set({
+          [KEY_USER_COMMENT_PROFILE_CACHE]: profileMap
+        });
+      }
       await chrome.storage.local.remove(KEY_STORAGE_WRITE_ERROR);
     } catch (err) {
       if (isContextInvalidatedError(err) || !hasExtensionContext()) return;
@@ -4131,7 +4807,7 @@
       () => {
         if (!recording || !liveId) return;
         clearTimeout(t);
-        t = setTimeout(() => scanVisibleCommentsNow(), 550);
+        t = setTimeout(() => scanVisibleCommentsNow(), 380);
       },
       { passive: true }
     );
@@ -4235,10 +4911,14 @@
     if (!hasExtensionContext()) return;
     if (!shouldRunWatchContentInThisFrame()) return;
     recording = await readRecordingFlag();
-    ensurePageFrameStyle();
-    startPageFrameLoop();
-    await loadPageFrameSettings().catch(() => {
-    });
+    if (isWatchInlinePanelTopFrame()) {
+      ensurePageFrameStyle();
+      await loadPageFrameSettings().catch(() => {
+      });
+      if (isNicoLiveWatchUrl(window.location.href)) {
+        startPageFrameLoop();
+      }
+    }
     bindNativeSelfPostedRecorder();
     mutationObserver = new MutationObserver((records) => {
       if (!recording || !liveId || !locationAllowsCommentRecording()) {
@@ -4246,11 +4926,17 @@
       }
       for (const rec of records) {
         if (rec.type === "childList") {
-          rec.addedNodes.forEach((n) => enqueueNode(n));
+          rec.addedNodes.forEach((n) => {
+            enqueueNode(n);
+            if (n.nodeType === Node.ELEMENT_NODE) {
+              bindCommentPanelUserIconLoads(
+                /** @type {Element} */
+                n
+              );
+            }
+          });
         } else if (rec.type === "characterData" && rec.target?.parentElement) {
-          const row = rec.target.parentElement.closest?.(
-            'div.table-row[data-comment-type="normal"]'
-          );
+          const row = closestHarvestableNicoCommentRow(rec.target.parentElement);
           if (row) pendingRoots.add(row);
           else pendingRoots.add(rec.target.parentElement);
         } else if (rec.type === "attributes" && rec.target?.nodeType === Node.ELEMENT_NODE) {
@@ -4259,7 +4945,7 @@
             rec.target
           );
           if (el.tagName === "IMG") {
-            const row = el.closest?.('div.table-row[data-comment-type="normal"]');
+            const row = closestHarvestableNicoCommentRow(el);
             if (row) pendingRoots.add(row);
           }
         }
@@ -4274,14 +4960,18 @@
       if (!hasExtensionContext()) return;
       if (area !== "local") return;
       if (changes[KEY_POPUP_FRAME] || changes[KEY_POPUP_FRAME_CUSTOM]) {
-        loadPageFrameSettings().catch(() => {
-        });
+        if (isWatchInlinePanelTopFrame()) {
+          loadPageFrameSettings().catch(() => {
+          });
+        }
       }
       if (changes[KEY_INLINE_PANEL_WIDTH_MODE]) {
-        inlinePanelWidthMode = normalizeInlinePanelWidthMode(
-          changes[KEY_INLINE_PANEL_WIDTH_MODE].newValue
-        );
-        renderPageFrameOverlay();
+        if (isWatchInlinePanelTopFrame()) {
+          inlinePanelWidthMode = normalizeInlinePanelWidthMode(
+            changes[KEY_INLINE_PANEL_WIDTH_MODE].newValue
+          );
+          renderPageFrameOverlay();
+        }
       }
       if (changes[KEY_THUMB_AUTO] || changes[KEY_THUMB_INTERVAL_MS]) {
         readThumbSettings().then(() => applyThumbSchedule()).catch(() => {
@@ -4309,6 +4999,7 @@
       for (const ms of BOOTSTRAP_DELAYS_MS) {
         setTimeout(() => {
           if (recording && liveId && locationAllowsCommentRecording()) {
+            maybeFillProgramBeginFromEmbeddedData();
             scanVisibleCommentsNow();
           }
         }, ms);

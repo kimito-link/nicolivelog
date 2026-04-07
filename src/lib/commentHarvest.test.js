@@ -5,7 +5,8 @@ import {
   findLargestVerticalScrollHost,
   findCommentListScrollHost,
   harvestVirtualCommentList,
-  mergeVirtualHarvestRows
+  mergeVirtualHarvestRows,
+  pageUserLikelyTypingIn
 } from './commentHarvest.js';
 import { extractCommentsFromNode } from './nicoliveDom.js';
 
@@ -95,6 +96,20 @@ describe('mergeVirtualHarvestRows', () => {
       { commentNo: '1', text: 'a', userId: null, nickname: '' }
     );
     expect(m.nickname).toBe('foo');
+  });
+});
+
+describe('pageUserLikelyTypingIn', () => {
+  it('textarea フォーカスを検知', () => {
+    document.body.innerHTML = '<textarea id="t"></textarea>';
+    /** @type {HTMLTextAreaElement} */ (document.getElementById('t')).focus();
+    expect(pageUserLikelyTypingIn(document)).toBe(true);
+  });
+
+  it('button フォーカスでは false', () => {
+    document.body.innerHTML = '<button type="button" id="b">x</button>';
+    /** @type {HTMLButtonElement} */ (document.getElementById('b')).focus();
+    expect(pageUserLikelyTypingIn(document)).toBe(false);
   });
 });
 
@@ -199,5 +214,87 @@ describe('harvestVirtualCommentList', () => {
     });
     const hit = rows.find((r) => r.commentNo === '5' && r.text === 'same');
     expect(hit?.userId).toBe('99999111');
+  });
+
+  it('入力フォーカス中はスクロール走査せず現在位置だけ抽出', async () => {
+    document.body.innerHTML = `
+      <div class="ga-ns-comment-panel">
+        <div class="body" role="rowgroup" style="height:50px;overflow:auto;width:200px">
+          <div id="slot"></div>
+        </div>
+      </div>
+      <textarea id="composer"></textarea>`;
+    const body = document.querySelector('.body');
+    Object.defineProperty(body, 'clientHeight', { value: 50, configurable: true });
+    Object.defineProperty(body, 'scrollHeight', { value: 500, configurable: true });
+    let scrollTop = 0;
+    Object.defineProperty(body, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (v) => {
+        scrollTop = v;
+      }
+    });
+    const slot = document.getElementById('slot');
+    let extractCalls = 0;
+    const extract = () => {
+      extractCalls += 1;
+      slot.innerHTML = `
+        <div class="table-row" data-comment-type="normal">
+          <span class="comment-number">1</span><span class="comment-text">x</span>
+        </div>
+        <div style="height:800px"></div>`;
+      return extractCommentsFromNode(document.querySelector('.ga-ns-comment-panel'));
+    };
+    /** @type {HTMLTextAreaElement} */ (document.getElementById('composer')).focus();
+    await harvestVirtualCommentList({
+      document,
+      extractCommentsFromNode: extract,
+      waitMs: 0
+    });
+    expect(extractCalls).toBe(1);
+    expect(scrollTop).toBe(0);
+  });
+
+  it('respectTyping:false なら入力中でも仮想走査する', async () => {
+    document.body.innerHTML = `
+      <div class="ga-ns-comment-panel">
+        <div class="body" role="rowgroup" style="height:50px;overflow:auto;width:200px">
+          <div id="slot2"></div>
+        </div>
+      </div>
+      <textarea id="composer2"></textarea>`;
+    const body = document.querySelector('.body');
+    Object.defineProperty(body, 'clientHeight', { value: 50, configurable: true });
+    Object.defineProperty(body, 'scrollHeight', { value: 500, configurable: true });
+    let scrollTop = 0;
+    Object.defineProperty(body, 'scrollTop', {
+      configurable: true,
+      get: () => scrollTop,
+      set: (v) => {
+        scrollTop = v;
+      }
+    });
+    const slot = document.getElementById('slot2');
+    let extractCalls = 0;
+    const extract = () => {
+      extractCalls += 1;
+      const idx = Math.min(9, Math.max(0, Math.floor(scrollTop / 60)));
+      slot.innerHTML = `
+        <div class="table-row" data-comment-type="normal">
+          <span class="comment-number">${idx + 1}</span>
+          <span class="comment-text">x</span>
+        </div>
+        <div style="height:800px"></div>`;
+      return extractCommentsFromNode(document.querySelector('.ga-ns-comment-panel'));
+    };
+    /** @type {HTMLTextAreaElement} */ (document.getElementById('composer2')).focus();
+    await harvestVirtualCommentList({
+      document,
+      extractCommentsFromNode: extract,
+      waitMs: 0,
+      respectTyping: false
+    });
+    expect(extractCalls).toBeGreaterThan(2);
   });
 });

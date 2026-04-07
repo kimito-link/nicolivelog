@@ -73,6 +73,43 @@ describe('createCommentEntry', () => {
     });
     expect(e.liveId).toBe('lv88');
   });
+
+  it('vpos/accountStatus/is184 を保存する', () => {
+    const e = createCommentEntry({
+      liveId: 'lv1',
+      commentNo: '5',
+      text: 'ext',
+      userId: '100',
+      vpos: 12345,
+      accountStatus: 1,
+      is184: true
+    });
+    expect(e.vpos).toBe(12345);
+    expect(e.accountStatus).toBe(1);
+    expect(e.is184).toBe(true);
+  });
+
+  it('vpos/accountStatus が null なら省略、is184 が false なら省略', () => {
+    const e = createCommentEntry({
+      liveId: 'lv1',
+      commentNo: '6',
+      text: 'min',
+      userId: null
+    });
+    expect(e).not.toHaveProperty('vpos');
+    expect(e).not.toHaveProperty('accountStatus');
+    expect(e).not.toHaveProperty('is184');
+  });
+
+  it('匿名IDでニック空は nickname に匿名', () => {
+    const e = createCommentEntry({
+      liveId: 'lv1',
+      commentNo: '7',
+      text: 'x',
+      userId: 'a:AXaKZ_4ShxQHJVsX'
+    });
+    expect(e.nickname).toBe('匿名');
+  });
 });
 
 describe('mergeNewComments', () => {
@@ -280,6 +317,59 @@ describe('mergeNewComments', () => {
     expect(storageTouched).toBe(true);
   });
 
+  it('重複行: 既存が数字 ID のとき incoming が a: でも上書きしない', () => {
+    const existing = [
+      createCommentEntry({
+        liveId: 'lv1',
+        commentNo: '1',
+        text: 'a',
+        userId: '86255751'
+      })
+    ];
+    const { next, storageTouched } = mergeNewComments('lv1', existing, [
+      { commentNo: '1', text: 'a', userId: 'a:deadbeef' }
+    ]);
+    expect(next[0].userId).toBe('86255751');
+    expect(storageTouched).toBe(false);
+  });
+
+  it('重複行: 既存が a: のとき数字 incoming でアップグレード', () => {
+    const existing = [
+      createCommentEntry({
+        liveId: 'lv1',
+        commentNo: '1',
+        text: 'a',
+        userId: 'a:xx'
+      })
+    ];
+    const { next, storageTouched } = mergeNewComments('lv1', existing, [
+      { commentNo: '1', text: 'a', userId: '86255751' }
+    ]);
+    expect(next[0].userId).toBe('86255751');
+    expect(storageTouched).toBe(true);
+  });
+
+  it('重複行: 既存が defaults プレースホルダ av なら個別 usericon で上書き', () => {
+    const weak =
+      'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/defaults/blank.jpg';
+    const real =
+      'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/8625/86255751.jpg';
+    const existing = [
+      createCommentEntry({
+        liveId: 'lv1',
+        commentNo: '1',
+        text: 'hi',
+        userId: '86255751',
+        avatarUrl: weak
+      })
+    ];
+    const { next, storageTouched } = mergeNewComments('lv1', existing, [
+      { commentNo: '1', text: 'hi', userId: '86255751', avatarUrl: real }
+    ]);
+    expect(next[0].avatarUrl).toBe(real);
+    expect(storageTouched).toBe(true);
+  });
+
   it('incoming に userId が無いときは既存 userId を消さない', () => {
     const existing = [
       createCommentEntry({
@@ -326,6 +416,51 @@ describe('mergeNewComments', () => {
     expect(added[0].userId).toBe('12345002');
   });
 
+  it('重複行: 既存が CDN 推定 usericon のみなら、別のニコ usericon URL で上書き', () => {
+    const uid = '86255751';
+    const synthetic =
+      'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/8625/86255751.jpg';
+    const domLike =
+      'https://secure-dcdn.cdn.nimg.jp/nicovideo/images/usericon/square_96/86255751.jpg';
+    const existing = [
+      createCommentEntry({
+        liveId: 'lv1',
+        commentNo: '1',
+        text: 'hi',
+        userId: uid,
+        avatarUrl: synthetic
+      })
+    ];
+    const firstId = existing[0].id;
+    const { next, added, storageTouched } = mergeNewComments('lv1', existing, [
+      { commentNo: '1', text: 'hi', userId: uid, avatarUrl: domLike }
+    ]);
+    expect(added).toHaveLength(0);
+    expect(next[0].id).toBe(firstId);
+    expect(next[0].avatarUrl).toBe(domLike);
+    expect(storageTouched).toBe(true);
+  });
+
+  it('重複行: 既存が非ニコの https アイコンなら上書きしない', () => {
+    const custom = 'https://cdn.example.com/users/avatar/xx.png';
+    const existing = [
+      createCommentEntry({
+        liveId: 'lv1',
+        commentNo: '2',
+        text: 'yo',
+        userId: '12345678',
+        avatarUrl: custom
+      })
+    ];
+    const nicoOther =
+      'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/1234/12345678.jpg';
+    const { next, storageTouched } = mergeNewComments('lv1', existing, [
+      { commentNo: '2', text: 'yo', userId: '12345678', avatarUrl: nicoOther }
+    ]);
+    expect(next[0].avatarUrl).toBe(custom);
+    expect(storageTouched).toBe(false);
+  });
+
   it('重複マージで既存 avatarUrl だけから userId を補完（旧データ想定・createCommentEntry 経由でない行）', () => {
     const existing = [
       {
@@ -344,5 +479,45 @@ describe('mergeNewComments', () => {
     ]);
     expect(storageTouched).toBe(true);
     expect(next[0].userId).toBe('12345001');
+  });
+
+  it('新規行に vpos/accountStatus/is184 を保存', () => {
+    const { added } = mergeNewComments('lv1', [], [
+      {
+        commentNo: '10',
+        text: 'rich',
+        userId: '500',
+        vpos: 9999,
+        accountStatus: 2,
+        is184: true
+      }
+    ]);
+    expect(added).toHaveLength(1);
+    expect(added[0].vpos).toBe(9999);
+    expect(added[0].accountStatus).toBe(2);
+    expect(added[0].is184).toBe(true);
+  });
+
+  it('重複行で既存の vpos/accountStatus/is184 は消えない', () => {
+    const existing = [
+      {
+        id: 'ext1',
+        liveId: 'lv1',
+        commentNo: '20',
+        text: 'keep',
+        userId: '600',
+        vpos: 5000,
+        accountStatus: 1,
+        is184: true,
+        capturedAt: 1
+      }
+    ];
+    const { next, storageTouched } = mergeNewComments('lv1', existing, [
+      { commentNo: '20', text: 'keep', userId: '600' }
+    ]);
+    expect(next[0].vpos).toBe(5000);
+    expect(next[0].accountStatus).toBe(1);
+    expect(next[0].is184).toBe(true);
+    expect(storageTouched).toBe(false);
   });
 });

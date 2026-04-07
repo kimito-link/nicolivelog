@@ -3,6 +3,7 @@
  */
 
 import { normalizeCommentText } from './commentRecord.js';
+import { anonymousNicknameFallback } from './nicoAnonymousDisplay.js';
 
 /**
  * @param {import('./ndgrDecode.js').NdgrChat} chat
@@ -19,24 +20,31 @@ function ndgrChatUserId(chat) {
 }
 
 /**
+ * @typedef {{ commentNo: string, text: string, userId: string|null, nickname?: string, vpos?: number|null, accountStatus?: number|null, is184?: boolean }} NdgrMergeRow
+ */
+
+/**
  * @param {import('./ndgrDecode.js').NdgrChat[]} chats
- * @returns {{ commentNo: string, text: string, userId: string, nickname?: string }[]}
+ * @returns {NdgrMergeRow[]}
  */
 export function ndgrChatsToMergeRows(chats) {
   if (!Array.isArray(chats) || !chats.length) return [];
-  /** @type {{ commentNo: string, text: string, userId: string, nickname?: string }[]} */
+  /** @type {NdgrMergeRow[]} */
   const out = [];
   for (const chat of chats) {
     if (!chat || chat.no == null) continue;
-    const uid = ndgrChatUserId(chat);
-    if (!uid) continue;
     const text = normalizeCommentText(chat.content);
     if (!text) continue;
-    const commentNo = String(chat.no);
-    /** @type {{ commentNo: string, text: string, userId: string, nickname?: string }} */
-    const row = { commentNo, text, userId: uid };
-    const nick = String(chat.name || '').trim();
+    const commentNo = String(chat.no).trim();
+    if (!commentNo) continue;
+    const uid = ndgrChatUserId(chat);
+    /** @type {NdgrMergeRow} */
+    const row = { commentNo, text, userId: uid || null };
+    const nick = anonymousNicknameFallback(uid, chat.name);
     if (nick) row.nickname = nick;
+    if (chat.vpos != null) row.vpos = chat.vpos;
+    if (chat.accountStatus != null) row.accountStatus = chat.accountStatus;
+    if (chat.is184) row.is184 = true;
     out.push(row);
   }
   return out;

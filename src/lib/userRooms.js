@@ -3,6 +3,7 @@
  */
 
 import { isHttpOrHttpsUrl } from './supportGrowthTileSrc.js';
+import { anonymousNicknameFallback } from './nicoAnonymousDisplay.js';
 
 export const UNKNOWN_USER_KEY = '__unknown__';
 
@@ -25,7 +26,7 @@ export function displayUserLabel(userKey, nickname) {
   if (!userKey || userKey === UNKNOWN_USER_KEY) {
     return 'ID未取得（DOMに投稿者情報なし）';
   }
-  const name = String(nickname || '').trim();
+  const name = anonymousNicknameFallback(userKey, nickname);
   const shortId = shortUserKeyDisplay(userKey);
   if (name) return `${name}（${shortId}）`;
   return shortId;
@@ -61,11 +62,14 @@ export function aggregateCommentsByUser(entries) {
     }
     const row = map.get(userKey);
     row.count += 1;
-    if (nickname && !row.nickname) row.nickname = nickname;
+    if (nickname) {
+      if (!row.nickname) row.nickname = nickname;
+      else if (nickname.length > row.nickname.length) row.nickname = nickname;
+    }
     if (capturedAt >= row.lastAt) {
       row.lastAt = capturedAt;
       row.lastText = text.length > 60 ? `${text.slice(0, 60)}…` : text;
-      row.avatarUrl = userKey === UNKNOWN_USER_KEY ? '' : avatarCandidate;
+      if (userKey !== UNKNOWN_USER_KEY && avatarCandidate) row.avatarUrl = avatarCandidate;
     }
   }
 

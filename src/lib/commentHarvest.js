@@ -129,17 +129,44 @@ function raf(doc) {
 }
 
 /**
+ * watch ページでコメント入力などにフォーカスがあるとき、仮想リストのスクロール走査を避ける。
+ * @param {Document} doc
+ * @returns {boolean}
+ */
+export function pageUserLikelyTypingIn(doc) {
+  const ae = doc.activeElement;
+  if (!ae || ae.nodeType !== Node.ELEMENT_NODE) return false;
+  const el = /** @type {Element} */ (ae);
+  const tag = el.tagName;
+  if (tag === 'TEXTAREA') return true;
+  if (tag === 'INPUT') {
+    const t = /** @type {HTMLInputElement} */ (el).type;
+    return (
+      t === 'text' ||
+      t === 'search' ||
+      t === 'email' ||
+      t === 'url' ||
+      t === 'tel' ||
+      t === ''
+    );
+  }
+  return /** @type {HTMLElement} */ (el).isContentEditable === true;
+}
+
+/**
  * 仮想リストを上→下へステップ送りし、各位置の table-row をマージして返す
  * @param {{
  *   document?: Document,
  *   extractCommentsFromNode: (el: Element) => { commentNo?: string, text: string, userId?: string|null, avatarUrl?: string }[],
  *   waitMs?: number,
+ *   respectTyping?: boolean
  * }} opts
  */
 export async function harvestVirtualCommentList(opts) {
   const doc = opts.document || document;
   const extract = opts.extractCommentsFromNode;
   const waitMs = opts.waitMs ?? 50;
+  const respectTyping = opts.respectTyping !== false;
 
   const panel = findNicoCommentPanel(doc);
   const scanRoot = panel || doc.body;
@@ -171,10 +198,19 @@ export async function harvestVirtualCommentList(opts) {
     return [...m.values()];
   }
 
+  if (respectTyping && pageUserLikelyTypingIn(doc)) {
+    const m = new Map();
+    mergeInto(m, extract(scanRoot));
+    return [...m.values()];
+  }
+
   const out = new Map();
   const saved = host.scrollTop;
   const max = Math.max(0, host.scrollHeight - host.clientHeight);
   const step = Math.max(64, Math.floor(host.clientHeight * 0.72));
+
+  const focusEl =
+    doc.activeElement instanceof HTMLElement ? doc.activeElement : null;
 
   host.scrollTop = 0;
   await raf(doc);
@@ -196,6 +232,18 @@ export async function harvestVirtualCommentList(opts) {
   host.scrollTop = saved;
   await raf(doc);
   await delay(30);
+
+  if (focusEl && focusEl.isConnected) {
+    try {
+      focusEl.focus({ preventScroll: true });
+    } catch {
+      try {
+        focusEl.focus();
+      } catch {
+        // no-op
+      }
+    }
+  }
 
   return [...out.values()];
 }

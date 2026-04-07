@@ -4,6 +4,7 @@ import {
   pbForEach,
   decodeStatistics,
   decodeChat,
+  decodeGift,
   decodeChunkedMessage,
   decodePackedSegment
 } from './ndgrDecode.js';
@@ -132,6 +133,106 @@ describe('decodeChat', () => {
     const chat = decodeChat(buf, 0, buf.length);
     expect(chat.name).toBe('ユーザー名');
   });
+
+  it('decodes vpos (field 3)', () => {
+    const buf = new Uint8Array([
+      ...strField(1, 'msg'),
+      ...varintField(3, 54321),
+      ...varintField(5, 100),
+      ...varintField(8, 1)
+    ]);
+    const chat = decodeChat(buf, 0, buf.length);
+    expect(chat.vpos).toBe(54321);
+  });
+
+  it('decodes account_status (field 4)', () => {
+    const buf = new Uint8Array([
+      ...strField(1, 'hi'),
+      ...varintField(4, 1),
+      ...varintField(5, 200),
+      ...varintField(8, 2)
+    ]);
+    const chat = decodeChat(buf, 0, buf.length);
+    expect(chat.accountStatus).toBe(1);
+  });
+
+  it('decodes modifier with anonymity (184) flag', () => {
+    const modifierPayload = new Uint8Array(varintField(1, 1));
+    const buf = new Uint8Array([
+      ...strField(1, 'anonymous'),
+      ...varintField(5, 300),
+      ...lenDelimited(7, [...modifierPayload]),
+      ...varintField(8, 3)
+    ]);
+    const chat = decodeChat(buf, 0, buf.length);
+    expect(chat.is184).toBe(true);
+  });
+
+  it('is184 defaults to false when modifier absent', () => {
+    const buf = new Uint8Array([
+      ...strField(1, 'normal'),
+      ...varintField(5, 400),
+      ...varintField(8, 4)
+    ]);
+    const chat = decodeChat(buf, 0, buf.length);
+    expect(chat.is184).toBe(false);
+  });
+
+  it('is184 is false when modifier anonymity is 0', () => {
+    const modifierPayload = new Uint8Array(varintField(1, 0));
+    const buf = new Uint8Array([
+      ...strField(1, 'not184'),
+      ...varintField(5, 500),
+      ...lenDelimited(7, [...modifierPayload]),
+      ...varintField(8, 5)
+    ]);
+    const chat = decodeChat(buf, 0, buf.length);
+    expect(chat.is184).toBe(false);
+  });
+
+  it('decodes all extended fields together', () => {
+    const modifierPayload = new Uint8Array(varintField(1, 1));
+    const buf = new Uint8Array([
+      ...strField(1, 'full'),
+      ...strField(2, 'ニコ太郎'),
+      ...varintField(3, 99999),
+      ...varintField(4, 2),
+      ...varintField(5, 86255751),
+      ...lenDelimited(7, [...modifierPayload]),
+      ...varintField(8, 42)
+    ]);
+    const chat = decodeChat(buf, 0, buf.length);
+    expect(chat.no).toBe(42);
+    expect(chat.rawUserId).toBe(86255751);
+    expect(chat.content).toBe('full');
+    expect(chat.name).toBe('ニコ太郎');
+    expect(chat.vpos).toBe(99999);
+    expect(chat.accountStatus).toBe(2);
+    expect(chat.is184).toBe(true);
+  });
+
+  it('vpos/accountStatus default to null when absent', () => {
+    const buf = new Uint8Array([
+      ...strField(1, 'minimal'),
+      ...varintField(8, 10)
+    ]);
+    const chat = decodeChat(buf, 0, buf.length);
+    expect(chat.vpos).toBeNull();
+    expect(chat.accountStatus).toBeNull();
+    expect(chat.is184).toBe(false);
+  });
+});
+
+describe('decodeGift', () => {
+  it('pulls advertiser id and name from len/varint fields', () => {
+    const buf = new Uint8Array([
+      ...strField(2, 'senderNick'),
+      ...varintField(3, 87654321)
+    ]);
+    const g = decodeGift(buf, 0, buf.length);
+    expect(g.advertiserUserId).toBe('87654321');
+    expect(g.advertiserName).toBe('senderNick');
+  });
 });
 
 describe('decodeChunkedMessage', () => {
@@ -148,6 +249,7 @@ describe('decodeChunkedMessage', () => {
     expect(result.stats.viewers).toBe(523);
     expect(result.stats.comments).toBe(1200);
     expect(result.chats.length).toBe(0);
+    expect(result.gifts.length).toBe(0);
   });
 
   it('decodes chat from message field', () => {
@@ -165,6 +267,7 @@ describe('decodeChunkedMessage', () => {
     expect(result.chats[0].no).toBe(7);
     expect(result.chats[0].rawUserId).toBe(12345);
     expect(result.chats[0].content).toBe('テスト');
+    expect(result.gifts.length).toBe(0);
   });
 
   it('decodes overflowed_chat (field 20)', () => {
@@ -180,6 +283,22 @@ describe('decodeChunkedMessage', () => {
     expect(result.chats.length).toBe(1);
     expect(result.chats[0].no).toBe(50);
     expect(result.chats[0].hashedUserId).toBe('hashed123');
+    expect(result.gifts.length).toBe(0);
+  });
+
+  it('decodes gift from NicoliveMessage field 8', () => {
+    const gift = new Uint8Array([
+      ...strField(2, 'ギフト送り'),
+      ...varintField(3, 87654321)
+    ]);
+    const nicoliveMessage = new Uint8Array(lenDelimited(8, [...gift]));
+    const chunkedMessage = new Uint8Array(lenDelimited(2, [...nicoliveMessage]));
+
+    const result = decodeChunkedMessage(chunkedMessage);
+    expect(result.chats.length).toBe(0);
+    expect(result.gifts.length).toBe(1);
+    expect(result.gifts[0].advertiserUserId).toBe('87654321');
+    expect(result.gifts[0].advertiserName).toBe('ギフト送り');
   });
 
   it('handles message with both stats and chat', () => {
@@ -203,6 +322,7 @@ describe('decodeChunkedMessage', () => {
     expect(result.stats?.viewers).toBe(100);
     expect(result.chats.length).toBe(1);
     expect(result.chats[0].no).toBe(3);
+    expect(result.gifts.length).toBe(0);
   });
 });
 
