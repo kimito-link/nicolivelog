@@ -628,6 +628,71 @@ function schedulePersistNdgrChatRows(rows) {
   }, NDGR_CHAT_ROWS_FLUSH_MS);
 }
 
+/**
+ * MAIN からの視聴者入室（ネットワーク優先）。コメント NDGR バッチとは別経路で即時反映する。
+ * @param {unknown[]} viewers
+ */
+async function flushInterceptViewerJoin(viewers) {
+  if (!Array.isArray(viewers) || !viewers.length) return;
+  if (!liveId || !hasExtensionContext()) return;
+  const seenNow = Date.now();
+  for (const v of viewers) {
+    if (!v || typeof v !== 'object') continue;
+    const uid = String(/** @type {{ userId?: unknown }} */ (v).userId || '').trim();
+    if (!uid) continue;
+    const nick = String(/** @type {{ nickname?: unknown }} */ (v).nickname || '').trim();
+    const iconRaw = String(/** @type {{ iconUrl?: unknown }} */ (v).iconUrl || '').trim();
+    const icon = isHttpAvatarUrl(iconRaw) ? iconRaw : '';
+    if (nick) interceptedNicknames.set(uid, nick);
+    if (icon) interceptedAvatars.set(uid, icon);
+    activeUserTimestamps.set(uid, seenNow);
+  }
+  if (activeUserTimestamps.size > ACTIVE_USER_MAP_MAX) {
+    const excess = activeUserTimestamps.size - ACTIVE_USER_MAP_MAX;
+    const iter = activeUserTimestamps.keys();
+    for (let i = 0; i < excess; i++) {
+      const key = iter.next().value;
+      if (key != null) activeUserTimestamps.delete(key);
+    }
+  }
+  try {
+    const bag = await chrome.storage.local.get(KEY_USER_COMMENT_PROFILE_CACHE);
+    const profileMap = normalizeUserCommentProfileMap(bag[KEY_USER_COMMENT_PROFILE_CACHE]);
+    let cacheTouched = false;
+    for (const v of viewers) {
+      if (!v || typeof v !== 'object') continue;
+      const uid = String(/** @type {{ userId?: unknown }} */ (v).userId || '').trim();
+      if (!uid) continue;
+      const nick = String(/** @type {{ nickname?: unknown }} */ (v).nickname || '').trim();
+      const iconUrl = isHttpAvatarUrl(/** @type {{ iconUrl?: unknown }} */ (v).iconUrl)
+        ? String(/** @type {{ iconUrl?: unknown }} */ (v).iconUrl || '').trim()
+        : '';
+      if (
+        upsertUserCommentProfileFromEntry(profileMap, {
+          userId: uid,
+          nickname: nick,
+          avatarUrl: iconUrl
+        })
+      ) {
+        cacheTouched = true;
+      }
+    }
+    if (cacheTouched) {
+      await chrome.storage.local.set({ [KEY_USER_COMMENT_PROFILE_CACHE]: profileMap });
+    }
+    await chrome.storage.local.remove(KEY_STORAGE_WRITE_ERROR);
+  } catch (err) {
+    if (isContextInvalidatedError(err) || !hasExtensionContext()) return;
+    try {
+      await chrome.storage.local.set({
+        [KEY_STORAGE_WRITE_ERROR]: buildStorageWriteErrorPayload(liveId, err)
+      });
+    } catch {
+      /* no-op */
+    }
+  }
+}
+
 let broadcasterUidCache = '';
 let broadcasterUidCacheAt = 0;
 
@@ -788,6 +853,18 @@ window.addEventListener('message', (e) => {
       ...(typeof c === 'number' && Number.isFinite(c) && c >= 0 ? { comments: c } : {}),
       observedAt: now
     });
+    return;
+  }
+
+  if (e.data.type === 'NLS_INTERCEPT_VIEWER_JOIN') {
+    const raw = e.data.viewers;
+    if (Array.isArray(raw) && raw.length) {
+      const run = () => {
+        void flushInterceptViewerJoin(raw);
+      };
+      if (typeof queueMicrotask === 'function') queueMicrotask(run);
+      else setTimeout(run, 0);
+    }
     return;
   }
 

@@ -15,6 +15,10 @@ import {
   extractLearnUsersFromNicoUserIconUrlsInString
 } from '../lib/niconicoInterceptLearn.js';
 import { recordUnforwardedInterceptJsonForProbe } from '../lib/interceptVisitorProbeDebug.js';
+import {
+  dedupeViewerJoinUsersByUserId,
+  walkJsonForViewerJoinUsers
+} from '../lib/interceptViewerJoinSignals.js';
 
 (() => {
   'use strict';
@@ -61,6 +65,8 @@ import { recordUnforwardedInterceptJsonForProbe } from '../lib/interceptVisitorP
   const MSG_SCHEDULE = 'NLS_INTERCEPT_SCHEDULE';
   const MSG_CHAT_ROWS = 'NLS_INTERCEPT_CHAT_ROWS';
   const MSG_GIFT_USERS = 'NLS_INTERCEPT_GIFT_USERS';
+  /** 視聴者入室・オーディエンス更新（DOM より優先して content で即時処理） */
+  const MSG_VIEWER_JOIN = 'NLS_INTERCEPT_VIEWER_JOIN';
 
   /** @type {{ commentNo: string, text: string, userId: string, nickname?: string }[]} */
   let ndgrChatRowsBatch = [];
@@ -136,6 +142,57 @@ import { recordUnforwardedInterceptJsonForProbe } from '../lib/interceptVisitorP
   const knownNames = new Map();
   /** @type {Map<string, string>} */
   const knownAvatars = new Map();
+
+  /** @type {Map<string, number>} uid → 最終 emit 時刻（短時間の重複 post 抑制） */
+  const viewerJoinDedupeAt = new Map();
+  const VIEWER_JOIN_SUPPRESS_MS = 2500;
+  const VIEWER_JOIN_DEDUPE_MAP_MAX = 8000;
+
+  function pruneViewerJoinDedupe(now) {
+    if (viewerJoinDedupeAt.size <= VIEWER_JOIN_DEDUPE_MAP_MAX) return;
+    const cutoff = now - VIEWER_JOIN_SUPPRESS_MS * 4;
+    for (const [k, t] of viewerJoinDedupeAt) {
+      if (t < cutoff) viewerJoinDedupeAt.delete(k);
+    }
+  }
+
+  /**
+   * JSON ルートから入室系ユーザを走査し、即時 postMessage（chat 行バッチより優先）
+   * @param {unknown} parsed
+   */
+  function emitViewerJoinFromJsonRoot(parsed) {
+    try {
+      const raw = walkJsonForViewerJoinUsers(parsed, { maxDepth: 6, maxArray: 400 });
+      const merged = dedupeViewerJoinUsersByUserId(raw);
+      if (!merged.length) return;
+      const now = Date.now();
+      pruneViewerJoinDedupe(now);
+      /** @type {{ userId: string, nickname: string, iconUrl: string, timestamp: number, source: string }[]} */
+      const out = [];
+      for (const v of merged) {
+        const uid = String(v.userId || '').trim();
+        if (!uid) continue;
+        const last = viewerJoinDedupeAt.get(uid) || 0;
+        if (now - last < VIEWER_JOIN_SUPPRESS_MS) continue;
+        viewerJoinDedupeAt.set(uid, now);
+        out.push({
+          userId: uid,
+          nickname: String(v.nickname || '').trim(),
+          iconUrl: String(v.iconUrl || '').trim(),
+          timestamp: now,
+          source: 'network-intercept'
+        });
+      }
+      if (out.length) {
+        window.postMessage(
+          { type: MSG_VIEWER_JOIN, viewers: out, priority: 'fast' },
+          '*'
+        );
+      }
+    } catch {
+      /* never break page */
+    }
+  }
 
   function flush() {
     const entries = [];
@@ -450,6 +507,7 @@ import { recordUnforwardedInterceptJsonForProbe } from '../lib/interceptVisitorP
         const parsed = JSON.parse(raw);
         if (!tryForwardStatistics(parsed)) maybeRecordInterceptVisitorProbe(parsed);
         tryForwardSchedule(parsed);
+        emitViewerJoinFromJsonRoot(parsed);
         dig(parsed, 0);
       } catch {
         /* not JSON */
@@ -559,6 +617,7 @@ import { recordUnforwardedInterceptJsonForProbe } from '../lib/interceptVisitorP
                       try {
                         const j = JSON.parse(text);
                         if (!tryForwardStatistics(j)) maybeRecordInterceptVisitorProbe(j);
+                        emitViewerJoinFromJsonRoot(j);
                         dig(j, 0);
                       } catch { /* not JSON */ }
                     }
@@ -617,6 +676,7 @@ import { recordUnforwardedInterceptJsonForProbe } from '../lib/interceptVisitorP
                 if (rt === 'json') {
                   const res = this.response;
                   if (!tryForwardStatistics(res)) maybeRecordInterceptVisitorProbe(res);
+                  emitViewerJoinFromJsonRoot(res);
                   dig(res, 0);
                   return;
                 }

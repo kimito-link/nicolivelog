@@ -534,6 +534,169 @@
     return _ring.join(" ;; ");
   }
 
+  // src/lib/interceptViewerJoinSignals.js
+  var VIEWER_JOIN_ARRAY_KEYS = Object.freeze([
+    "joinUsers",
+    "joinedUsers",
+    "newViewers",
+    "audience",
+    "audiences",
+    "viewerList",
+    "recentViewers",
+    "members",
+    "participants",
+    "entrants",
+    "watchingUsers",
+    "watching_users"
+  ]);
+  var JOIN_LIKE_TYPE_RE = /join|audience|entrant|participant|member|watching|viewerlist|newviewer/i;
+  function pickUserIdFromRecord(v) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return "";
+    const o = (
+      /** @type {Record<string, unknown>} */
+      v
+    );
+    for (const k of INTERCEPT_UID_KEYS) {
+      const x = o[k];
+      if (x == null || x === "") continue;
+      const s = String(x).trim();
+      if (s) return s;
+    }
+    return "";
+  }
+  var VIEWER_JOIN_EXTRA_NAME_KEYS = Object.freeze([
+    "screenName",
+    "screen_name",
+    "profileNickname",
+    "profile_nickname"
+  ]);
+  function pickNameFromRecord(v) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return "";
+    const o = (
+      /** @type {Record<string, unknown>} */
+      v
+    );
+    for (const k of INTERCEPT_NAME_KEYS) {
+      const x = o[k];
+      if (x != null && typeof x === "string") {
+        const s = x.trim();
+        if (s) return s;
+      }
+    }
+    for (const k of VIEWER_JOIN_EXTRA_NAME_KEYS) {
+      const x = o[k];
+      if (x != null && typeof x === "string") {
+        const s = x.trim();
+        if (s) return s;
+      }
+    }
+    return "";
+  }
+  function pickAvatarFromRecord(v) {
+    if (!v || typeof v !== "object" || Array.isArray(v)) return "";
+    const o = (
+      /** @type {Record<string, unknown>} */
+      v
+    );
+    for (const k of INTERCEPT_AVATAR_KEYS) {
+      const x = o[k];
+      if (x != null && typeof x === "string") {
+        const av = normalizeInterceptAvatarUrl(x);
+        if (av) return av;
+      }
+    }
+    return "";
+  }
+  function looksLikeUserObjectArray(arr) {
+    if (!Array.isArray(arr) || arr.length < 1 || arr.length > 250) return false;
+    let objCount = 0;
+    for (let i = 0; i < Math.min(arr.length, 8); i++) {
+      const x = arr[i];
+      if (x && typeof x === "object" && !Array.isArray(x)) objCount++;
+    }
+    return objCount >= Math.min(2, arr.length) || arr.length === 1 && objCount === 1;
+  }
+  function collectViewerJoinUsersFromObject(obj) {
+    const out = [];
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return out;
+    const o = (
+      /** @type {Record<string, unknown>} */
+      obj
+    );
+    const t = o.type;
+    const typeStr = typeof t === "string" ? t : "";
+    const joinTyped = typeStr && JOIN_LIKE_TYPE_RE.test(typeStr);
+    for (const key of VIEWER_JOIN_ARRAY_KEYS) {
+      const raw = o[key];
+      if (!Array.isArray(raw) || !looksLikeUserObjectArray(raw)) continue;
+      for (const item of raw) {
+        const userId = pickUserIdFromRecord(item);
+        if (!userId) continue;
+        const nickname = pickNameFromRecord(item);
+        const iconUrl = pickAvatarFromRecord(item);
+        out.push({
+          userId,
+          nickname,
+          iconUrl
+        });
+      }
+    }
+    if (joinTyped) {
+      const inner = o.data ?? o.payload ?? o.body;
+      if (inner && typeof inner === "object" && !Array.isArray(inner)) {
+        out.push(...collectViewerJoinUsersFromObject(inner));
+      }
+    }
+    return out;
+  }
+  function walkJsonForViewerJoinUsers(root, opts = {}) {
+    const maxDepth = opts.maxDepth ?? 6;
+    const maxArray = opts.maxArray ?? 400;
+    const maxKeys = opts.maxKeys ?? 36;
+    const acc = [];
+    function walk(obj, depth) {
+      if (!obj || typeof obj !== "object" || depth > maxDepth) return;
+      if (Array.isArray(obj)) {
+        for (let i = 0; i < obj.length && i < maxArray; i++) walk(obj[i], depth + 1);
+        return;
+      }
+      acc.push(...collectViewerJoinUsersFromObject(obj));
+      const keys = Object.keys(
+        /** @type {Record<string, unknown>} */
+        obj
+      );
+      for (let i = 0; i < keys.length && i < maxKeys; i++) {
+        const v = (
+          /** @type {Record<string, unknown>} */
+          obj[keys[i]]
+        );
+        if (v && typeof v === "object") walk(v, depth + 1);
+      }
+    }
+    walk(root, 0);
+    return acc;
+  }
+  function dedupeViewerJoinUsersByUserId(items) {
+    const m = /* @__PURE__ */ new Map();
+    for (const it of items) {
+      const uid = String(it.userId || "").trim();
+      if (!uid) continue;
+      const prev = m.get(uid);
+      if (!prev) {
+        m.set(uid, {
+          userId: uid,
+          nickname: String(it.nickname || "").trim(),
+          iconUrl: String(it.iconUrl || "").trim()
+        });
+        continue;
+      }
+      const nick = String(it.nickname || "").trim() || prev.nickname;
+      const icon = String(it.iconUrl || "").trim() || prev.iconUrl;
+      m.set(uid, { userId: uid, nickname: nick, iconUrl: icon });
+    }
+    return [...m.values()];
+  }
+
   // src/extension/page-intercept-entry.js
   (() => {
     "use strict";
@@ -567,6 +730,7 @@
     const MSG_SCHEDULE = "NLS_INTERCEPT_SCHEDULE";
     const MSG_CHAT_ROWS = "NLS_INTERCEPT_CHAT_ROWS";
     const MSG_GIFT_USERS = "NLS_INTERCEPT_GIFT_USERS";
+    const MSG_VIEWER_JOIN = "NLS_INTERCEPT_VIEWER_JOIN";
     let ndgrChatRowsBatch = [];
     let ndgrChatRowsTimer = null;
     const NDGR_CHAT_ROWS_BATCH_MS = 120;
@@ -623,6 +787,47 @@
     publishDiag();
     const knownNames = /* @__PURE__ */ new Map();
     const knownAvatars = /* @__PURE__ */ new Map();
+    const viewerJoinDedupeAt = /* @__PURE__ */ new Map();
+    const VIEWER_JOIN_SUPPRESS_MS = 2500;
+    const VIEWER_JOIN_DEDUPE_MAP_MAX = 8e3;
+    function pruneViewerJoinDedupe(now) {
+      if (viewerJoinDedupeAt.size <= VIEWER_JOIN_DEDUPE_MAP_MAX) return;
+      const cutoff = now - VIEWER_JOIN_SUPPRESS_MS * 4;
+      for (const [k, t] of viewerJoinDedupeAt) {
+        if (t < cutoff) viewerJoinDedupeAt.delete(k);
+      }
+    }
+    function emitViewerJoinFromJsonRoot(parsed) {
+      try {
+        const raw = walkJsonForViewerJoinUsers(parsed, { maxDepth: 6, maxArray: 400 });
+        const merged = dedupeViewerJoinUsersByUserId(raw);
+        if (!merged.length) return;
+        const now = Date.now();
+        pruneViewerJoinDedupe(now);
+        const out = [];
+        for (const v of merged) {
+          const uid = String(v.userId || "").trim();
+          if (!uid) continue;
+          const last = viewerJoinDedupeAt.get(uid) || 0;
+          if (now - last < VIEWER_JOIN_SUPPRESS_MS) continue;
+          viewerJoinDedupeAt.set(uid, now);
+          out.push({
+            userId: uid,
+            nickname: String(v.nickname || "").trim(),
+            iconUrl: String(v.iconUrl || "").trim(),
+            timestamp: now,
+            source: "network-intercept"
+          });
+        }
+        if (out.length) {
+          window.postMessage(
+            { type: MSG_VIEWER_JOIN, viewers: out, priority: "fast" },
+            "*"
+          );
+        }
+      } catch {
+      }
+    }
     function flush() {
       const entries = [];
       for (const [no, v] of batch) {
@@ -905,6 +1110,7 @@
           const parsed = JSON.parse(raw);
           if (!tryForwardStatistics(parsed)) maybeRecordInterceptVisitorProbe(parsed);
           tryForwardSchedule(parsed);
+          emitViewerJoinFromJsonRoot(parsed);
           dig(parsed, 0);
         } catch {
         }
@@ -1002,6 +1208,7 @@
                         try {
                           const j = JSON.parse(text);
                           if (!tryForwardStatistics(j)) maybeRecordInterceptVisitorProbe(j);
+                          emitViewerJoinFromJsonRoot(j);
                           dig(j, 0);
                         } catch {
                         }
@@ -1060,6 +1267,7 @@
                   if (rt === "json") {
                     const res = this.response;
                     if (!tryForwardStatistics(res)) maybeRecordInterceptVisitorProbe(res);
+                    emitViewerJoinFromJsonRoot(res);
                     dig(res, 0);
                     return;
                   }
