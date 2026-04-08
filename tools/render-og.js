@@ -1,5 +1,5 @@
 /**
- * 追憶のきらめき LP 用 OG 画像（1200×630）を生成する。
+ * 追憶の煌めき LP 用 OG 画像（1200×630）を生成する。
  * 実行: node tools/render-og.js
  */
 'use strict';
@@ -234,7 +234,7 @@ body::before {
   <div class="content">
     <div class="eyebrow">Kimito-Link Project</div>
     <h1 class="title">
-      <span class="accent">追憶</span>の<span class="accent">きらめき</span>
+      <span class="accent">追憶</span>の<span class="accent">煌めき</span>
     </h1>
     <p class="tagline">
       流れ星みたいに消えていくコメントを、<br>
