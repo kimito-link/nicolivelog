@@ -25,6 +25,116 @@ async function allBoundingBoxes(locator) {
 }
 
 test.describe('lp-preview', () => {
+  test('hero会話: 390幅で3つの吹き出しが左右交互', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(lpHref, { waitUntil: 'domcontentloaded' });
+
+    const stage = page.locator('.hero-stage');
+    await stage.scrollIntoViewIfNeeded();
+
+    const rows = stage.locator('.mini-bubbles .y-row');
+    await expect(rows).toHaveCount(3);
+
+    const rowL1 = rows.nth(0);
+    const l1Bubble = await rowL1.locator('.bubble').boundingBox();
+    const l1Speaker = await rowL1.locator('.speaker').boundingBox();
+    expect(l1Bubble, 'hero row1 bubble').not.toBeNull();
+    expect(l1Speaker, 'hero row1 speaker').not.toBeNull();
+    expect(l1Bubble.x).toBeGreaterThan(l1Speaker.x);
+
+    const rowR = rows.nth(1);
+    await expect(rowR).toHaveClass(/reverse/);
+    const rBubble = await rowR.locator('.bubble').boundingBox();
+    const rSpeaker = await rowR.locator('.speaker').boundingBox();
+    expect(rBubble, 'hero row2 bubble').not.toBeNull();
+    expect(rSpeaker, 'hero row2 speaker').not.toBeNull();
+    expect(rSpeaker.x).toBeGreaterThan(rBubble.x);
+
+    const rowL2 = rows.nth(2);
+    const l2Bubble = await rowL2.locator('.bubble').boundingBox();
+    const l2Speaker = await rowL2.locator('.speaker').boundingBox();
+    expect(l2Bubble, 'hero row3 bubble').not.toBeNull();
+    expect(l2Speaker, 'hero row3 speaker').not.toBeNull();
+    expect(l2Bubble.x).toBeGreaterThan(l2Speaker.x);
+
+    const noOverflow = await stage.evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
+    expect(noOverflow).toBe(true);
+  });
+
+  test('hero-copy: 390幅でカード横はみ出しなし・stats表示', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(lpHref, { waitUntil: 'domcontentloaded' });
+
+    const heroCopy = page.locator('.hero-copy');
+    await heroCopy.scrollIntoViewIfNeeded();
+    const copyBox = await heroCopy.boundingBox();
+    expect(copyBox, 'hero-copy box').not.toBeNull();
+    expect(copyBox.x).toBeGreaterThanOrEqual(-1);
+    expect(copyBox.x + copyBox.width).toBeLessThanOrEqual(391);
+
+    const stats = page.locator('.hero .stat');
+    await expect(stats).toHaveCount(3);
+  });
+
+  test('hero-copy: 1280幅でstatsが横3列', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(lpHref, { waitUntil: 'domcontentloaded' });
+
+    const stats = page.locator('.hero .stat');
+    await expect(stats).toHaveCount(3);
+    const boxes = await allBoundingBoxes(stats);
+    const cy = (b) => b.y + b.height / 2;
+    expect(Math.abs(cy(boxes[0]) - cy(boxes[1]))).toBeLessThan(20);
+    expect(Math.abs(cy(boxes[1]) - cy(boxes[2]))).toBeLessThan(20);
+    expect(boxes[1].x).toBeGreaterThan(boxes[0].x);
+    expect(boxes[2].x).toBeGreaterThan(boxes[1].x);
+  });
+
+  test('hero会話: 768幅タブレットでも左右交互を維持', async ({ page }) => {
+    await page.setViewportSize({ width: 768, height: 1024 });
+    await page.goto(lpHref, { waitUntil: 'domcontentloaded' });
+
+    const stage = page.locator('.hero-stage');
+    await stage.scrollIntoViewIfNeeded();
+
+    const rows = stage.locator('.mini-bubbles .y-row');
+    await expect(rows).toHaveCount(3);
+
+    const leftRow = rows.nth(0);
+    const lB = await leftRow.locator('.bubble').boundingBox();
+    const lS = await leftRow.locator('.speaker').boundingBox();
+    expect(lB.x).toBeGreaterThan(lS.x);
+
+    const reverseRow = rows.nth(1);
+    await expect(reverseRow).toHaveClass(/reverse/);
+    const rB = await reverseRow.locator('.bubble').boundingBox();
+    const rS = await reverseRow.locator('.speaker').boundingBox();
+    expect(rS.x).toBeGreaterThan(rB.x);
+
+    const noOverflow = await stage.evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
+    expect(noOverflow).toBe(true);
+  });
+
+  test('hero会話: 320幅でも吹き出し可読幅を確保', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 700 });
+    await page.goto(lpHref, { waitUntil: 'domcontentloaded' });
+
+    const stage = page.locator('.hero-stage');
+    await stage.scrollIntoViewIfNeeded();
+
+    const rows = stage.locator('.mini-bubbles .y-row');
+    await expect(rows).toHaveCount(3);
+
+    for (let i = 0; i < 3; i++) {
+      const bubble = await rows.nth(i).locator('.bubble').boundingBox();
+      expect(bubble, `hero row${i + 1} bubble`).not.toBeNull();
+      expect(bubble.width).toBeGreaterThanOrEqual(140);
+    }
+
+    const noOverflow = await stage.evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
+    expect(noOverflow).toBe(true);
+  });
+
   test('上位10: 見出し・nowrap・横スクロール・10カード', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(lpHref, { waitUntil: 'domcontentloaded' });
@@ -121,6 +231,17 @@ test.describe('lp-preview', () => {
     const heroCy = (b) => b.y + b.height / 2;
     expect(Math.abs(heroCy(heroBoxes[0]) - heroCy(heroBoxes[1]))).toBeLessThan(80);
     expect(heroBoxes[1].x).toBeGreaterThan(heroBoxes[0].x + heroBoxes[0].width * 0.4);
+
+    const stage = page.locator('.hero-stage');
+    const heroRows = stage.locator('.mini-bubbles .y-row');
+    await expect(heroRows).toHaveCount(3);
+    const stageBox = await stage.boundingBox();
+    expect(stageBox, 'hero stage box').not.toBeNull();
+    for (let i = 0; i < 3; i++) {
+      const bubble = await heroRows.nth(i).locator('.bubble').boundingBox();
+      expect(bubble, `hero wide row${i + 1} bubble`).not.toBeNull();
+      expect(bubble.width).toBeLessThan(stageBox.width * 0.9);
+    }
 
     const voicesGrid = page.locator('#voices .voices-mock-grid');
     const voicesCols = await voicesGrid.evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(' ').length);

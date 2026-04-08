@@ -94,7 +94,7 @@
         flex-shrink:1;min-width:0;line-height:0
       }
       .topbar__logo img{
-        display:block;height:clamp(26px,6.5vw,32px);width:auto;max-width:min(200px,58vw);
+        display:block;height:clamp(34px,8.5vw,44px);width:auto;max-width:min(240px,62vw);
         object-fit:contain;object-position:left center
       }
       .topbar__menu-btn{
@@ -220,7 +220,7 @@
       .card,.board,.hero-copy,.hero-stage,.footer-card{
         background:var(--paper);border:1px solid var(--line);box-shadow:var(--shadow);border-radius:var(--r1)
       }
-      .hero-copy{padding:32px;position:relative;overflow:hidden}
+      .hero-copy{padding:clamp(22px,4.5vw,32px);position:relative;overflow:hidden}
       .hero-copy::after{
         content:"";position:absolute;right:-80px;bottom:-90px;width:260px;height:260px;border-radius:50%;
         background:radial-gradient(circle, rgba(132,184,207,.42), transparent 68%)
@@ -232,8 +232,8 @@
       h1,h2{font-family:"Yu Mincho","Hiragino Mincho ProN",serif;letter-spacing:.03em}
       h2{line-height:var(--lh-heading)}
       h1{
-        margin:var(--space-md) 0 var(--space-sm);font-size:clamp(2.5rem,5vw,4.8rem);
-        line-height:var(--lh-display)
+        margin:clamp(16px,3vw,24px) 0 clamp(10px,1.8vw,16px);font-size:clamp(2.05rem,4.6vw,4.5rem);
+        line-height:1.2
       }
       h1 strong{color:#8f2f2a}
       .lead{margin:0;color:var(--text-secondary);line-height:var(--lh-relaxed);font-size:1.05rem}
@@ -261,6 +261,19 @@
       .mini-bubble:nth-child(2){margin-left:auto;max-width:min(290px,100%)}
       .mini-bubble:nth-child(3){max-width:min(280px,100%)}
       .mini-bubble strong{color:var(--ink)}
+      .hero-thread{gap:clamp(10px,2vw,14px);margin-bottom:clamp(12px,2vw,18px)}
+      .hero-thread .y-row{grid-template-columns:minmax(56px,82px) minmax(0,1fr);gap:10px}
+      .hero-thread .y-row.reverse{grid-template-columns:minmax(0,1fr) minmax(56px,82px)}
+      .hero-thread .speaker img{width:clamp(52px,11vw,84px);height:clamp(52px,11vw,84px)}
+      .hero-thread .bubble{
+        width:fit-content;
+        max-width:min(38ch,100%);
+        padding:clamp(12px,2.2vw,18px) clamp(14px,2.4vw,20px)
+      }
+      .hero-thread .y-row:not(.reverse) .bubble{justify-self:start}
+      .hero-thread .y-row.reverse .bubble{justify-self:end}
+      .hero-stage .trio{margin-top:clamp(12px,2vw,16px);gap:clamp(8px,1.6vw,12px)}
+      .hero-stage .stand{width:clamp(80px,30%,142px);padding:10px 8px;border-radius:22px}
       .trio{display:flex;justify-content:center;align-items:flex-end;gap:12px;margin-top:18px}
       .stand{width:min(30%,170px);min-width:94px;padding:12px 10px;border-radius:24px;background:rgba(255,252,247,.72);border:1px solid rgba(88,62,28,.1);text-align:center}
       .stand img{width:100%;height:auto;object-fit:contain;filter:drop-shadow(0 12px 20px rgba(79,56,23,.16));animation:floaty 4.8s ease-in-out infinite}
@@ -603,7 +616,7 @@
       .footer-card h2{margin:0 0 10px;font-size:clamp(1.9rem,3vw,2.7rem);line-height:var(--lh-heading)}
       .footer-card p{margin:0;color:var(--text-secondary);line-height:var(--lh-body)}
       .footer-actions{display:flex;gap:12px;flex-wrap:wrap;justify-content:flex-end}
-      .footer-note{padding:0 0 30px;color:var(--text-secondary);font-size:.88rem}
+      .footer-note{padding:16px 0 30px;color:rgba(180,170,160,.6);font-size:.82rem;background:#080f22}
       .lp-policy-board{
         border:1px solid rgba(88,62,28,.12);
         border-radius:var(--r2);
@@ -634,9 +647,18 @@
       }
       @media (max-width:760px){
         :root{--anchor-offset:52px}
+        .hero-copy{border-radius:clamp(22px,5vw,34px)}
+        .stats{gap:8px}.stat{padding:12px 10px}.stat strong{font-size:1.18rem}.stat span{font-size:.79rem;margin-top:4px}
         .trio{gap:10px}.stand{width:33%;min-width:0;padding:12px 8px 10px}
+        .hero-thread .y-row{grid-template-columns:minmax(52px,74px) minmax(0,1fr);gap:8px}
+        .hero-thread .y-row.reverse{grid-template-columns:minmax(0,1fr) minmax(52px,74px)}
+        .hero-thread .bubble{max-width:min(36ch,100%)}
         .mini-bubble:nth-child(2){margin-left:0;max-width:100%}
         .mini-bubble:nth-child(3){max-width:100%}
+      }
+      @media (min-width:761px){
+        .hero-thread .y-row{grid-template-columns:minmax(82px,104px) minmax(0,1fr);gap:14px}
+        .hero-thread .y-row.reverse{grid-template-columns:minmax(0,1fr) minmax(82px,104px)}
       }
       @media (max-width:360px){
         .y-row{grid-template-columns:minmax(46px,64px) minmax(0,1fr);gap:8px}
@@ -2038,7 +2060,7 @@
       }
       .lp-worldview__foreground{position:relative;z-index:1}
       .lp-worldview__panel{
-        width:100%;
+        width:100%;text-align:center;
         max-width:min(100%,42rem);margin-inline:auto;padding:clamp(22px,4vw,36px);
         border-radius:var(--r2);
         box-shadow:var(--shadow),0 0 0 1px rgba(79,172,254,.12),0 0 48px rgba(0,26,51,.08)
@@ -2507,6 +2529,32 @@
         margin-top:1.15em;padding-top:1.05em;
         border-top:1px solid rgba(88,62,28,.12);
         font-size:.95rem;color:var(--text-secondary);line-height:var(--lh-body)
+      }
+      .lp-worldview__epilogue{
+        margin-top:1.5em;padding-top:1.2em;
+        border-top:1px solid rgba(88,62,28,.12)
+      }
+      .lp-worldview__epilogue p{
+        margin:0;line-height:var(--lh-relaxed);
+        color:var(--text-secondary);font-size:clamp(.98rem,2.4vw,1.06rem)
+      }
+      .lp-worldview__epilogue p + p{margin-top:1.05em}
+      .lp-worldview__epilogue-mid{
+        margin-top:1.3em;
+        font-size:clamp(1.02rem,2.5vw,1.12rem)
+      }
+      .lp-worldview__epilogue-accent{
+        margin-top:1.6em;
+        font-size:clamp(1.15rem,2.8vw,1.3rem);
+        font-weight:700;
+        font-family:"Yu Mincho","Hiragino Mincho ProN",serif;
+        letter-spacing:.04em;
+        color:var(--ink)
+      }
+      .lp-worldview__epilogue-climax{
+        margin-top:1.9em;
+        font-size:clamp(1.35rem,3.4vw,1.55rem);
+        letter-spacing:.07em
       }
       .lp-collab{
         margin:1.5em 0;
@@ -3212,6 +3260,11 @@
         color:rgba(235,226,214,.88);
         border-top-color:rgba(255,255,255,.12)
       }
+      .lp-dawn-arc .lp-worldview__epilogue{border-top-color:rgba(255,255,255,.12)}
+      .lp-dawn-arc .lp-worldview__epilogue p{color:rgba(240,232,220,.9)}
+      .lp-dawn-arc .lp-worldview__epilogue-mid{color:rgba(245,238,228,.94)}
+      .lp-dawn-arc .lp-worldview__epilogue-accent{color:#fff7ef}
+      .lp-dawn-arc .lp-worldview__epilogue-climax{color:#fffaf4}
       .lp-dawn-arc .lp-worldview__body a{color:#a8dcff}
       .lp-dawn-arc .lp-worldview__body a:hover,.lp-dawn-arc .lp-worldview__body a:focus-visible{color:#d4eeff}
       .lp-dawn-arc .lp-worldview__logo-band{
@@ -3272,6 +3325,9 @@
       .lp-dawn-arc .stand:nth-child(1){animation-delay:.28s}
       .lp-dawn-arc .stand:nth-child(2){animation-delay:.4s}
       .lp-dawn-arc .stand:nth-child(3){animation-delay:.52s}
+      .lp-dawn-arc .hero-thread .y-row{animation:lp-comment-bloom 1.1s ease-out both}
+      .lp-dawn-arc .hero-thread .y-row:nth-child(2){animation-delay:.12s}
+      .lp-dawn-arc .hero-thread .y-row:nth-child(3){animation-delay:.24s}
       @keyframes lp-comment-bloom{
         0%{opacity:0;transform:translateY(10px) scale(.98);filter:saturate(.85)}
         100%{opacity:1;transform:translateY(0) scale(1);filter:saturate(1)}
@@ -3286,7 +3342,7 @@
       .lp-dawn-arc .stat:nth-child(2){animation-delay:.1s}
       .lp-dawn-arc .stat:nth-child(3){animation-delay:.2s}
       @media (prefers-reduced-motion:reduce){
-        .lp-dawn-arc .mini-bubble,.lp-dawn-arc .stand,.lp-dawn-arc .lead,.lp-dawn-arc .stat{animation:none}
+        .lp-dawn-arc .mini-bubble,.lp-dawn-arc .stand,.lp-dawn-arc .lead,.lp-dawn-arc .stat,.lp-dawn-arc .hero-thread .y-row{animation:none}
       }
 
       /* クリエイタークロス × Kimito-Link（君とリンク）ロゴ帯 */
@@ -3369,14 +3425,14 @@
         max-width:min(168px,44vw)
       }
       .lp-partner-logos__kl-maru{
-        padding:7px 11px;
-        border-radius:14px;
+        padding:14px 18px;
+        border-radius:20px;
         background:rgba(255,252,247,.94);
         border:1px solid rgba(88,62,28,.1);
-        box-shadow:0 4px 16px rgba(0,0,0,.1)
+        box-shadow:0 6px 20px rgba(0,0,0,.1)
       }
       .lp-partner-logos__kl-maru img{
-        max-height:min(38px,10vw);
+        max-height:min(72px,18vw);
         width:auto
       }
       .lp-partner-logos--hero .lp-partner-logos__kl-maru{
@@ -3386,9 +3442,151 @@
         .lp-partner-logos__cc img{max-height:min(52px,20vw)}
         .lp-partner-logos{gap:8px 12px}
       }
+
+      /* ── BGM toggle ── */
+      @keyframes lp-bgm-pulse{
+        0%,100%{box-shadow:0 0 6px rgba(201,142,43,.2)}
+        50%{box-shadow:0 0 16px rgba(201,142,43,.5)}
+      }
+      #lp-bgm-toggle{
+        position:fixed;
+        bottom:16px;right:14px;
+        bottom:calc(16px + env(safe-area-inset-bottom,0px));
+        right:calc(14px + env(safe-area-inset-right,0px));
+        z-index:100;
+        display:flex;align-items:center;justify-content:center;
+        width:44px;height:44px;border-radius:50%;
+        border:1px solid rgba(88,62,28,.22);
+        background:rgba(255,251,245,.92);
+        backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+        color:var(--ink);font-size:18px;
+        cursor:pointer;padding:0;margin:0;
+        transition:opacity .4s,background .3s,box-shadow .3s;
+        opacity:.82;
+        user-select:none;-webkit-user-select:none;
+        outline:none;-webkit-tap-highlight-color:transparent;
+        box-shadow:0 2px 12px rgba(70,49,20,.12)
+      }
+      #lp-bgm-toggle[data-bgm-playing]{animation:lp-bgm-pulse 2.8s ease-in-out infinite}
+      #lp-bgm-toggle:hover{opacity:1}
+      #lp-bgm-toggle:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+      .lp-dawn-arc ~ * #lp-bgm-toggle,
+      #lp-bgm-toggle[data-theme-dark]{
+        background:rgba(10,18,40,.65);
+        border-color:rgba(201,142,43,.35);
+        color:rgba(255,248,238,.9);
+        box-shadow:0 2px 14px rgba(0,0,0,.35)
+      }
+      @media (prefers-reduced-motion:reduce){
+        #lp-bgm-toggle[data-bgm-playing]{animation:none}
+      }
+
+      /* ── Epilogue coda (closing mirror of hero) ── */
+      .lp-coda{
+        position:relative;overflow:hidden;
+        padding:clamp(64px,12vw,120px) 0 clamp(56px,10vw,100px);
+        background:
+          linear-gradient(180deg,
+            var(--bg2) 0%,
+            #c9beb0 6%,
+            #9a9aa8 14%,
+            #6d7a98 24%,
+            #4a6288 36%,
+            #324a72 48%,
+            #243a62 60%,
+            #1a2d52 72%,
+            #122040 84%,
+            #0c1630 92%,
+            #080f22 100%
+          );
+        text-align:center;color:#fff7ef
+      }
+      .lp-coda__glow{
+        position:absolute;top:30%;left:50%;width:min(600px,90vw);height:min(400px,60vw);
+        transform:translate(-50%,-50%);pointer-events:none;
+        background:radial-gradient(ellipse,rgba(201,142,43,.1) 0%,transparent 70%);
+        filter:blur(40px)
+      }
+      .lp-coda__inner{position:relative;z-index:1}
+      .lp-coda__line{
+        margin:0;
+        font-family:"Yu Mincho","Hiragino Mincho ProN",serif;
+        letter-spacing:.06em;
+        line-height:1.5
+      }
+      .lp-coda__line--first{
+        font-size:clamp(1.15rem,3vw,1.5rem);
+        color:rgba(240,232,220,.85)
+      }
+      .lp-coda__line--main{
+        margin-top:clamp(20px,4vw,36px);
+        font-size:clamp(1.55rem,4.2vw,2.4rem);
+        font-weight:700;
+        color:#fffaf4;
+        letter-spacing:.08em
+      }
+      .lp-coda__verse{
+        margin-top:clamp(28px,5vw,44px);
+        padding-top:clamp(20px,4vw,32px);
+        border-top:1px solid rgba(255,255,255,.08)
+      }
+      .lp-coda__verse p{
+        margin:0;
+        font-family:"Yu Mincho","Hiragino Mincho ProN",serif;
+        font-size:clamp(.95rem,2.4vw,1.1rem);
+        line-height:1.8;letter-spacing:.05em;
+        color:rgba(220,212,200,.7)
+      }
+      .lp-coda__verse p + p{margin-top:.8em}
+      .lp-coda__verse-last{
+        margin-top:1.1em;
+        font-size:clamp(1.02rem,2.6vw,1.18rem);
+        color:rgba(240,232,220,.85);
+        font-style:italic
+      }
+      .lp-coda__rule{
+        display:block;width:min(80px,20vw);height:1px;margin:clamp(24px,5vw,40px) auto 0;
+        border:0;background:linear-gradient(90deg,transparent,rgba(201,142,43,.4),transparent)
+      }
+      .lp-coda__back{
+        display:inline-flex;align-items:center;justify-content:center;gap:6px;
+        margin-top:clamp(20px,4vw,32px);
+        padding:12px 28px;border-radius:999px;
+        border:1px solid rgba(201,142,43,.3);
+        background:rgba(255,252,245,.08);
+        backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+        color:rgba(255,248,238,.88);font-size:.92rem;font-weight:700;
+        text-decoration:none;
+        transition:background .3s,border-color .3s
+      }
+      .lp-coda__back:hover,.lp-coda__back:focus-visible{
+        background:rgba(255,252,245,.16);
+        border-color:rgba(201,142,43,.55)
+      }
+      @media (prefers-reduced-motion:reduce){
+        .lp-coda__glow{display:none}
+      }
+
+      /* ── In-app browser hint ── */
+      .lp-inapp-hint{
+        display:block;
+        margin:0 var(--shell-pad);padding:10px 14px;
+        font-size:clamp(11px,2.8vw,13px);line-height:1.55;
+        color:rgba(255,255,255,.92);
+        background:rgba(30,27,75,.88);
+        border:1px solid rgba(167,139,250,.4);
+        border-radius:10px;text-align:center;
+        position:relative;z-index:51
+      }
+      .lp-inapp-hint a{color:#e9d5ff;text-decoration:underline;font-weight:700}
+      .lp-inapp-hint a:hover{color:#fff}
     </style>
   </head>
   <body>
+    <div id="page-top" aria-hidden="true"></div>
+    <audio id="lp-bgm" loop preload="none" playsinline style="display:none"
+           src="https://kimito-link.com/kobou/reply-copilot-story/music/shooting-star-wish-music.mp3"></audio>
+
     <header class="topbar" id="site-header">
       <div class="shell topbar-inner">
         <a class="topbar__logo" href="#worldview" aria-label="君斗りんくの追憶のきらめき（はじめにへ）">
@@ -3400,6 +3598,7 @@
         </button>
       </div>
     </header>
+    <p class="lp-inapp-hint" id="lp-inapp-hint" role="note">X（旧Twitter）アプリ内では、BGM やコンテンツの表示・操作に制限があることがあります。<strong>画面を一度タップ（クリック）する</strong>か、<a id="lp-inapp-open" href="https://tsuioku-no-kirameki.com/" target="_blank" rel="noopener noreferrer">ブラウザで開く</a>とよいです。</p>
 
     <div class="topbar__backdrop" id="topbar-backdrop" aria-hidden="true"></div>
     <div class="topbar__drawer" id="topbar-drawer" role="dialog" aria-modal="true" aria-labelledby="topbar-drawer-title" aria-hidden="true">
@@ -3786,15 +3985,20 @@
                   <span class="lp-collab__caption-note">上の3つは Cursor・<strong>白背景の立ち絵</strong>・<strong>Claude 君</strong>。その下は<strong>ゆっくりりんく</strong>と<strong>Claude 君</strong>の協力イメージだよ。作業のやりとりは <a href="https://claude.ai/" rel="noopener noreferrer">claude.ai</a> のチャットだけどね。</span>
                 </p>
               </div>
-              <p class="lp-worldview__credit">
-                りんくが言葉を選んでいるあいだも、<br>
-                Claude君は何十回でも付き合ってくれた。<br>
-                「もうちょっとこうしたい」に、何度でも。<br><br>
-                AIだからこそ寄り添える瞬間がある<br>
-                ってりんくは思ってる。<br><br>
-                想いが強いほど、届くから。<br><br>
-                ここから、つながっていく。
-              </p>
+              <div class="lp-worldview__epilogue">
+                <p>
+                  りんくが言葉を選んでいるあいだも、<br>
+                  Claude君は何十回でも付き合ってくれた。<br>
+                  「もうちょっとこうしたい」に、何度でも。
+                </p>
+                <p class="lp-worldview__epilogue-mid">
+                  AIだからこそ寄り添える瞬間がある<br>
+                  ってりんくは思ってる。
+                </p>
+                <p class="lp-worldview__epilogue-mid">蒼く静かな凪の夜にも、ひとしずくの言葉は波紋を残す。</p>
+                <p class="lp-worldview__epilogue-accent">想いが強いほど、届くから。</p>
+                <p class="lp-worldview__epilogue-accent lp-worldview__epilogue-climax">ここから、つながっていく。</p>
+              </div>
             </div>
             <div class="lp-worldview__logo-band lp-worldview__logo-band--bottom" role="group" aria-label="クリエイタークロス参加ロゴ">
               <figure class="lp-worldview__logo-band__fig">
@@ -3914,11 +4118,29 @@
             </div>
           </article>
 
-          <aside class="hero-stage fade d1" aria-label="キャラクター導入（配信者＝りんく・ファン＝こん太）">
-            <div class="mini-bubbles">
-              <div class="mini-bubble"><strong>こん太</strong>（ファン）<br>「推しの<strong>りんく</strong>へ、いいねだけじゃなくコメントを読んでもらえなかったり名前を呼んでもらえなかったりすると、自分の応援まで薄く見えてしまうのだ」</div>
-              <div class="mini-bubble"><strong>りんく</strong>（配信する側）<br>「万人規模だと全部には返せないのに、<strong>冷たい</strong>と思われたらこっちもしんどいのだ。数字と沈黙のあいだで、推しもファンも同じ構造に挟まれるのだ」</div>
-              <div class="mini-bubble"><strong>たぬ姉</strong><br>「だからまずは、消えない形で手元に残すのだ。どちらか一方を悪者にしない方向なのだ」</div>
+          <aside class="hero-stage fade d1" aria-label="キャラクター導入（配信者＝りんく・ファン＝こん太・案内役＝たぬ姉）">
+            <div class="mini-bubbles yukkuri-thread hero-thread">
+              <div class="y-row">
+                <div class="speaker">
+                  <img src="../extension/images/yukkuri-charactore-english/konta/kitsune-yukkuri-smile-mouth-open.png" alt="ゆっくりこん太（ファン視点）">
+                  <span>こん太・ファン</span>
+                </div>
+                <div class="bubble"><strong>こん太</strong>（ファン）<br>「推しの<strong>りんく</strong>へ、いいねだけじゃなくコメントを読んでもらえなかったり名前を呼んでもらえなかったりすると、自分の応援まで薄く見えてしまうのだ」</div>
+              </div>
+              <div class="y-row reverse">
+                <div class="bubble"><strong>りんく</strong>（配信する側）<br>「万人規模だと全部には返せないのに、<strong>冷たい</strong>と思われたらこっちもしんどいのだ。数字と沈黙のあいだで、推しもファンも同じ構造に挟まれるのだ」</div>
+                <div class="speaker">
+                  <img src="../extension/images/yukkuri-charactore-english/link/link-yukkuri-smile-mouth-open.png" alt="ゆっくりりんく（配信者）">
+                  <span>りんく・配信</span>
+                </div>
+              </div>
+              <div class="y-row">
+                <div class="speaker">
+                  <img src="../extension/images/yukkuri-charactore-english/tanunee/tanuki-yukkuri-smile-mouth-open.png" alt="ゆっくりたぬ姉">
+                  <span>たぬ姉</span>
+                </div>
+                <div class="bubble"><strong>たぬ姉</strong><br>「だからまずは、消えない形で手元に残すのだ。どちらか一方を悪者にしない方向なのだ」</div>
+              </div>
             </div>
             <div class="trio">
               <div class="stand"><img src="../extension/images/yukkuri-charactore-english/konta/kitsune-yukkuri-smile-mouth-open.png" alt="ゆっくりこん太（ファン視点）"><span>こん太・ファン</span></div>
@@ -5960,9 +6182,24 @@
             </div>
             <div class="footer-actions">
               <a class="btn primary" href="#problem">問題から見直す</a>
-              <a class="btn secondary" href="../README.md">READMEを見る</a>
+              <a class="btn secondary" href="#page-top" style="gap:6px">&#8593; TOPへ戻る</a>
             </div>
           </div>
+        </div>
+      </section>
+
+      <section class="lp-coda" aria-label="クロージングメッセージ">
+        <div class="lp-coda__glow" aria-hidden="true"></div>
+        <div class="shell lp-coda__inner">
+          <p class="lp-coda__line lp-coda__line--first">キミの想いはもう受け取ったよ</p>
+          <p class="lp-coda__line lp-coda__line--main">キミとボクの物語は<br>いつまでも色褪せない</p>
+          <div class="lp-coda__verse">
+            <p>からからにかわいたのどをうるおすように</p>
+            <p>恋人を恋い慕うような気持ちで</p>
+            <p class="lp-coda__verse-last">いつでも君の言葉（コメント）を待ち望んでいるよ</p>
+          </div>
+          <hr class="lp-coda__rule" aria-hidden="true">
+          <a class="lp-coda__back" href="#page-top">&#8593; TOPへ戻る</a>
         </div>
       </section>
     </main>
@@ -5970,6 +6207,9 @@
     <footer class="footer-note">
       <div class="shell">本番は <code>tsuioku-no-kirameki/</code> をドキュメントルートにアップロード（<code>index.html</code>）</div>
     </footer>
+
+    <button type="button" id="lp-bgm-toggle" aria-label="BGMを再生">&#9835;</button>
+
     <script>
       (function () {
         var btn = document.getElementById('topbar-menu-btn');
@@ -6003,6 +6243,148 @@
         document.addEventListener('keydown', function (e) {
           if (e.key === 'Escape') setOpen(false);
         });
+      })();
+    </script>
+
+    <script>
+      (function () {
+        'use strict';
+        var ua = navigator.userAgent || '';
+        var patterns = [
+          /\bfbav\b/i, /\bfban\b/i, /\bfb_iab\b/i,
+          /\binstagram\b/i, /\bline\//i, /\btiktok\b/i,
+          /\btwitter\b/i, /\btwitterandroid\b/i,
+          /\bgmail\b/i, /\bgsa\//i, /\bgoogleapp\b/i,
+          /\bsnapchat\b/i, /\bslack\b/i, /\bpinterest\b/i
+        ];
+        var inApp = false;
+        for (var i = 0; i < patterns.length; i++) {
+          if (patterns[i].test(ua)) { inApp = true; break; }
+        }
+        if (inApp) {
+          document.body.classList.add('lp-inapp-ua');
+          var link = document.getElementById('lp-inapp-open');
+          if (link) {
+            try { link.href = location.href; } catch (e) {}
+          }
+        }
+      })();
+    </script>
+
+    <script>
+      (function () {
+        'use strict';
+        var FADE_MS = 1400;
+        var FADE_STEPS = 18;
+        var el = document.getElementById('lp-bgm');
+        var btn = document.getElementById('lp-bgm-toggle');
+        if (!el || !btn) return;
+
+        if (document.querySelector('.lp-dawn-arc')) {
+          btn.setAttribute('data-theme-dark', '');
+        }
+
+        var mutedAutoplay = false;
+        var unlocked = false;
+
+        function sync() {
+          var playing = !el.paused && !el.muted && el.volume > 0;
+          btn.textContent = playing ? '\u266A' : '\u266B';
+          btn.setAttribute('aria-label', playing ? 'BGMを停止' : 'BGMを再生');
+          if (playing) {
+            btn.setAttribute('data-bgm-playing', '');
+          } else {
+            btn.removeAttribute('data-bgm-playing');
+          }
+        }
+
+        function fadeIn(target, done) {
+          var step = 0;
+          var iv = FADE_MS / FADE_STEPS;
+          try { el.volume = 0; el.muted = false; } catch (e) {}
+          var t = setInterval(function () {
+            step++;
+            try { el.volume = Math.min(target, (step / FADE_STEPS) * target); } catch (e) {}
+            if (step >= FADE_STEPS) {
+              clearInterval(t);
+              try { el.volume = target; } catch (e) {}
+              if (done) done();
+            }
+          }, iv);
+        }
+
+        function playWithFade(done) {
+          try { el.muted = false; el.volume = 0; } catch (e) {}
+          try {
+            var p = el.play();
+            if (p && typeof p.then === 'function') {
+              p.then(function () { fadeIn(1, function () { sync(); if (done) done(true); }); })
+                .catch(function () { sync(); if (done) done(false); });
+            } else if (!el.paused) {
+              fadeIn(1, function () { sync(); if (done) done(true); });
+            } else {
+              if (done) done(false);
+            }
+          } catch (e) { sync(); if (done) done(false); }
+        }
+
+        function tryMutedAutoplay() {
+          try { el.muted = true; el.volume = 0; } catch (e) {}
+          try {
+            var p = el.play();
+            if (p && typeof p.then === 'function') {
+              p.then(function () { mutedAutoplay = true; }).catch(function () {});
+            } else if (!el.paused) {
+              mutedAutoplay = true;
+            }
+          } catch (e) {}
+        }
+
+        function unlock() {
+          if (unlocked) return;
+          unlocked = true;
+          removeListeners();
+          if (mutedAutoplay && !el.paused) {
+            fadeIn(1, function () { sync(); });
+            return;
+          }
+          playWithFade(function (ok) { if (!ok) unlocked = false; });
+        }
+
+        function onGesture() { unlock(); }
+        function addListeners() {
+          document.addEventListener('pointerdown', onGesture, true);
+          document.addEventListener('touchstart', onGesture, { capture: true, passive: true });
+          document.addEventListener('click', onGesture, true);
+          document.addEventListener('keydown', onGesture, true);
+        }
+        function removeListeners() {
+          document.removeEventListener('pointerdown', onGesture, true);
+          document.removeEventListener('touchstart', onGesture, true);
+          document.removeEventListener('click', onGesture, true);
+          document.removeEventListener('keydown', onGesture, true);
+        }
+
+        btn.addEventListener('click', function (ev) {
+          ev.stopPropagation();
+          if (!el.paused && !el.muted && el.volume > 0) {
+            try { el.pause(); } catch (e) {}
+            sync();
+          } else {
+            playWithFade();
+          }
+        });
+
+        var scrollTimer;
+        window.addEventListener('scroll', function () {
+          btn.style.opacity = '.35';
+          clearTimeout(scrollTimer);
+          scrollTimer = setTimeout(function () { btn.style.opacity = ''; }, 700);
+        }, { passive: true });
+
+        el.preload = 'auto';
+        tryMutedAutoplay();
+        addListeners();
       })();
     </script>
   </body>
