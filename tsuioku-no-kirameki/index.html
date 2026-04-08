@@ -790,6 +790,19 @@
       .live-read-aloud strong{color:#e3f2ff}
       .live-read-aloud .em-konta{color:#c8ecff;font-weight:700}
       .live-ui-foot{background:#161616;border-top:1px solid rgba(255,255,255,.08);padding:10px 12px}
+      .live-input-roadmap{
+        margin:10px 0 6px;
+        padding:9px 11px;
+        border-radius:10px;
+        border:1px solid rgba(79,172,254,.28);
+        background:rgba(24,40,64,.55);
+        font-size:.72rem;
+        line-height:var(--lh-ui);
+        color:#c5d6ea;
+      }
+      .live-input-roadmap strong{color:#e8f2ff;font-weight:700}
+      .live-input-roadmap a{color:#9fd4ff;text-decoration:underline;text-underline-offset:.12em}
+      .live-input-roadmap a:hover,.live-input-roadmap a:focus-visible{color:#c8e8ff}
       .live-gift-hint{
         font-size:.68rem;color:#9a9a9a;margin-bottom:8px;line-height:1.5
       }
@@ -898,6 +911,354 @@
       .lp-multi-live-y .y-row.reverse{
         grid-template-columns:minmax(0,1fr) minmax(72px,92px);
         align-items:start;
+      }
+
+      /* extension-visual: サイト全体の見え方（架空ダッシュボード風・静止） */
+      .lp-site-look-mock{
+        margin-top:12px;
+        padding:clamp(12px,3.2vw,20px);
+        border-radius:var(--r3);
+        border:1px solid rgba(100,160,210,.38);
+        background:linear-gradient(185deg,#fbfdff 0%,#eef6fc 42%,#f5f9fd 100%);
+        box-shadow:0 14px 40px rgba(36,72,110,.1),inset 0 1px 0 rgba(255,255,255,.9)
+      }
+      .lp-site-look-mock__tag{
+        margin:0 0 12px;
+        font-size:.68rem;
+        letter-spacing:.04em;
+        color:#5a6b82;
+        line-height:var(--lh-ui)
+      }
+      .lp-site-look-mock__toolbar{
+        display:flex;flex-wrap:wrap;gap:8px;
+        margin-bottom:14px;padding-bottom:12px;
+        border-bottom:1px solid rgba(100,150,200,.2)
+      }
+      .lp-site-look-mock__tbtn{
+        margin:0;padding:7px 12px;border-radius:10px;
+        border:1px solid rgba(37,93,155,.28);
+        background:rgba(255,255,255,.92);
+        font-size:.72rem;font-weight:600;color:#2a4a6e;
+        cursor:default;opacity:.92
+      }
+      .lp-site-look-mock__tbtn:disabled{
+        opacity:.88;color:#3d5a78
+      }
+      .lp-site-look-mock__hero{
+        display:grid;
+        grid-template-columns:minmax(0,1fr);
+        gap:14px;
+        align-items:start
+      }
+      @media (min-width:640px){
+        .lp-site-look-mock__hero{
+          grid-template-columns:minmax(0,1.1fr) minmax(200px,.95fr);
+          align-items:center
+        }
+      }
+      .lp-site-look-mock__hero-main h4{
+        margin:0 0 10px;
+        font-size:clamp(1.15rem,3.4vw,1.45rem);
+        font-weight:800;
+        letter-spacing:.02em;
+        color:#153d5c;
+        line-height:var(--lh-heading)
+      }
+      .lp-site-look-mock__meter-label{
+        margin:0 0 6px;
+        font-size:.74rem;font-weight:700;color:#3d5c78
+      }
+      .lp-site-look-mock__meter-foot{
+        margin:6px 0 0;
+        font-size:.68rem;color:#5c6b82
+      }
+      .lp-site-look-mock__bar{
+        height:9px;border-radius:999px;
+        background:rgba(148,163,184,.35);
+        overflow:hidden
+      }
+      .lp-site-look-mock__bar > i{
+        display:block;height:100%;width:78%;
+        border-radius:999px;
+        background:linear-gradient(90deg,#0d9488,#14b8a6);
+        box-shadow:0 0 12px rgba(20,184,166,.35)
+      }
+      .lp-site-look-mock__bubble{
+        display:flex;align-items:flex-start;gap:10px;
+        margin:0;padding:11px 12px;
+        border-radius:14px;
+        border:1px solid rgba(37,93,155,.22);
+        background:rgba(255,255,255,.94);
+        box-shadow:0 6px 20px rgba(40,80,120,.08)
+      }
+      .lp-site-look-mock__bubble img{
+        width:36px;height:36px;border-radius:999px;object-fit:cover;
+        flex-shrink:0;border:1px solid rgba(88,62,28,.12)
+      }
+      .lp-site-look-mock__bubble p{
+        margin:0;font-size:.78rem;line-height:var(--lh-ui);color:var(--text-secondary)
+      }
+      .lp-site-look-mock__bubble strong{color:var(--ink)}
+      .lp-site-look-mock__tips{
+        display:grid;
+        grid-template-columns:repeat(auto-fit,minmax(min(100%,240px),1fr));
+        gap:10px;
+        margin-top:14px
+      }
+      .lp-site-look-mock__tip{
+        display:flex;align-items:flex-start;gap:8px;
+        margin:0;padding:9px 11px;
+        border-radius:12px;
+        border:1px solid rgba(200,170,80,.35);
+        background:#fff9e8;
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.75)
+      }
+      .lp-site-look-mock__tip img{
+        width:28px;height:28px;object-fit:contain;flex-shrink:0
+      }
+      .lp-site-look-mock__tip span{
+        font-size:.72rem;line-height:var(--lh-ui);color:#3d3428
+      }
+      .lp-site-look-mock__status{
+        margin-top:14px;padding-top:12px;
+        border-top:1px dashed rgba(100,150,200,.28)
+      }
+      .lp-site-look-mock__status strong{
+        display:block;margin-bottom:6px;
+        font-size:.82rem;color:#1e3a5c
+      }
+      .lp-site-look-mock__status p{
+        margin:0;font-size:.74rem;line-height:var(--lh-ui);color:var(--text-secondary)
+      }
+      .lp-site-look-mock__avatar-scroll{
+        display:flex;flex-direction:row;flex-wrap:nowrap;gap:10px;
+        margin-top:10px;padding:8px 4px 10px;
+        overflow-x:auto;-webkit-overflow-scrolling:touch;
+        scrollbar-gutter:stable
+      }
+      .lp-site-look-mock__avatar-cell{
+        flex:0 0 auto;
+        display:flex;flex-direction:column;align-items:center;gap:4px;
+        min-width:56px;max-width:72px;
+        font-size:.62rem;line-height:1.25;color:#5c6b82;text-align:center
+      }
+      .lp-site-look-mock__avatar-cell img{
+        width:32px;height:32px;border-radius:999px;object-fit:cover;
+        border:1px solid rgba(100,140,180,.25)
+      }
+      .lp-site-look-mock__avatar-sil{
+        width:32px;height:32px;border-radius:999px;
+        background:linear-gradient(180deg,#e2e8f0,#cbd5e1);
+        border:1px solid rgba(100,116,139,.35);
+        display:grid;place-items:center;
+        font-size:.55rem;font-weight:800;color:#64748b
+      }
+      .lp-site-look-mock__kpi-grid{
+        display:grid;
+        grid-template-columns:repeat(3,minmax(0,1fr));
+        gap:10px;margin-top:16px
+      }
+      @media (max-width:520px){
+        .lp-site-look-mock__kpi-grid{gap:8px}
+      }
+      .lp-site-look-mock__kpi{
+        text-align:center;padding:12px 8px 10px;
+        border-radius:14px;
+        border:1px solid rgba(79,172,254,.28);
+        background:linear-gradient(165deg,rgba(255,255,255,.96),rgba(248,252,255,.9));
+        box-shadow:0 8px 22px rgba(36,58,100,.07)
+      }
+      .lp-site-look-mock__kpi-av{
+        margin:0 auto 8px;width:32px;height:32px
+      }
+      .lp-site-look-mock__kpi-av img{
+        width:32px;height:32px;border-radius:999px;object-fit:cover;
+        border:1px solid rgba(79,172,254,.25)
+      }
+      .lp-site-look-mock__kpi-label{
+        font-size:.68rem;font-weight:700;color:#4a5a72;margin-bottom:2px
+      }
+      .lp-site-look-mock__kpi-value{
+        font-size:clamp(1.05rem,3.2vw,1.32rem);
+        font-weight:800;font-variant-numeric:tabular-nums;
+        color:#153d5c;line-height:1.15
+      }
+      .lp-site-look-mock__kpi-unit{
+        font-size:.66rem;color:#5c6b82;margin-top:2px
+      }
+      .lp-site-look-mock__kpi-foot{
+        margin:8px 2px 0;
+        font-size:.6rem;line-height:1.4;color:#64748b
+      }
+      .lp-site-look-mock__rank-wrap{
+        margin-top:16px;padding:12px 10px 14px;
+        border-radius:16px;
+        border:1px solid rgba(79,172,254,.22);
+        background:rgba(230,242,255,.55)
+      }
+      .lp-site-look-mock__rank-note{
+        margin:0 0 10px;text-align:center;
+        font-size:.76rem;line-height:var(--lh-ui);color:#3d4f66
+      }
+      .lp-site-look-mock__rank-scroll{
+        display:flex;flex-direction:row;flex-wrap:nowrap;gap:8px;
+        overflow-x:auto;padding:4px 2px 8px;-webkit-overflow-scrolling:touch
+      }
+      .lp-site-look-mock__rank-card{
+        flex:0 0 auto;
+        display:flex;flex-direction:column;align-items:center;gap:5px;
+        min-width:68px;max-width:82px;
+        padding:8px 6px 10px;
+        border-radius:12px;
+        border:1px solid rgba(88,62,28,.1);
+        background:rgba(255,255,255,.95);
+        font-size:.65rem;color:var(--text-secondary)
+      }
+      .lp-site-look-mock__rank-badge{
+        font-weight:800;color:#fff;border-radius:999px;
+        min-width:1.4em;padding:2px 6px;font-size:.68rem;line-height:1.2;
+        background:linear-gradient(145deg,#64748b,#475569)
+      }
+      .lp-site-look-mock__rank-card:nth-child(1) .lp-site-look-mock__rank-badge{
+        background:linear-gradient(145deg,#d4a017,#b8860b)
+      }
+      .lp-site-look-mock__rank-card:nth-child(2) .lp-site-look-mock__rank-badge{
+        background:linear-gradient(145deg,#94a3b8,#64748b)
+      }
+      .lp-site-look-mock__rank-card:nth-child(3) .lp-site-look-mock__rank-badge{
+        background:linear-gradient(145deg,#c97b6a,#a65d4f)
+      }
+      .lp-site-look-mock__rank-card img{
+        width:28px;height:28px;border-radius:999px;object-fit:cover
+      }
+      .lp-site-look-mock__rank-sil{
+        width:28px;height:28px;font-size:.5rem
+      }
+      .lp-site-look-mock__rank-count{font-weight:800;color:#0f766e}
+      .lp-site-look-mock__rank-id,.lp-site-look-mock__rank-nick{
+        max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap
+      }
+      .lp-site-look-mock__record{
+        margin-top:16px;padding:12px 12px 14px;
+        border-radius:14px;
+        border:1px solid rgba(37,93,155,.18);
+        background:linear-gradient(180deg,rgba(255,252,248,.95),rgba(248,252,255,.88))
+      }
+      .lp-site-look-mock__record-head{
+        display:flex;align-items:flex-start;gap:10px;margin-bottom:10px
+      }
+      .lp-site-look-mock__record-head img{
+        width:36px;height:36px;object-fit:contain;flex-shrink:0
+      }
+      .lp-site-look-mock__record-head h5{
+        margin:0 0 4px;
+        font-size:.85rem;color:#1e3a5c;line-height:var(--lh-heading)
+      }
+      .lp-site-look-mock__record-head p{
+        margin:0;font-size:.72rem;line-height:var(--lh-ui);color:var(--text-secondary)
+      }
+      .lp-site-look-mock__toggle-box{
+        display:flex;flex-wrap:wrap;align-items:center;gap:10px;
+        padding:10px 12px;margin-bottom:10px;
+        border-radius:12px;
+        border:1px solid rgba(79,172,254,.25);
+        background:rgba(232,244,252,.9)
+      }
+      .lp-site-look-mock__on-pill{
+        display:inline-flex;align-items:center;
+        padding:4px 10px;border-radius:999px;
+        font-size:.68rem;font-weight:800;letter-spacing:.04em;
+        color:#fff;
+        background:linear-gradient(145deg,#16a34a,#15803d);
+        box-shadow:0 2px 8px rgba(22,163,74,.25)
+      }
+      .lp-site-look-mock__toggle-note{
+        margin:0;font-size:.72rem;color:#334155;line-height:var(--lh-ui);flex:1;min-width:12rem
+      }
+      .lp-site-look-mock__fake-check{
+        margin:0;font-size:.72rem;color:#1e40af;line-height:var(--lh-ui);
+        padding:6px 0
+      }
+      .lp-site-look-mock__foot-hint{
+        margin:8px 0 0;
+        font-size:.68rem;color:#64748b;line-height:var(--lh-ui)
+      }
+      .lp-site-look-mock__comment-block{
+        margin-top:12px;padding-top:12px;
+        border-top:1px dashed rgba(100,150,200,.38)
+      }
+      .lp-site-look-mock__comment-block h6{
+        margin:0 0 8px;
+        font-size:.78rem;font-weight:800;
+        color:#1e3a5c;line-height:var(--lh-heading)
+      }
+      .lp-site-look-mock__comment-row{
+        display:flex;gap:8px;align-items:stretch;flex-wrap:wrap
+      }
+      .lp-site-look-mock__comment-row input{
+        flex:1;min-width:min(100%,9rem);
+        padding:9px 11px;border-radius:10px;
+        border:1px solid rgba(37,93,155,.25);
+        background:#fff;
+        font-size:max(.75rem,16px);color:var(--text-secondary)
+      }
+      .lp-site-look-mock__comment-row input::placeholder{color:#64748b}
+      .lp-site-look-mock__comment-row button{
+        flex-shrink:0;margin:0;
+        padding:9px 14px;border-radius:10px;border:none;
+        background:linear-gradient(145deg,#2563eb,#1d4ed8);
+        color:#fff;font-weight:700;font-size:.75rem;cursor:default;opacity:.88
+      }
+      .lp-site-look-mock__comment-roadmap{
+        margin:10px 0 0;
+        padding:9px 11px;border-radius:10px;
+        border:1px solid rgba(37,93,155,.22);
+        background:rgba(224,238,252,.72);
+        font-size:.7rem;line-height:var(--lh-ui);color:#334155
+      }
+      .lp-site-look-mock__comment-roadmap strong{color:#0f172a;font-weight:700}
+      .lp-site-look-mock__comment-roadmap a{
+        color:#1d4ed8;text-decoration:underline;text-underline-offset:.12em
+      }
+      .lp-site-look-mock__comment-roadmap a:hover,.lp-site-look-mock__comment-roadmap a:focus-visible{color:#1e40af}
+      .lp-site-look-mock__details{
+        margin-top:14px;padding-top:12px;
+        border-top:1px solid rgba(100,150,200,.22)
+      }
+      .lp-site-look-mock__details summary{
+        cursor:pointer;
+        font-size:.8rem;font-weight:800;color:#1e3a5c;
+        list-style-position:outside;padding:4px 0
+      }
+      .lp-site-look-mock__details[open] summary{margin-bottom:10px}
+      .lp-site-look-mock__dense{
+        display:grid;
+        grid-template-columns:repeat(auto-fill,minmax(38px,1fr));
+        gap:5px;
+        max-height:min(220px,42vw);
+        overflow:auto;
+        padding:8px;
+        border-radius:12px;
+        background:rgba(241,245,249,.85);
+        border:1px solid rgba(148,163,184,.35)
+      }
+      .lp-site-look-mock__dense-cell{
+        position:relative;
+        aspect-ratio:1;
+        border-radius:8px;
+        border:1px solid rgba(148,163,184,.45);
+        background:linear-gradient(165deg,#e2e8f0,#cbd5e1);
+        display:grid;place-items:center;
+        overflow:hidden
+      }
+      .lp-site-look-mock__dense-cell img{
+        width:100%;height:100%;object-fit:cover
+      }
+      .lp-site-look-mock__dense-mult{
+        position:absolute;right:2px;bottom:1px;
+        font-size:.52rem;font-weight:800;line-height:1;
+        color:#1e293b;
+        text-shadow:0 0 2px #fff,0 0 2px #fff
       }
 
       /* extension-visual: 開発UI風アイコングリッド + ポップアップ風モック */
@@ -3480,9 +3841,13 @@
             <div class="live-ui-foot">
               <p class="live-gift-hint">あと 1,000pt ギフトを贈ると、放送者に福引券1枚が届きます（文言はイメージ）</p>
               <div class="live-input-row">
-                <input type="text" readonly value="" placeholder="コメントで会話しよう" aria-label="コメント入力（デモ・操作不可）">
+                <input type="text" readonly value="" placeholder="文字を入力して Enter で送る（いまはデモ）" aria-label="コメント用テキストボックス（デモのみ・Enter送信は未実装）">
                 <button type="button" disabled>コメント</button>
               </div>
+              <p class="live-input-roadmap" role="note">
+                配信画面でありがちな<strong>1行のテキストボックス</strong>に打ち込み、<strong>Enterキー</strong>や<strong>「コメント」ボタン</strong>で送る体験を、拡張からも<strong>あとから足す予定</strong>です。いまのプログラムでは<strong>そのテキストボックスをUIに出していません</strong>（この欄は見た目のデモで、キーを押しても送れません）。
+                <strong>音声入力</strong>は、<strong>ブラウザやOSの音声入力</strong>で文字をテキストボックスに流し込み、確定したうえで<strong>Enter</strong>など通常どおり送る想定です（Chrome・Edge・Windows など<strong>環境ごとに可否が異なります</strong>）。くわしくは<a href="#extension-guide-comment-voice">画面の見方・用語⑧</a>。
+              </p>
               <p class="live-ui-caption">特定サービスの画面コピーではなく、コメントの流れ・通知・読み上げの重さを並べて見せるためのLPデモです。</p>
             </div>
           </div>
@@ -3670,6 +4035,7 @@
           <div class="section-head fade">
             <h2 id="extension-visual-heading">拡張の見え方：アイコンの「群れ」と上位コメンター</h2>
             <p>
+              まず下の枠では、<strong>拡張パネル全体のライトブルーUI</strong>（応援カウント・進捗バー・注意メモ・数値カード・記録トグル・内訳グリッド）を<strong>架空の静止デモ</strong>でまとめて見せています。
               実際のポップアップでは、アイコン列・グリッド・取得診断を開けます。ここでは<strong>たくさんのユーザーが並ぶ圧</strong>と、
               <strong>コメント件数の多い順に並ぶ上位枠</strong>を、LP 用の静的モックで並べています（数値・ID は架空です）。
               記録の見え方に加え、<a href="#marketing-features">配信マーケ分析（グラフ付き HTML）</a>も用意しています。
@@ -3677,7 +4043,217 @@
             </p>
           </div>
 
-          <div class="board fade d1">
+          <div class="board fade d1" id="extension-site-look">
+            <h3>サイトの見え方（架空ダッシュボード）</h3>
+            <p>
+              実機の配色・文言とは一致しない場合があります。<strong>操作はできません</strong>（ボタン・折りたたみは見た目の見本です）。記録ブロック内の<strong>テキストボックス（Enterで送るイメージ）</strong>も同様で、<strong>実際の入力・送信は未実装・音声入力は環境依存</strong>の説明を配信デモと揃えて載せています。
+            </p>
+            <div class="lp-site-look-mock" role="region" aria-label="拡張パネル全体の架空プレビュー（操作できません）">
+              <p class="lp-site-look-mock__tag">LP 用ダミー — 数値・ID・並びはすべて架空です</p>
+              <div class="lp-site-look-mock__toolbar" aria-hidden="true">
+                <button type="button" class="lp-site-look-mock__tbtn" disabled>視聴を再読込</button>
+                <button type="button" class="lp-site-look-mock__tbtn" disabled>表示キャッシュを消す</button>
+              </div>
+              <div class="lp-site-look-mock__hero">
+                <div class="lp-site-look-mock__hero-main">
+                  <h4>応援 250 コメント</h4>
+                  <p class="lp-site-look-mock__meter-label">直近5分の応援増加</p>
+                  <div class="lp-site-look-mock__bar" aria-hidden="true"><i></i></div>
+                  <p class="lp-site-look-mock__meter-foot">おおよそ +33 / 分（見本）</p>
+                </div>
+                <div class="lp-site-look-mock__bubble">
+                  <img src="../extension/images/yukkuri-charactore-english/konta/kitsune-yukkuri-smile-mouth-open.png" width="36" height="36" alt="" decoding="async">
+                  <p><strong>匿名</strong>　これおもしれえええええええええ（架空コメント）</p>
+                </div>
+              </div>
+              <div class="lp-site-look-mock__tips" aria-hidden="true">
+                <div class="lp-site-look-mock__tip">
+                  <img src="../extension/images/yukkuri-charactore-english/tanunee/tanuki-yukkuri-smile-mouth-open.png" width="28" height="28" alt="" decoding="async">
+                  <span>アイコン列は<strong>取得できた順</strong>に近いイメージで並びます（LP では省略しています）。</span>
+                </div>
+                <div class="lp-site-look-mock__tip">
+                  <img src="../extension/images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-open.png" width="28" height="28" alt="" decoding="async">
+                  <span>公式コメントと<strong>手元の記録</strong>の差は、下の数値カードの脚注でざっくり示すイメージです。</span>
+                </div>
+              </div>
+              <div class="lp-site-look-mock__status">
+                <strong>いま 48 件を表示中</strong>
+                <p>応援コメント計 255 件のうち、アイコン付き 44・ユーザーID付き 180… といった<strong>集計の一行</strong>が並ぶイメージです（すべて架空）。取り込みに成功しました、のような一文もここに入ります。</p>
+                <div class="lp-site-look-mock__avatar-scroll" aria-hidden="true">
+                  <div class="lp-site-look-mock__avatar-cell">
+                    <img src="../extension/images/yukkuri-charactore-english/link/link-yukkuri-smile-mouth-open.png" width="32" height="32" alt="" decoding="async">
+                    <span>6292820</span><span>ちはる</span>
+                  </div>
+                  <div class="lp-site-look-mock__avatar-cell">
+                    <img src="../extension/images/yukkuri-charactore-english/tanunee/tanuki-yukkuri-half-eyes-mouth-open.png" width="32" height="32" alt="" decoding="async">
+                    <span>121127503</span><span>くりぷ</span>
+                  </div>
+                  <div class="lp-site-look-mock__avatar-cell">
+                    <div class="lp-site-look-mock__avatar-sil" aria-hidden="true">?</div>
+                    <span>a:HsWl…</span><span>匿名</span>
+                  </div>
+                  <div class="lp-site-look-mock__avatar-cell">
+                    <img src="../extension/images/yukkuri-charactore-english/konta/kitsune-yukkuri-half-eyes-mouth-closed.png" width="32" height="32" alt="" decoding="async">
+                    <span>88290112</span><span>ひなぷ</span>
+                  </div>
+                  <div class="lp-site-look-mock__avatar-cell">
+                    <div class="lp-site-look-mock__avatar-sil" aria-hidden="true">?</div>
+                    <span>a:nawQ…</span><span>匿名</span>
+                  </div>
+                  <div class="lp-site-look-mock__avatar-cell">
+                    <img src="../extension/images/yukkuri-charactore-english/link/link-yukkuri-normal-mouth-open.png" width="32" height="32" alt="" decoding="async">
+                    <span>30492811</span><span>えだ</span>
+                  </div>
+                  <div class="lp-site-look-mock__avatar-cell">
+                    <div class="lp-site-look-mock__avatar-sil" aria-hidden="true">?</div>
+                    <span>a:0u26…</span><span>匿名</span>
+                  </div>
+                  <div class="lp-site-look-mock__avatar-cell">
+                    <img src="../extension/images/yukkuri-charactore-english/tanunee/tanuki-yukkuri-smile-mouth-closed.png" width="32" height="32" alt="" decoding="async">
+                    <span>204881</span><span>カビ</span>
+                  </div>
+                </div>
+              </div>
+              <div class="lp-site-look-mock__kpi-grid" aria-hidden="true">
+                <div class="lp-site-look-mock__kpi">
+                  <div class="lp-site-look-mock__kpi-av"><img src="../extension/images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-open.png" width="32" height="32" alt="" decoding="async"></div>
+                  <div class="lp-site-look-mock__kpi-label">記録</div>
+                  <div class="lp-site-look-mock__kpi-value">248</div>
+                  <div class="lp-site-look-mock__kpi-unit">応援コメント</div>
+                  <div class="lp-site-look-mock__kpi-foot">公式 278 件・記録は公式の約 89%（架空）</div>
+                </div>
+                <div class="lp-site-look-mock__kpi">
+                  <div class="lp-site-look-mock__kpi-av"><img src="../extension/images/yukkuri-charactore-english/konta/kitsune-yukkuri-smile-mouth-open.png" width="32" height="32" alt="" decoding="async"></div>
+                  <div class="lp-site-look-mock__kpi-label">推定同時接続</div>
+                  <div class="lp-site-look-mock__kpi-value">~197</div>
+                  <div class="lp-site-look-mock__kpi-unit">18人×6.7＋滞留39%（見本）</div>
+                </div>
+                <div class="lp-site-look-mock__kpi">
+                  <div class="lp-site-look-mock__kpi-av"><img src="../extension/images/yukkuri-charactore-english/tanunee/tanuki-yukkuri-smile-mouth-open.png" width="32" height="32" alt="" decoding="async"></div>
+                  <div class="lp-site-look-mock__kpi-label">来場者数</div>
+                  <div class="lp-site-look-mock__kpi-value">820</div>
+                  <div class="lp-site-look-mock__kpi-unit">人</div>
+                </div>
+              </div>
+              <div class="lp-site-look-mock__rank-wrap" aria-hidden="true">
+                <p class="lp-site-look-mock__rank-note">記録内・ユーザー別の応援件数が多い順です。（LP 用ダミー）</p>
+                <div class="lp-site-look-mock__rank-scroll">
+                  <div class="lp-site-look-mock__rank-card">
+                    <span class="lp-site-look-mock__rank-badge">1</span>
+                    <span class="lp-site-look-mock__rank-count">28件</span>
+                    <img src="../extension/images/yukkuri-charactore-english/link/link-yukkuri-smile-mouth-open.png" width="28" height="28" alt="" decoding="async">
+                    <span class="lp-site-look-mock__rank-id">a:GtWYGKAe…</span>
+                    <span class="lp-site-look-mock__rank-nick">匿名</span>
+                  </div>
+                  <div class="lp-site-look-mock__rank-card">
+                    <span class="lp-site-look-mock__rank-badge">2</span>
+                    <span class="lp-site-look-mock__rank-count">21件</span>
+                    <img src="../extension/images/yukkuri-charactore-english/konta/kitsune-yukkuri-half-eyes-mouth-open.png" width="28" height="28" alt="" decoding="async">
+                    <span class="lp-site-look-mock__rank-id">46231694</span>
+                    <span class="lp-site-look-mock__rank-nick">nora</span>
+                  </div>
+                  <div class="lp-site-look-mock__rank-card">
+                    <span class="lp-site-look-mock__rank-badge">3</span>
+                    <span class="lp-site-look-mock__rank-count">16件</span>
+                    <img src="../extension/images/yukkuri-charactore-english/tanunee/tanuki-yukkuri-normal-mouth-closed.png" width="28" height="28" alt="" decoding="async">
+                    <span class="lp-site-look-mock__rank-id">ななっこりー</span>
+                    <span class="lp-site-look-mock__rank-nick">なな</span>
+                  </div>
+                  <div class="lp-site-look-mock__rank-card">
+                    <span class="lp-site-look-mock__rank-badge">4</span>
+                    <span class="lp-site-look-mock__rank-count">12件</span>
+                    <img src="../extension/images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-closed.png" width="28" height="28" alt="" decoding="async">
+                    <span class="lp-site-look-mock__rank-id">88210441</span>
+                    <span class="lp-site-look-mock__rank-nick">えだ</span>
+                  </div>
+                  <div class="lp-site-look-mock__rank-card">
+                    <span class="lp-site-look-mock__rank-badge">5</span>
+                    <span class="lp-site-look-mock__rank-count">9件</span>
+                    <div class="lp-site-look-mock__avatar-sil lp-site-look-mock__rank-sil" aria-hidden="true">?</div>
+                    <span class="lp-site-look-mock__rank-id">a:b7Kq…</span>
+                    <span class="lp-site-look-mock__rank-nick">匿名</span>
+                  </div>
+                  <div class="lp-site-look-mock__rank-card">
+                    <span class="lp-site-look-mock__rank-badge">6</span>
+                    <span class="lp-site-look-mock__rank-count">7件</span>
+                    <img src="../extension/images/yukkuri-charactore-english/tanunee/tanuki-yukkuri-smile-mouth-open.png" width="28" height="28" alt="" decoding="async">
+                    <span class="lp-site-look-mock__rank-id">guest_07</span>
+                    <span class="lp-site-look-mock__rank-nick">ゲスト</span>
+                  </div>
+                </div>
+              </div>
+              <div class="lp-site-look-mock__record">
+                <div class="lp-site-look-mock__record-head">
+                  <img src="../extension/images/yukkuri-charactore-english/link/link-yukkuri-smile-mouth-open.png" width="36" height="36" alt="" decoding="async">
+                  <div>
+                    <h5>りんくより 応援コメントの記録</h5>
+                    <p>チェックを付けると、この放送の応援コメントがこのPCにたまるイメージです。外すと OFF で増えません（説明文の見本）。</p>
+                  </div>
+                </div>
+                <div class="lp-site-look-mock__toggle-box" aria-hidden="true">
+                  <span class="lp-site-look-mock__on-pill">ON</span>
+                  <p class="lp-site-look-mock__toggle-note">記録を ON / OFF — ON＝件数が増える・OFF＝見るだけ（保存されない）</p>
+                </div>
+                <p class="lp-site-look-mock__fake-check" aria-hidden="true">☑ 一覧の取り込みをゆっくり始める（読み込み表示・滝を抑える）</p>
+                <div class="lp-site-look-mock__comment-block">
+                  <h6>テキストボックス・Enter送信（見本）</h6>
+                  <div class="lp-site-look-mock__comment-row">
+                    <input type="text" readonly value="" placeholder="文字を入力して Enter で送る（いまはデモ）" aria-label="コメント用テキストボックス（架空ダッシュボード・デモのみ・Enter送信は未実装）">
+                    <button type="button" disabled tabindex="-1">コメント</button>
+                  </div>
+                  <p class="lp-site-look-mock__comment-roadmap" role="note">
+                    <strong>テキストボックスに入力して Enter（または送信ボタン）で送る</strong>流れを、拡張からも<strong>あとから実装する予定</strong>です。いまのプログラムでは<strong>その欄をUIに出していません</strong>（このボックスは見本で、キー操作は効きません）。
+                    <strong>音声入力</strong>は<strong>ブラウザやOSの音声入力</strong>で文字を入れ、確定したあと<strong>Enter</strong>など通常どおり送る想定です（環境依存）。くわしくは<a href="#extension-guide-comment-voice">画面の見方・用語⑧</a>。
+                  </p>
+                </div>
+                <p class="lp-site-look-mock__foot-hint" aria-hidden="true">ページ内パネルの位置・幅（watch）… などの細かい設定行のイメージ</p>
+              </div>
+              <details class="lp-site-look-mock__details">
+                <summary>内訳・用語（詳しく見る）— 見本</summary>
+                <div class="lp-site-look-mock__dense" aria-hidden="true">
+                  <div class="lp-site-look-mock__dense-cell"><span class="lp-site-look-mock__dense-mult">×2</span></div>
+                  <div class="lp-site-look-mock__dense-cell"><img src="../extension/images/yukkuri-charactore-english/link/link-yukkuri-smile-mouth-open.png" alt="" decoding="async"><span class="lp-site-look-mock__dense-mult">×5</span></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"><img src="../extension/images/yukkuri-charactore-english/konta/kitsune-yukkuri-smile-mouth-open.png" alt="" decoding="async"><span class="lp-site-look-mock__dense-mult">×12</span></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"><span class="lp-site-look-mock__dense-mult">×3</span></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"><img src="../extension/images/yukkuri-charactore-english/tanunee/tanuki-yukkuri-smile-mouth-open.png" alt="" decoding="async"></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"><span class="lp-site-look-mock__dense-mult">×2</span></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"><img src="../extension/images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-open.png" alt="" decoding="async"><span class="lp-site-look-mock__dense-mult">×8</span></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"><span class="lp-site-look-mock__dense-mult">×4</span></div>
+                  <div class="lp-site-look-mock__dense-cell"><img src="../extension/images/yukkuri-charactore-english/konta/kitsune-yukkuri-half-eyes-mouth-open.png" alt="" decoding="async"></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"><span class="lp-site-look-mock__dense-mult">×6</span></div>
+                  <div class="lp-site-look-mock__dense-cell"><img src="../extension/images/yukkuri-charactore-english/tanunee/tanuki-yukkuri-half-eyes-mouth-closed.png" alt="" decoding="async"></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"><span class="lp-site-look-mock__dense-mult">×2</span></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"><img src="../extension/images/yukkuri-charactore-english/link/link-yukkuri-normal-mouth-open.png" alt="" decoding="async"></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"><span class="lp-site-look-mock__dense-mult">×5</span></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"></div>
+                  <div class="lp-site-look-mock__dense-cell"><img src="../extension/images/yukkuri-charactore-english/konta/kitsune-yukkuri-smile-mouth-closed.png" alt="" decoding="async"><span class="lp-site-look-mock__dense-mult">×3</span></div>
+                </div>
+              </details>
+            </div>
+          </div>
+
+          <div class="board fade d2">
             <h3>アイコン列・グリッド・診断（LP 用モック）</h3>
             <p>
               拡張の一覧では<strong>サムネ（アイコン）がいちばん目に入る</strong>。下のモックでは、<strong>りんく→こん太→たぬ姉の吹き出しのすぐ下</strong>に、そのランクにだけ当てはまるカードを並べ、段が混ざらないようにしています（架空データです）。
@@ -3845,7 +4421,7 @@
             </div>
           </div>
 
-          <div class="board lp-top-commenters-board fade d2" id="lp-top-commenters" style="margin-top:var(--space-md)">
+          <div class="board lp-top-commenters-board fade d3" id="lp-top-commenters" style="margin-top:var(--space-md)">
             <h3>数値カードの下に「コメント多い順・上位10」（イメージ）</h3>
             <p>
               実際の視聴タブでは、<strong>動画と公式コメント列の下あたり</strong>に拡張のパネルが載ります。下はその<strong>並びを真似た静止デモ</strong>なのだ（見た目は実機に寄せつつ、数値・ID は架空なのだ）。
@@ -4488,7 +5064,7 @@
             <h2 id="extension-guide-heading">画面の見方（やさしい説明）</h2>
             <p>
               ポップアップや埋め込みパネルには専門的な言葉が出ます。<strong>りんく</strong>が仕組み、<strong>こん太</strong>が使う側の感覚、<strong>たぬ姉</strong>が整理します。
-              くわしく知りたい項目だけ、下のアコーディオンを開いてください。
+              くわしく知りたい項目だけ、下のアコーディオンを開いてください。<strong>テキストボックス・Enter送信（予定）・音声入力</strong>は<a href="#extension-guide-comment-voice">用語⑧</a>です。
             </p>
           </div>
 
@@ -4802,6 +5378,46 @@
                     </div>
                     <div class="bubble">
                       NicoDB（<a href="https://nicodb.net/">https://nicodb.net/</a>）の来場者数とも比較しやすい定義で並べているのだ。ツールチップの文言もここに沿っているのだ。
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </details>
+
+            <details class="lp-accordion fade d2" id="extension-guide-comment-voice">
+              <summary class="lp-accordion__summary">
+                <span class="lp-accordion__badge">用語⑧</span>
+                テキストボックス・Enter送信・音声入力（予定・いまの状態）
+              </summary>
+              <div class="lp-accordion__body">
+                <div class="yukkuri-thread">
+                  <div class="y-row">
+                    <div class="speaker">
+                      <img src="../extension/images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-open.png" alt="" width="72" height="72" decoding="async">
+                      <span>りんく</span>
+                    </div>
+                    <div class="bubble">
+                      視聴ページでありがちな<strong>1行のテキストボックス</strong>に返信を打ち、<strong>Enterキー</strong>か<strong>送信ボタン</strong>で流す──その動きを、拡張からも<strong>あとから足す予定</strong>なのだ。
+                      いまのビルドでは<strong>そのテキストボックスをプログラム側で出していない</strong>（または隠している）ことが多いのだ。LP の欄は<strong>見た目だけ</strong>で、<strong>Enterを押しても送れない</strong>のだ。
+                    </div>
+                  </div>
+                  <div class="y-row reverse">
+                    <div class="bubble">
+                      IMEで変換してからEnter、という<strong>いつもの日本語入力の感じ</strong>をそのまま想定しているのだ。
+                      <dfn>音声入力</dfn>も、マイクで文字がテキストボックスに入ったあと、<strong>確定してEnter</strong>するイメージなのだ。OSやブラウザの音声入力（Windows・Android・Chrome など）に<strong>端末まわりの設定で依存</strong>するのだ。
+                    </div>
+                    <div class="speaker">
+                      <img src="../extension/images/yukkuri-charactore-english/konta/kitsune-yukkuri-half-eyes-mouth-open.png" alt="" width="72" height="72" decoding="async">
+                      <span>こん太</span>
+                    </div>
+                  </div>
+                  <div class="y-row">
+                    <div class="speaker">
+                      <img src="../extension/images/yukkuri-charactore-english/tanunee/tanuki-yukkuri-half-eyes-mouth-open.png" alt="" width="72" height="72" decoding="async">
+                      <span>たぬ姉</span>
+                    </div>
+                    <div class="bubble">
+                      「打てたあとEnter」が分かりやすい人には、将来のテキストボックスが楽しみなのだ。手が疲れやすい人は音声で中身を入れてからEnter、の二段でもいいのだ。利用規約・マイク権限・誤変換は各環境の説明に従うのだ。
                     </div>
                   </div>
                 </div>
