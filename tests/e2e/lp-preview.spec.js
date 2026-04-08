@@ -418,6 +418,19 @@ test.describe('lp-preview', () => {
     }
   });
 
+  test('超会議向け: 主要幅でページ全体に横スクロールが出ない', async ({ page }) => {
+    const widths = [360, 390, 428, 768, 834, 1024, 1280, 1440, 1920];
+    for (const w of widths) {
+      await page.setViewportSize({ width: w, height: 900 });
+      await page.goto(lpHref, { waitUntil: 'domcontentloaded' });
+      const ok = await page.evaluate(() => {
+        const de = document.documentElement;
+        return de.scrollWidth <= de.clientWidth + 2;
+      });
+      expect(ok, `viewport ${w}px documentElement`).toBe(true);
+    }
+  });
+
   test('深いリンク #lp-top-commenters: ハッシュ付き URL とスクロール先', async ({ page }) => {
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto(`${lpHref}#lp-top-commenters`, { waitUntil: 'domcontentloaded' });
