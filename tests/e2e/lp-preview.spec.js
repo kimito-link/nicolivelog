@@ -346,6 +346,78 @@ test.describe('lp-preview', () => {
     expect(boxes[1].x).toBeGreaterThan(boxes[0].x + boxes[0].width * 0.45);
   });
 
+  test('数式ブロック: 390幅で横はみ出しなし・テーブル可読', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(lpHref, { waitUntil: 'domcontentloaded' });
+
+    const formulas = page.locator('.formula');
+    const fCount = await formulas.count();
+    expect(fCount).toBeGreaterThanOrEqual(2);
+
+    for (let i = 0; i < fCount; i++) {
+      const f = formulas.nth(i);
+      await f.scrollIntoViewIfNeeded();
+      const box = await f.boundingBox();
+      expect(box, `formula ${i} visible`).not.toBeNull();
+      expect(box.width).toBeLessThanOrEqual(390);
+      expect(box.x).toBeGreaterThanOrEqual(-1);
+    }
+
+    const tables = page.locator('.formula-table');
+    const tCount = await tables.count();
+    expect(tCount).toBeGreaterThanOrEqual(2);
+
+    for (let i = 0; i < tCount; i++) {
+      const t = tables.nth(i);
+      await t.scrollIntoViewIfNeeded();
+      const noOverflow = await t.evaluate((el) => el.scrollWidth <= el.clientWidth + 2);
+      expect(noOverflow, `formula-table ${i} no horizontal overflow`).toBe(true);
+    }
+  });
+
+  test('数式ブロック: 320幅でも可読・はみ出しなし', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 568 });
+    await page.goto(lpHref, { waitUntil: 'domcontentloaded' });
+
+    const formulas = page.locator('.formula');
+    const fCount = await formulas.count();
+    for (let i = 0; i < fCount; i++) {
+      const f = formulas.nth(i);
+      await f.scrollIntoViewIfNeeded();
+      const box = await f.boundingBox();
+      expect(box, `formula ${i} at 320`).not.toBeNull();
+      expect(box.width).toBeLessThanOrEqual(320);
+    }
+
+    const tables = page.locator('.formula-table');
+    const tCount = await tables.count();
+    for (let i = 0; i < tCount; i++) {
+      const t = tables.nth(i);
+      await t.scrollIntoViewIfNeeded();
+      const noOverflow = await t.evaluate((el) => el.scrollWidth <= el.clientWidth + 2);
+      expect(noOverflow, `formula-table ${i} at 320`).toBe(true);
+    }
+  });
+
+  test('数式ブロック: 1280幅でテーブル列が横に並ぶ', async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto(lpHref, { waitUntil: 'domcontentloaded' });
+
+    const tables = page.locator('.formula-table');
+    const tCount = await tables.count();
+    expect(tCount).toBeGreaterThanOrEqual(2);
+
+    for (let i = 0; i < tCount; i++) {
+      const t = tables.nth(i);
+      await t.scrollIntoViewIfNeeded();
+      const headerBoxes = await allBoundingBoxes(t.locator('th'));
+      if (headerBoxes.length >= 3) {
+        expect(headerBoxes[1].x).toBeGreaterThan(headerBoxes[0].x + 10);
+        expect(headerBoxes[2].x).toBeGreaterThan(headerBoxes[1].x + 10);
+      }
+    }
+  });
+
   test('深いリンク #lp-top-commenters: ハッシュ付き URL とスクロール先', async ({ page }) => {
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto(`${lpHref}#lp-top-commenters`, { waitUntil: 'domcontentloaded' });

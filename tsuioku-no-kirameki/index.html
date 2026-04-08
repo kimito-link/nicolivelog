@@ -24,14 +24,19 @@
     <meta property="og:url" content="https://tsuioku-no-kirameki.com/">
     <meta property="og:title" content="君斗りんくの追憶のきらめき ― Web・iOS・Android と Chrome 拡張">
     <meta property="og:description" content="流れ星みたいに消えていくコメントを、星座みたいに、つながりが残る世界へ。Web・モバイルを前提に、視聴まわりは Chrome 拡張で応援を手元に残します。YouTube 等への対応も計画中です。">
-    <meta property="og:image" content="https://tsuioku-no-kirameki.com/images/og-image.jpg">
+    <meta property="og:image" content="https://tsuioku-no-kirameki.com/images/og-image.png">
+    <meta property="og:image:type" content="image/png">
+    <meta property="og:image:width" content="1200">
+    <meta property="og:image:height" content="630">
+    <meta property="og:image:alt" content="追憶のきらめき ― 流れ星みたいに消えていくコメントを、星座みたいに、つながりが残る世界へ。">
     <meta property="og:site_name" content="君斗りんくの追憶のきらめき">
     <meta property="og:locale" content="ja_JP">
 
     <meta name="twitter:card" content="summary_large_image">
     <meta name="twitter:title" content="君斗りんくの追憶のきらめき ― Web・iOS・Android と Chrome 拡張">
     <meta name="twitter:description" content="Web・モバイルを前提に、視聴まわりは Chrome 拡張で応援を手元に残します。YouTube 等への対応も計画中です。">
-    <meta name="twitter:image" content="https://tsuioku-no-kirameki.com/images/og-image.jpg">
+    <meta name="twitter:image" content="https://tsuioku-no-kirameki.com/images/og-image.png">
+    <meta name="twitter:image:alt" content="追憶のきらめき ― 流れ星みたいに消えていくコメントを、星座みたいに、つながりが残る世界へ。">
     <style>
       :root{
         --bg1:#f7f1e7;--bg2:#e8dac4;--paper:rgba(255,251,245,.92);--ink:#2c2117;--muted:#4f4338;
@@ -587,29 +592,33 @@
       .avatar-note img{width:72px;height:72px;object-fit:contain;filter:drop-shadow(0 10px 16px rgba(79,56,23,.14))}
       .avatar-note span{display:block;color:var(--text-secondary);font-size:.92rem;line-height:var(--lh-body)}
       .formula{
-        margin:14px 0 8px;padding:16px 20px;border-radius:16px;
-        background:linear-gradient(135deg,rgba(44,33,23,.06),rgba(44,33,23,.03));
-        border:1px solid rgba(88,62,28,.12);font-family:"Courier New",Consolas,monospace;
-        font-size:.95rem;line-height:2;color:var(--ink);overflow-x:auto
+        margin:14px 0 8px;padding:clamp(10px,2.5vw,16px) clamp(12px,3vw,20px);border-radius:14px;
+        background:linear-gradient(135deg,rgba(44,33,23,.06),rgba(44,33,23,.02));
+        border:1px solid rgba(88,62,28,.10);border-left:3px solid rgba(61,112,141,.35);
+        font-family:"Courier New",Consolas,monospace;
+        font-size:clamp(.78rem,2.2vw,.95rem);line-height:clamp(1.65,0.1vw + 1.6,2);
+        color:var(--ink);overflow-x:auto;-webkit-overflow-scrolling:touch
       }
       .formula .var{color:var(--sky);font-weight:700}
       .formula .op{color:var(--brown);font-weight:700}
-      .formula .comment{color:var(--muted);font-style:italic;font-size:.85rem}
+      .formula .comment{color:var(--muted);font-style:italic;font-size:clamp(.72rem,1.8vw,.85rem);font-family:"BIZ UDPGothic","Hiragino Sans",sans-serif;word-break:auto-phrase}
       .formula-label{
-        display:inline-flex;padding:5px 10px;border-radius:999px;font-size:.78rem;font-weight:700;
-        margin-bottom:6px;color:#fff
+        display:inline-flex;padding:4px 10px;border-radius:999px;font-size:.75rem;font-weight:700;
+        margin-bottom:6px;color:#fff;letter-spacing:.04em
       }
       .formula-label.sig-a{background:var(--sky)}
       .formula-label.sig-b{background:var(--mint)}
       .formula-label.combined{background:var(--violet)}
+      .formula-table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:10px -2px 6px}
       .formula-table{
-        width:100%;border-collapse:collapse;margin:10px 0 6px;font-size:.88rem
+        width:100%;border-collapse:collapse;margin:10px 0 6px;font-size:clamp(.76rem,2vw,.88rem)
       }
       .formula-table th,.formula-table td{
-        padding:8px 12px;text-align:left;border-bottom:1px solid rgba(88,62,28,.1)
+        padding:clamp(4px,1vw,8px) clamp(5px,1.5vw,12px);text-align:left;border-bottom:1px solid rgba(88,62,28,.08)
       }
-      .formula-table th{font-weight:700;color:var(--text-secondary);font-size:.82rem;white-space:nowrap}
+      .formula-table th{font-weight:700;color:var(--text-secondary);font-size:clamp(.7rem,1.8vw,.82rem)}
       .formula-table td:first-child{font-family:"Courier New",Consolas,monospace;white-space:nowrap}
+      .formula-table tr:nth-child(even){background:rgba(44,33,23,.025)}
       .formula-table tr:last-child th,.formula-table tr:last-child td{border-bottom:none}
       .footer-wrap{padding:24px 0 72px}
       .footer-card{grid-template-columns:1.05fr auto;align-items:center;padding:30px;background:linear-gradient(135deg,rgba(255,250,242,.98),rgba(216,239,244,.86))}
@@ -632,9 +641,13 @@
         font-size:.8rem;line-height:1.6;color:var(--muted)}
       .lp-policy-board a{color:var(--sky);text-decoration:underline;text-underline-offset:2px}
       .lp-policy-board a:hover{color:var(--blue)}
-      .fade{opacity:0;transform:translateY(18px);animation:fadeUp .9s ease forwards}.d1{animation-delay:.08s}.d2{animation-delay:.16s}.d3{animation-delay:.24s}.d4{animation-delay:.32s}
+      .fade{opacity:0;transform:translateY(18px);transition:opacity .9s ease,transform .9s ease}
+      .fade.is-visible{opacity:1;transform:translateY(0)}
+      .d1{transition-delay:.08s}.d2{transition-delay:.16s}.d3{transition-delay:.24s}.d4{transition-delay:.32s}
+      @media (prefers-reduced-motion:reduce){
+        .fade{transition:none;opacity:1;transform:none}
+      }
       @keyframes floaty{0%,100%{transform:translateY(0)}50%{transform:translateY(-10px)}}
-      @keyframes fadeUp{to{opacity:1;transform:translateY(0)}}
       @media (max-width:1020px){
         .two-col,.stats,.solution-grid,.avatar-line,.mini-notes,.footer-card,.comment-flow,.impact-chain,.impact-dual{grid-template-columns:1fr}
         .live-ui-layout{grid-template-columns:1fr;min-height:0}
@@ -3579,6 +3592,26 @@
         color:rgba(240,232,220,.85);
         font-style:italic
       }
+      .lp-coda__dots{
+        margin:clamp(28px,5vw,44px) 0 0;
+        font-size:1.1rem;line-height:2;
+        color:rgba(200,192,180,.35);
+        letter-spacing:.2em
+      }
+      .lp-coda__line--resolve{
+        margin-top:clamp(20px,4vw,32px);
+        font-family:"Yu Mincho","Hiragino Mincho ProN",serif;
+        font-size:clamp(1.1rem,2.8vw,1.35rem);
+        color:rgba(240,232,220,.9);
+        letter-spacing:.06em;line-height:1.6
+      }
+      .lp-coda__line--resolve-last{
+        margin-top:clamp(12px,2.5vw,20px);
+        font-size:clamp(1.3rem,3.6vw,1.7rem);
+        font-weight:700;
+        color:#fffaf4;
+        letter-spacing:.08em
+      }
       .lp-coda__rule{
         display:block;width:min(80px,20vw);height:1px;margin:clamp(24px,5vw,40px) auto 0;
         border:0;background:linear-gradient(90deg,transparent,rgba(201,142,43,.4),transparent)
@@ -6039,6 +6072,7 @@
                     <br><span class="comment">m(visitors) = 来場者数から対数補間で算出する動的倍率</span>
                   </div>
                   倍率は来場者数に応じて変わるのだ。大規模配信ほどコメント参加率が下がるから倍率が上がるのだ。
+                  <div class="formula-table-wrap">
                   <table class="formula-table">
                     <tr><th>来場者数</th><th>倍率 m</th><th>意味</th></tr>
                     <tr><td>〜50</td><td>×4</td><td>小規模：参加率が高い</td></tr>
@@ -6048,6 +6082,7 @@
                     <tr><td>8,000</td><td>×15</td><td>Aさん較正ポイント</td></tr>
                     <tr><td>50,000〜</td><td>×25</td><td>大規模：lurker effect 最大</td></tr>
                   </table>
+                  </div>
                   <span class="comment" style="font-size:.85rem">中間値は対数補間で滑らかに繋ぐのだ。ちくわちゃんランキング pts ≈ 同接として較正しているのだ。</span>
                 </div>
               </div>
@@ -6063,15 +6098,17 @@
                     <br><span class="comment">visitors = 累計来場者数、t = 配信経過分数</span>
                     <br><span class="comment">0.48 = 開始直後のピーク滞留率、0.08 = 底値（長時間配信の下限）</span>
                   </div>
+                  <div class="formula-table-wrap">
                   <table class="formula-table">
-                    <tr><th>経過</th><th>滞留率 r(t)</th><th>例：来場 3,000 人</th></tr>
-                    <tr><td>0分</td><td>48%</td><td>→ 1,440 人</td></tr>
-                    <tr><td>30分</td><td>41%</td><td>→ 1,230 人</td></tr>
-                    <tr><td>60分</td><td>35%</td><td>→ 1,050 人</td></tr>
-                    <tr><td>120分</td><td>26%</td><td>→ 780 人</td></tr>
-                    <tr><td>180分</td><td>20%</td><td>→ 600 人</td></tr>
-                    <tr><td>300分〜</td><td>8%（底値）</td><td>→ 240 人</td></tr>
+                    <tr><th>経過</th><th>滞留率 r(t)</th><th>例：来場 3,000人</th></tr>
+                    <tr><td>0分</td><td>48%</td><td>→ 1,440人</td></tr>
+                    <tr><td>30分</td><td>41%</td><td>→ 1,230人</td></tr>
+                    <tr><td>60分</td><td>35%</td><td>→ 1,050人</td></tr>
+                    <tr><td>120分</td><td>26%</td><td>→ 780人</td></tr>
+                    <tr><td>180分</td><td>20%</td><td>→ 600人</td></tr>
+                    <tr><td>300分〜</td><td>8%（底値）</td><td>→ 240人</td></tr>
                   </table>
+                  </div>
                   来場者がたくさんいても、時間が経つと離脱していく自然な減り方を表現しているのだ。
                 </div>
                 <div class="speaker">
@@ -6312,6 +6349,10 @@
             <p>恋人とのメッセージの返信を心待ちにするような気持ちで</p>
             <p class="lp-coda__verse-last">いつでも君の言葉（コメント）を待ち望んでいるよ</p>
           </div>
+          <p class="lp-coda__dots" aria-hidden="true">・<br>・<br>・<br>・</p>
+          <p class="lp-coda__line lp-coda__line--resolve">届いてる　届いてる</p>
+          <p class="lp-coda__line lp-coda__line--resolve">もう大丈夫</p>
+          <p class="lp-coda__line lp-coda__line--resolve lp-coda__line--resolve-last">キミの言葉　確かに受け取ったよ</p>
           <hr class="lp-coda__rule" aria-hidden="true">
           <a class="lp-coda__back" href="#page-top">&#8593; TOPへ戻る</a>
         </div>
@@ -6499,6 +6540,26 @@
         el.preload = 'auto';
         tryMutedAutoplay();
         addListeners();
+      })();
+    </script>
+
+    <script>
+      (function () {
+        var els = document.querySelectorAll('.fade');
+        if (!els.length) return;
+        if (!('IntersectionObserver' in window)) {
+          for (var i = 0; i < els.length; i++) els[i].classList.add('is-visible');
+          return;
+        }
+        var io = new IntersectionObserver(function (entries) {
+          for (var j = 0; j < entries.length; j++) {
+            if (entries[j].isIntersecting) {
+              entries[j].target.classList.add('is-visible');
+              io.unobserve(entries[j].target);
+            }
+          }
+        }, { rootMargin: '0px 0px -40px 0px', threshold: 0 });
+        for (var k = 0; k < els.length; k++) io.observe(els[k]);
       })();
     </script>
   </body>
