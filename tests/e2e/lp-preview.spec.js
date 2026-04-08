@@ -97,6 +97,46 @@ test.describe('lp-preview', () => {
     expect(narrow[2].y).toBeGreaterThanOrEqual(bottom1 - 8);
   });
 
+  test('ゆっくり吹き出し: 狭い幅でも左右掛け合い・吹き出しが十分な幅', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(lpHref, { waitUntil: 'domcontentloaded' });
+
+    const thread = page.locator('#multi-live .lp-multi-live-y');
+    await thread.scrollIntoViewIfNeeded();
+
+    const rowL = thread.locator('.y-row:not(.reverse)').first();
+    const bubbleL = rowL.locator('.bubble');
+    const speakerL = rowL.locator('.speaker');
+    const brL = await bubbleL.boundingBox();
+    const srL = await speakerL.boundingBox();
+    expect(brL, 'left-row bubble box').not.toBeNull();
+    expect(srL, 'left-row speaker box').not.toBeNull();
+    expect(brL.width).toBeGreaterThan(155);
+    expect(brL.x).toBeGreaterThan(srL.x);
+
+    const rowR = thread.locator('.y-row.reverse').first();
+    const bubbleR = rowR.locator('.bubble');
+    const speakerR = rowR.locator('.speaker');
+    const brR = await bubbleR.boundingBox();
+    const srR = await speakerR.boundingBox();
+    expect(brR.width).toBeGreaterThan(155);
+    expect(srR.x).toBeGreaterThan(brR.x);
+  });
+
+  test('ゆっくり吹き出し: 320px幅でも掛け合い2列を維持', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 700 });
+    await page.goto(lpHref, { waitUntil: 'domcontentloaded' });
+
+    const row = page.locator('#problem .yukkuri-thread .y-row').first();
+    await row.scrollIntoViewIfNeeded();
+    const bubble = row.locator('.bubble');
+    const speaker = row.locator('.speaker');
+    const b = await bubble.boundingBox();
+    const s = await speaker.boundingBox();
+    expect(b.width).toBeGreaterThan(120);
+    expect(b.x).toBeGreaterThan(s.x);
+  });
+
   test('深いリンク #lp-top-commenters: ハッシュ付き URL とスクロール先', async ({ page }) => {
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.goto(`${lpHref}#lp-top-commenters`, { waitUntil: 'domcontentloaded' });

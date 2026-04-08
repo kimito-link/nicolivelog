@@ -255,8 +255,8 @@
         padding:14px 16px;border-radius:18px;background:rgba(255,252,247,.84);border:1px solid rgba(88,62,28,.1);
         color:var(--text-secondary);line-height:var(--lh-body)
       }
-      .mini-bubble:nth-child(2){margin-left:auto;max-width:290px}
-      .mini-bubble:nth-child(3){max-width:280px}
+      .mini-bubble:nth-child(2){margin-left:auto;max-width:min(290px,100%)}
+      .mini-bubble:nth-child(3){max-width:min(280px,100%)}
       .mini-bubble strong{color:var(--ink)}
       .trio{display:flex;justify-content:center;align-items:flex-end;gap:12px;margin-top:18px}
       .stand{width:min(30%,170px);min-width:94px;padding:12px 10px;border-radius:24px;background:rgba(255,252,247,.72);border:1px solid rgba(88,62,28,.1);text-align:center}
@@ -277,7 +277,7 @@
       .board p{margin:0;color:var(--text-secondary);line-height:var(--lh-body)}
       .board p + p{margin-top:var(--space-sm)}
       .yukkuri-thread{display:grid;gap:18px;margin-top:20px}
-      .y-row{display:grid;grid-template-columns:112px minmax(0,1fr);gap:16px;align-items:center}
+      .y-row{display:grid;grid-template-columns:112px minmax(0,1fr);gap:16px;align-items:start}
       .y-row.reverse{grid-template-columns:minmax(0,1fr) 112px}
       .y-row .bubble{min-width:0}
       .speaker{display:flex;flex-direction:column;align-items:center;gap:8px}
@@ -486,10 +486,26 @@
         background:rgba(44,33,23,.07);padding:2px 6px;border-radius:6px;word-break:break-all
       }
       @media (max-width:520px){
-        .lp-accordion__body .y-row,.lp-accordion__body .y-row.reverse{grid-template-columns:1fr}
-        .lp-accordion__body .y-row .speaker{flex-direction:row;justify-content:flex-start;gap:10px}
-        .lp-accordion__body .y-row.reverse .speaker{order:-1}
-        .lp-accordion__body .bubble::after{display:none}
+        .lp-accordion__body .y-row{
+          grid-template-columns:minmax(48px,58px) minmax(0,1fr);
+          gap:8px;
+          align-items:start
+        }
+        .lp-accordion__body .y-row.reverse{
+          grid-template-columns:minmax(0,1fr) minmax(48px,58px)
+        }
+        .lp-accordion__body .y-row.reverse .speaker{order:unset}
+        .lp-accordion__body .speaker img{width:52px;height:52px}
+        .lp-accordion__body .speaker span{font-size:.68rem}
+        .lp-accordion__body .bubble{padding:12px 13px;font-size:.86rem;line-height:1.62}
+        .lp-accordion__body .y-row .bubble::after{
+          left:-6px;top:16px;width:13px;height:13px;
+          transform:rotate(45deg)
+        }
+        .lp-accordion__body .y-row.reverse .bubble::after{
+          right:-6px;left:auto;top:16px;
+          transform:rotate(45deg)
+        }
       }
       .comment-flow{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px;margin-top:20px}
       .flow-card{position:relative}.flow-card h4{margin:0 0 8px;font-size:1.04rem;line-height:var(--lh-heading)}.flow-card p{margin:0}
@@ -581,12 +597,40 @@
       }
       @media (max-width:760px){
         :root{--anchor-offset:52px}
-        .y-row,.y-row.reverse{grid-template-columns:1fr}
-        .y-row.reverse .speaker{order:-1}
-        .bubble::after,.y-row.reverse .bubble::after{
-          left:24px;right:auto;top:auto;bottom:-10px;transform:rotate(45deg);border-right:1px solid rgba(88,62,28,.1);border-top:none;border-left:none;border-bottom:1px solid rgba(88,62,28,.1)
+        /* 狭い画面でも1列化せず、LINE風の左右掛け合いを維持（吹き出し幅の潰れ防止） */
+        .y-row{
+          grid-template-columns:minmax(50px,76px) minmax(0,1fr);
+          gap:10px;
+          align-items:start
+        }
+        .y-row.reverse{
+          grid-template-columns:minmax(0,1fr) minmax(50px,76px)
+        }
+        .y-row.reverse .speaker{order:unset}
+        .y-row .speaker img{width:64px;height:64px}
+        .y-row .speaker span{font-size:.74rem}
+        .y-row .bubble{
+          padding:14px 16px;
+          border-radius:22px;
+          font-size:clamp(.88rem,2.9vw,.98rem);
+          line-height:var(--lh-body)
+        }
+        .y-row .bubble::after{
+          left:-7px;top:18px;width:14px;height:14px;
+          transform:rotate(45deg)
+        }
+        .y-row.reverse .bubble::after{
+          left:auto;right:-7px;top:18px;
+          transform:rotate(45deg)
         }
         .trio{gap:10px}.stand{width:33%;min-width:0;padding:12px 8px 10px}
+        .mini-bubble:nth-child(2){margin-left:0;max-width:100%}
+        .mini-bubble:nth-child(3){max-width:100%}
+      }
+      @media (max-width:360px){
+        .y-row{grid-template-columns:minmax(46px,64px) minmax(0,1fr);gap:8px}
+        .y-row.reverse{grid-template-columns:minmax(0,1fr) minmax(46px,64px)}
+        .y-row .speaker img{width:56px;height:56px}
       }
 
       /* X 風タイムライン（LP 用デザインイメージ・実在ポストではありません） */
@@ -652,6 +696,7 @@
         border:1px solid rgba(88,62,28,.1);color:var(--text-secondary);font-size:.86rem;line-height:var(--lh-body);text-align:center}
       /* 配信UI風モック（LP デモ・特定サービスの完全再現ではありません） */
       .voices-mock-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:var(--space-md);align-items:start;margin-top:var(--space-md)}
+      .voices-mock-col{min-width:0}
       .voices-mock-label{
         margin:0 0 10px;font-size:.82rem;font-weight:700;color:var(--text-secondary);letter-spacing:.04em;text-transform:uppercase
       }
@@ -3682,6 +3727,7 @@
               一方、配信では<strong>コメントが読まれたか・名前が呼ばれたか</strong>がその日の満足度に直結しやすい、別の重さがあります。
               左はタイムライン風、右は<strong>コメント欄が流れる配信UI風</strong>の架空デモです（実在の投稿・アカウント・放送ではありません）。
               <strong>役割の仮定：</strong>ステージ上の配信者は<strong>りんく</strong>、タイムラインやコメントで応援する側は<strong>こん太</strong>として読むと、ファンの心理線がつながりやすいです。
+              その下の「同時にタブを開く」説明では<strong>たぬ姉</strong>も交えて、ブラウザの挙動を短く整理しています。
             </p>
           </div>
 
@@ -4744,10 +4790,10 @@
                 <div class="bubble"><strong>「いいねが付かない」「コメントを読んでもらえなかった」「名前を呼んでもらえなかった」</strong>──推しの<strong>りんく</strong>に向けた応援が、どれかだけでも届いてなかったのかな、と感じやすいのだ。投稿を残しておくこと自体が恥ずかしくなるのだ。</div>
               </div>
               <div class="y-row reverse">
-                <div class="bubble"><strong>「あの人は反応が多いのに、自分はゼロ」</strong>という比較が始まると、投稿の内容より先に、数字で自分を裁き始めるのだ。</div>
+                <div class="bubble">ファンから見える<strong>「あの人は反応が多いのに、自分はゼロ」</strong>という比較も、配信側の画面では数字として容赦なく並ぶのだ。<strong>全部拾えないのに冷たいと思われたくない</strong>し、推しもファンも同じ構造に挟まれるのだ。</div>
                 <div class="speaker">
-                  <img src="../extension/images/yukkuri-charactore-english/konta/kitsune-yukkuri-half-eyes-mouth-open.png" alt="ゆっくりこん太（ファン視点）">
-                  <span>ゆっくりこん太</span>
+                  <img src="../extension/images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-open.png" alt="ゆっくりりんく（配信者視点）">
+                  <span>ゆっくりりんく</span>
                 </div>
               </div>
               <div class="y-row">
