@@ -61,7 +61,7 @@ test.describe('lp-preview', () => {
     expect(noOverflow).toBe(true);
   });
 
-  test('hero-copy: 390幅でカード横はみ出しなし・stats表示', async ({ page }) => {
+  test('hero-copy: 390幅でカード横はみ出しなし・context-scaleにstats表示', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(lpHref, { waitUntil: 'domcontentloaded' });
 
@@ -72,15 +72,15 @@ test.describe('lp-preview', () => {
     expect(copyBox.x).toBeGreaterThanOrEqual(-1);
     expect(copyBox.x + copyBox.width).toBeLessThanOrEqual(391);
 
-    const stats = page.locator('.hero .stat');
+    const stats = page.locator('#context-scale .stat');
     await expect(stats).toHaveCount(3);
   });
 
-  test('hero-copy: 1280幅でstatsが横3列', async ({ page }) => {
+  test('context-scale: 1280幅でstatsが横3列', async ({ page }) => {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto(lpHref, { waitUntil: 'domcontentloaded' });
 
-    const stats = page.locator('.hero .stat');
+    const stats = page.locator('#context-scale .stat');
     await expect(stats).toHaveCount(3);
     const boxes = await allBoundingBoxes(stats);
     const cy = (b) => b.y + b.height / 2;
