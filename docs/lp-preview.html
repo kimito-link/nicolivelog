@@ -296,7 +296,7 @@
         .impact-top{flex-direction:column}.impact-row{grid-template-columns:1fr}.impact-chain .node + .node::before,.comment-flow .flow-card + .flow-card::before{content:"↓";left:50%;top:-18px;transform:translateX(-50%)}
       }
       @media (max-width:760px){
-        :root{--anchor-offset:12px;--shell-pad:20px}
+        :root{--anchor-offset:12px}
         .topbar{position:static}.topbar-inner,.section-head{flex-direction:column;align-items:flex-start}
         .y-row,.y-row.reverse{grid-template-columns:1fr}
         .y-row.reverse .speaker{order:-1}
@@ -551,7 +551,8 @@
         gap:14px;
         align-items:start;
       }
-      @media (max-width:900px){
+      /* ヒーロー等の 1020px 折り返しと揃え、901〜1020px でだけ「上は1列・下は3列」の段差を防ぐ */
+      @media (max-width:1020px){
         .lp-multi-live-grid{
           grid-template-columns:1fr;
           max-width:440px;
@@ -714,9 +715,6 @@
         border-top:1px solid rgba(88,62,28,.08);
         background:rgba(255,252,247,.75);
       }
-      @media (max-width:520px){
-        .lp-dev-grid-mock__hints{flex-direction:column;align-items:stretch}
-      }
       .lp-dev-grid-mock__hint{
         display:flex;align-items:center;gap:8px;min-width:0;max-width:100%;
       }
@@ -771,9 +769,6 @@
         gap:10px;
         margin-top:16px;
       }
-      @media (max-width:520px){
-        .lp-ext-stat-row{grid-template-columns:1fr}
-      }
       .lp-ext-stat-card{
         text-align:center;padding:14px 10px;border-radius:16px;
         border:1px solid rgba(88,62,28,.12);
@@ -782,6 +777,15 @@
       .lp-ext-stat-card__label{font-size:.72rem;color:var(--text-secondary);margin-bottom:4px}
       .lp-ext-stat-card__value{font-family:"Yu Mincho",serif;font-size:clamp(1.1rem,3vw,1.35rem);font-weight:700;color:var(--ink)}
       .lp-ext-stat-card__unit{font-size:.72rem;color:var(--muted);margin-top:4px}
+      @media (max-width:520px){
+        .lp-dev-grid-mock__hints{flex-direction:column;align-items:stretch}
+        /* 数値カード3枚は常に横並び（実機デモと同じ）。狭い幅では余白・字組のみ詰める */
+        .lp-ext-stat-row{gap:8px}
+        .lp-ext-stat-card{padding:12px 6px;border-radius:14px}
+        .lp-ext-stat-card__label{font-size:.68rem}
+        .lp-ext-stat-card__value{font-size:clamp(1rem,4.2vw,1.28rem)}
+        .lp-ext-stat-card__unit{font-size:.68rem}
+      }
 
       .lp-ext-strip{
         margin-top:12px;padding:12px 10px 14px;border-radius:16px;
@@ -794,11 +798,11 @@
         padding:6px 4px 10px;-webkit-overflow-scrolling:touch;scrollbar-gutter:stable;
       }
       .lp-ext-strip__item{
-        flex:0 0 auto;min-width:60px;max-width:84px;
-        display:flex;flex-direction:column;align-items:center;gap:5px;
-        padding:9px 7px 11px;border-radius:12px;
+        flex:0 0 auto;min-width:70px;max-width:92px;
+        display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:6px;
+        padding:10px 8px 12px;border-radius:14px;
         border:1px solid rgba(88,62,28,.12);background:rgba(255,252,247,.94);
-        font-size:.68rem;color:var(--text-secondary);
+        font-size:.7rem;color:var(--text-secondary);
       }
       .lp-ext-strip__place{
         font-weight:800;color:#fff;background:linear-gradient(145deg,#64748b,#475569);
@@ -807,7 +811,7 @@
       .lp-ext-strip__item:nth-child(1) .lp-ext-strip__place{background:linear-gradient(145deg,#ea8c2c,#c9781e)}
       .lp-ext-strip__item:nth-child(2) .lp-ext-strip__place{background:linear-gradient(145deg,#94a3b8,#64748b)}
       .lp-ext-strip__count{font-weight:800;color:var(--mint);font-variant-numeric:tabular-nums}
-      .lp-ext-strip__item img{width:22px;height:22px;border-radius:999px;object-fit:cover}
+      .lp-ext-strip__item img{width:30px;height:30px;border-radius:999px;object-fit:cover}
       .lp-ext-strip__id,.lp-ext-strip__nick{width:100%;text-align:center;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
       /* 視聴ページの直下にパネルが来る、という文脈を一言で示す（静止・架空） */
@@ -1440,7 +1444,7 @@
             </div>
           </div>
 
-          <div class="board fade d2" style="margin-top:var(--space-md)">
+          <div class="board fade d2" id="lp-top-commenters" style="margin-top:var(--space-md)">
             <h3>数値カードの下に「コメント多い順・上位10」（イメージ）</h3>
             <p>
               実際の視聴タブでは、<strong>動画と公式コメント列の下あたり</strong>に拡張のパネルが載ります。下はその<strong>並びを真似た静止デモ</strong>なのだ（見た目は実機に寄せつつ、数値・ID は架空なのだ）。
