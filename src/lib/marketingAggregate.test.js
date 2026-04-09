@@ -117,7 +117,6 @@ describe('aggregateMarketingReport', () => {
   });
 
   it('四分位エンゲージメント（長いスパンで冒頭・終盤の人数）', () => {
-    const t0 = BASE;
     const comments = [
       c(1, 'early', 'a', 0),
       c(2, 'early', 'b', 30_000),

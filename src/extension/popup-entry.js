@@ -5589,8 +5589,6 @@ async function refresh() {
   const exportBtn = /** @type {HTMLButtonElement} */ ($('exportJson'));
   const captureBtn = /** @type {HTMLButtonElement|null} */ ($('captureScreenshot'));
   const thumbCountEl = $('thumbCount');
-  const commentInput = /** @type {HTMLTextAreaElement} */ ($('commentInput'));
-  const postBtn = /** @type {HTMLButtonElement} */ ($('postCommentBtn'));
 
   try {
   ensurePopupPrimaryCloakedBeforeFirstReveal();

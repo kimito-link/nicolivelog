@@ -7936,14 +7936,6 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       $("captureScreenshot")
     );
     const thumbCountEl = $("thumbCount");
-    const commentInput = (
-      /** @type {HTMLTextAreaElement} */
-      $("commentInput")
-    );
-    const postBtn = (
-      /** @type {HTMLButtonElement} */
-      $("postCommentBtn")
-    );
     try {
       let paintWatchPopupUi = function() {
         syncInterceptMapDiagFromSnapshot(watchSnapshot);

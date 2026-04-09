@@ -3,6 +3,7 @@ import { normalizeCommentText } from './commentRecord.js';
 const COMMENT_KINDNESS_CONFIRM_JA =
   'そのまま送るなら、もう一度「コメント送信」を押してね。';
 
+/** @type {ReadonlyArray<{ id: string; level: 'strong' | 'mild'; pattern: RegExp; ignore?: RegExp; body: string }>} */
 const COMMENT_KINDNESS_RULES = [
   {
     id: 'direct-harm',
