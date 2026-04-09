@@ -3163,6 +3163,87 @@
         max-width:100%;
         height:auto
       }
+      /* 水面に月：濁りが薄れて澄んで見えるループ（装飾のみ） */
+      .lp-worldview__moonwater{
+        position:relative;
+        margin:clamp(18px,4vw,28px) 0 0;
+        height:clamp(96px,21vw,172px);
+        border-radius:var(--r3);
+        overflow:hidden;
+        isolation:isolate;
+        border:1px solid rgba(88,62,28,.12);
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.12)
+      }
+      .lp-worldview__moonwater__surface{
+        position:absolute;
+        inset:0;
+        background:
+          radial-gradient(ellipse 90% 55% at 50% 0%,rgba(130,175,205,.28),transparent 58%),
+          linear-gradient(185deg,rgba(72,98,118,.88) 0%,rgba(42,62,78,.94) 42%,rgba(28,44,56,.97) 100%)
+      }
+      .lp-worldview__moonwater__surface::after{
+        content:"";
+        position:absolute;
+        left:0;right:0;
+        bottom:0;
+        height:45%;
+        background:repeating-linear-gradient(
+          180deg,
+          transparent 0,
+          transparent 7px,
+          rgba(255,255,255,.045) 7px,
+          rgba(255,255,255,.045) 8px
+        );
+        opacity:.75;
+        animation:lp-moonwater-ripple 3.8s linear infinite;
+        pointer-events:none
+      }
+      .lp-worldview__moonwater__murk{
+        position:absolute;
+        inset:0;
+        pointer-events:none;
+        background:
+          radial-gradient(ellipse 100% 70% at 48% 100%,rgba(35,32,28,.82),transparent 58%),
+          linear-gradient(180deg,rgba(55,48,40,.52) 0%,rgba(40,52,48,.62) 50%,rgba(30,38,40,.72) 100%);
+        mix-blend-mode:multiply;
+        animation:lp-moonwater-murk-clear 11s ease-in-out infinite
+      }
+      .lp-worldview__moonwater__reflection{
+        position:absolute;
+        left:clamp(5%,7vw,12%);
+        top:-4%;
+        width:clamp(40px,10vw,76px);
+        height:92%;
+        background:radial-gradient(ellipse 48% 100% at 50% 0%,rgba(244,248,255,.55),rgba(190,210,235,.2) 38%,transparent 68%);
+        filter:blur(1px);
+        mix-blend-mode:screen;
+        opacity:.82;
+        animation:lp-moonwater-moon-shimmer 8s ease-in-out infinite;
+        pointer-events:none
+      }
+      @keyframes lp-moonwater-murk-clear{
+        0%,100%{opacity:1;filter:saturate(.88) brightness(.76)}
+        48%,58%{opacity:.28;filter:saturate(1.05) brightness(1.12)}
+      }
+      @keyframes lp-moonwater-moon-shimmer{
+        0%,100%{transform:translateY(0) scaleY(1);opacity:.62}
+        50%{transform:translateY(4px) scaleY(1.07);opacity:.95}
+      }
+      @keyframes lp-moonwater-ripple{
+        0%{transform:translateY(0)}
+        100%{transform:translateY(8px)}
+      }
+      .lp-dawn-arc .lp-worldview__moonwater{
+        border-color:rgba(255,255,255,.14);
+        box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 8px 28px rgba(0,8,20,.25)
+      }
+      @media (prefers-reduced-motion:reduce){
+        .lp-worldview__moonwater__surface::after,
+        .lp-worldview__moonwater__murk,
+        .lp-worldview__moonwater__reflection{animation:none}
+        .lp-worldview__moonwater__murk{opacity:.42;filter:saturate(.95) brightness(.95)}
+        .lp-worldview__moonwater__reflection{opacity:.78;transform:none}
+      }
       .lp-worldview__brand-note{
         margin:var(--space-md) 0 0;
         padding:12px 14px;border-radius:var(--r3);
@@ -4503,6 +4584,11 @@
               の世界観（夜空・銀河・温かい光）に寄せています。ロゴや表記の正式ルールは、Kimito-Link リポジトリのブランドガイド
               <span lang="en">251016_logo_guide_kimitolink_ol.pdf</span>（正本）に準拠してください。
             </p>
+            <div class="lp-worldview__moonwater" aria-hidden="true">
+              <div class="lp-worldview__moonwater__surface"></div>
+              <div class="lp-worldview__moonwater__murk"></div>
+              <div class="lp-worldview__moonwater__reflection"></div>
+            </div>
           </article>
         </div>
       </section>
