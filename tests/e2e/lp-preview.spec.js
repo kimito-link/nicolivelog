@@ -476,4 +476,30 @@ test.describe('lp-preview', () => {
     await target.scrollIntoViewIfNeeded();
     await expect(heading).toBeInViewport();
   });
+
+  test('コメント送信ガイド: #lp-comment-compose-guide と390幅ではみ出しなし', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${lpHref}#lp-comment-compose-guide`, { waitUntil: 'domcontentloaded' });
+
+    const block = page.locator('#lp-comment-compose-guide');
+    await expect(block).toBeVisible();
+    await expect(block).toHaveAttribute('data-lp-feature', 'comment-compose-guide');
+    await block.scrollIntoViewIfNeeded();
+    const noOverflow = await block.evaluate((el) => el.scrollWidth <= el.clientWidth + 2);
+    expect(noOverflow).toBe(true);
+    await expect(
+      page.getByRole('heading', { name: /ポップアップからコメントを送る/ }),
+    ).toBeVisible();
+  });
+
+  test('マーケ深掘り: #marketing-deep-features に四分位と nl-marketing-export-v1', async ({ page }) => {
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await page.goto(`${lpHref}#marketing-deep-features`, { waitUntil: 'domcontentloaded' });
+
+    const block = page.locator('#marketing-deep-features');
+    await expect(block).toBeVisible();
+    await expect(block).toContainText(/四分位/);
+    await expect(block).toContainText('nl-marketing-export-v1');
+    await expect(block).toContainText('schemaVersion');
+  });
 });
