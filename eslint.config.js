@@ -73,5 +73,31 @@ export default [
       'no-var': 'error',
       'prefer-const': ['error', { ignoreReadBeforeAssign: true }]
     }
+  },
+  {
+    files: ['tools/**/*.mjs'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'module',
+      globals: { ...globals.node }
+    },
+    rules: {
+      eqeqeq: ['error', 'smart'],
+      'no-var': 'error',
+      'prefer-const': ['error', { ignoreReadBeforeAssign: true }]
+    }
+  },
+  {
+    files: ['tools/**/*.js'],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: 'script',
+      globals: { ...globals.node }
+    },
+    rules: {
+      eqeqeq: ['error', 'smart'],
+      'no-var': 'error',
+      'prefer-const': ['error', { ignoreReadBeforeAssign: true }]
+    }
   }
 ];
