@@ -2959,7 +2959,7 @@
       .lp-cc-sakura{
         position:absolute;
         inset:0;
-        z-index:0;
+        z-index:2;
         pointer-events:none;
         overflow:hidden;
         border-radius:inherit
@@ -2971,8 +2971,8 @@
       .lp-cc-sakura__petal{
         position:absolute;
         top:-12%;
-        width:clamp(7px,1.8vw,11px);
-        height:clamp(9px,2.2vw,14px);
+        width:clamp(9px,2.2vw,13px);
+        height:clamp(11px,2.8vw,16px);
         border-radius:50% 2px 50% 2px;
         transform-origin:50% 50%;
         opacity:0;
@@ -6792,20 +6792,32 @@
         'use strict';
         var host = document.querySelector('.lp-worldview__logo-band--bottom');
         if (!host) return;
-        if (!('IntersectionObserver' in window)) {
+        function activate() {
           host.classList.add('lp-cc-sakura--active');
+        }
+        function isAlreadyInView() {
+          var r = host.getBoundingClientRect();
+          var vh = window.innerHeight || document.documentElement.clientHeight || 0;
+          return r.bottom > 0 && r.top < vh;
+        }
+        if (!('IntersectionObserver' in window)) {
+          activate();
+          return;
+        }
+        if (isAlreadyInView()) {
+          activate();
           return;
         }
         var io = new IntersectionObserver(
           function (entries) {
             for (var i = 0; i < entries.length; i++) {
               if (entries[i].isIntersecting) {
-                host.classList.add('lp-cc-sakura--active');
+                activate();
                 io.unobserve(host);
               }
             }
           },
-          { rootMargin: '0px 0px -10% 0px', threshold: 0.15 }
+          { rootMargin: '80px 0px 40px 0px', threshold: 0 }
         );
         io.observe(host);
       })();
