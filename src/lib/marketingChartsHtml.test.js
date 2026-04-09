@@ -1,31 +1,35 @@
 import { describe, it, expect } from 'vitest';
 import { buildMarketingDashboardHtml } from './marketingChartsHtml.js';
+import { aggregateMarketingReport } from './marketingAggregate.js';
 
 /** @returns {import('./marketingAggregate.js').MarketingReport} */
 function minimal() {
-  return {
-    liveId: 'lv123',
-    totalComments: 50,
-    uniqueUsers: 10,
-    avgCommentsPerUser: 5,
-    medianCommentsPerUser: 3,
-    peakMinute: 5,
-    peakMinuteCount: 12,
-    durationMinutes: 30,
-    commentsPerMinute: 1.7,
-    topUsers: [
-      { userId: 'u1', nickname: 'Alice', avatarUrl: '', count: 15, firstAt: 0, lastAt: 1 },
-      { userId: 'u2', nickname: '', avatarUrl: 'https://example.com/av.jpg', count: 8, firstAt: 0, lastAt: 1 }
-    ],
-    timeline: Array.from({ length: 30 }, (_, i) => ({
-      minute: i,
-      count: i === 5 ? 12 : 2,
-      uniqueUsers: i === 5 ? 8 : 1
-    })),
-    segmentCounts: { heavy: 2, mid: 3, light: 2, once: 3 },
-    segmentPcts: { heavy: 20, mid: 30, light: 20, once: 30 },
-    hourDistribution: new Array(24).fill(0).map((_, i) => (i >= 20 && i <= 23 ? 10 : 1))
-  };
+  const base = Date.now() - 3_600_000;
+  /** @type {import('./commentRecord.js').StoredComment[]} */
+  const comments = [];
+  for (let i = 0; i < 50; i++) {
+    const minute = i % 30;
+    const offsetInMin = minute * 60_000 + (i % 17) * 900;
+    comments.push({
+      id: `c${i}`,
+      liveId: 'lv123',
+      commentNo: String(2000 + i),
+      text:
+        i === 3
+          ? 'see https://example.com/x 😀'
+          : i % 11 === 0
+            ? `link https://nico.jp/${i}`
+            : `hello ${i}`,
+      userId: i === 0 ? 'u1' : `u${(i % 10) + 1}`,
+      nickname: i < 20 ? 'Alice' : '',
+      avatarUrl: i === 1 ? 'https://example.com/av.jpg' : '',
+      capturedAt: base + offsetInMin,
+      vpos: i * 400,
+      is184: i % 6 === 0,
+      selfPosted: i === 0
+    });
+  }
+  return aggregateMarketingReport(comments, 'lv123');
 }
 
 describe('buildMarketingDashboardHtml', () => {
@@ -36,9 +40,10 @@ describe('buildMarketingDashboardHtml', () => {
   });
 
   it('KPI セクションが含まれる', () => {
-    const html = buildMarketingDashboardHtml(minimal());
+    const r = minimal();
+    const html = buildMarketingDashboardHtml(r);
     expect(html).toContain('KPI サマリ');
-    expect(html).toContain('50');
+    expect(html).toContain(String(r.totalComments));
   });
 
   it('タイムラインの SVG が含まれる', () => {
@@ -114,5 +119,35 @@ describe('buildMarketingDashboardHtml', () => {
     expect(html).not.toContain('Alice');
     expect(html).toContain('A•••');
     expect(html).not.toContain('example.com');
+  });
+
+  it('本文・属性・累積・vpos のセクションが含まれる', () => {
+    const html = buildMarketingDashboardHtml(minimal());
+    expect(html).toContain('コメント本文・属性の傾向');
+    expect(html).toContain('累積コメント数と5分窓');
+    expect(html).toContain('再生位置（vpos）の三分割');
+    expect(html).toContain('自分投稿（selfPosted）');
+    expect(html).toContain('184（既知のみ）');
+  });
+
+  it('末尾に nl-marketing-export-v1 の JSON が埋め込まれパースできる', () => {
+    const html = buildMarketingDashboardHtml(minimal());
+    expect(html).toContain('id="nl-marketing-export-v1"');
+    const m = html.match(/id="nl-marketing-export-v1">([\s\S]*?)<\/script>/);
+    expect(m, 'script 内 JSON').toBeTruthy();
+    const p = JSON.parse(/** @type {string} */ (m?.[1]));
+    expect(p.schemaVersion).toBe(1);
+    expect(p.report.totalComments).toBeGreaterThan(0);
+    expect(p.report.quarterEngagement).toBeDefined();
+  });
+
+  it('maskShareLabels 時は埋め込み JSON のトップユーザー名が伏せ字になる', () => {
+    const html = buildMarketingDashboardHtml(minimal(), { maskShareLabels: true });
+    const m = html.match(/id="nl-marketing-export-v1">([\s\S]*?)<\/script>/);
+    expect(m).toBeTruthy();
+    const p = JSON.parse(/** @type {string} */ (m?.[1]));
+    const nick = String(p.report.topUsers[0]?.nickname || '');
+    expect(nick).not.toContain('Alice');
+    expect(nick.length).toBeGreaterThan(0);
   });
 });

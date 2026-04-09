@@ -850,6 +850,97 @@
     return false;
   }
 
+  // src/lib/commentPostDom.js
+  var COMMENT_SEND_LABEL_RE = /(コメント.{0,8}(送信|投稿)|送信|投稿|書き込|書込|submit|send|post)/i;
+  var COMMENT_SEND_ATTR_RE = /(send|submit|post|comment|コメント|投稿|書込)/i;
+  var COMMENT_NON_SUBMIT_RE = /(reload|再読み込み|html|export|save|保存|capture|screen|screenshot|voice|mic|settings?|detail|閉じ|close|cancel|音声|スクショ)/i;
+  var COMMENT_BUTTON_CANDIDATE_SELECTOR = 'button, input[type="submit"], input[type="button"], [role="button"]';
+  function isHtmlElement(el) {
+    return el instanceof HTMLElement;
+  }
+  function isVisibleCommentActionElement(el) {
+    if (!isHtmlElement(el) || !el.isConnected || el.hidden) return false;
+    const style = window.getComputedStyle(el);
+    if (style.display === "none" || style.visibility === "hidden") return false;
+    try {
+      if (typeof el.getClientRects === "function" && el.getClientRects().length > 0) {
+        return true;
+      }
+    } catch {
+    }
+    return true;
+  }
+  function isDisabledCommentActionElement(el) {
+    if (el.matches('[disabled],[aria-disabled="true"]')) return true;
+    if (el instanceof HTMLButtonElement || el instanceof HTMLInputElement) {
+      return el.disabled;
+    }
+    return false;
+  }
+  function readCommentActionPrimaryLabel(el) {
+    const parts = [];
+    for (const key of ["aria-label", "title"]) {
+      const v = String(el.getAttribute(key) || "").trim();
+      if (v) parts.push(v);
+    }
+    if (el instanceof HTMLInputElement) {
+      const v = String(el.value || "").trim();
+      if (v) parts.push(v);
+    }
+    const text = String(el.textContent || "").trim();
+    if (text) parts.push(text);
+    return parts.join(" ").trim();
+  }
+  function readCommentActionTokenText(el) {
+    const parts = [];
+    for (const key of ["id", "name", "class", "data-testid", "data-test-id"]) {
+      const v = String(el.getAttribute(key) || "").trim();
+      if (v) parts.push(v);
+    }
+    return parts.join(" ").trim();
+  }
+  function scoreCommentSubmitButton(el, editor) {
+    let score = 0;
+    const label = readCommentActionPrimaryLabel(el);
+    const tokens = readCommentActionTokenText(el);
+    const type = el instanceof HTMLButtonElement || el instanceof HTMLInputElement ? String(el.type || "").trim().toLowerCase() : "";
+    const editorForm = editor?.closest("form") || null;
+    const buttonForm = el.closest("form");
+    if (editorForm && buttonForm === editorForm) score += 140;
+    else if (editorForm && buttonForm && buttonForm !== editorForm) score -= 40;
+    if (type === "submit") score += 90;
+    if (type === "button") score += 12;
+    if (el.getAttribute("role") === "button") score += 8;
+    if (COMMENT_SEND_LABEL_RE.test(label)) score += 110;
+    if (COMMENT_SEND_ATTR_RE.test(tokens)) score += 45;
+    if (/comment|コメント/i.test(label)) score += 18;
+    if (COMMENT_NON_SUBMIT_RE.test(label) || COMMENT_NON_SUBMIT_RE.test(tokens)) {
+      score -= 220;
+    }
+    if (editor && editor.parentElement && el.parentElement === editor.parentElement) {
+      score += 20;
+    }
+    return score;
+  }
+  function findCommentSubmitButton(root, editor = null) {
+    if (!root || typeof root.querySelectorAll !== "function") return null;
+    let best = null;
+    let bestScore = -Infinity;
+    const list = root.querySelectorAll(COMMENT_BUTTON_CANDIDATE_SELECTOR);
+    for (const node of list) {
+      if (!(node instanceof HTMLElement)) continue;
+      if (!isVisibleCommentActionElement(node)) continue;
+      if (isDisabledCommentActionElement(node)) continue;
+      const score = scoreCommentSubmitButton(node, editor);
+      if (score > bestScore) {
+        bestScore = score;
+        best = node;
+      }
+    }
+    const minimumScore = editor != null ? 80 : root instanceof HTMLFormElement ? 60 : 120;
+    return bestScore >= minimumScore ? best : null;
+  }
+
   // src/lib/nicoliveDom.js
   var LINE_HEAD = /^(\d{1,12})\s+([\s\S]+)$/;
   function parseCommentLineText(text) {
@@ -4001,9 +4092,16 @@
   }
   function isVisibleElement(el) {
     if (!el || !(el instanceof HTMLElement)) return false;
+    if (!el.isConnected || el.hidden) return false;
     const style = window.getComputedStyle(el);
     if (style.display === "none" || style.visibility === "hidden") return false;
-    return el.getClientRects().length > 0;
+    try {
+      if (typeof el.getClientRects === "function" && el.getClientRects().length > 0) {
+        return true;
+      }
+    } catch {
+    }
+    return true;
   }
   function findCommentEditorElement() {
     const selectors = [
@@ -4090,49 +4188,26 @@
     }
     const form = editor.closest("form");
     const scope = form || editor.closest('[class*="comment" i], [role="group"]') || document;
-    const inScope = findCommentSubmitButton(scope);
+    const inScope = findCommentSubmitButton(scope, editor);
     if (inScope) return inScope;
-    return findCommentSubmitButton(document);
-  }
-  function findCommentSubmitButton(root) {
-    const selectors = [
-      'button[type="submit"]',
-      'button[aria-label*="\u9001\u4FE1"]',
-      'button[aria-label*="\u30B3\u30E1\u30F3\u30C8"]',
-      'button[data-testid*="send" i]',
-      'button[data-testid*="comment" i]',
-      'button[data-testid*="Submit" i]',
-      '[role="button"][aria-label*="\u9001\u4FE1"]',
-      '[class*="send" i][role="button"]',
-      'button[class*="Send" i]',
-      'button[class*="submit" i]'
-    ];
-    for (const selector of selectors) {
-      const list = root.querySelectorAll(selector);
-      for (const node of list) {
-        if (!(node instanceof HTMLElement)) continue;
-        if (!isVisibleElement(node)) continue;
-        if (node.matches('[disabled],[aria-disabled="true"]')) continue;
-        return node;
-      }
-    }
-    return null;
+    return findCommentSubmitButton(document, editor);
   }
   function trySubmitComment(editor) {
     const form = editor instanceof HTMLElement ? editor.closest("form") : null;
     const scope = form || (editor instanceof HTMLElement ? editor.closest('[class*="comment" i], [role="group"]') : null) || document;
-    const btnInScope = findCommentSubmitButton(scope);
+    const scopedEditor = editor instanceof HTMLElement ? editor : null;
+    const btnInScope = findCommentSubmitButton(scope, scopedEditor);
     if (btnInScope) {
       btnInScope.click();
       return true;
     }
-    const btnGlobal = findCommentSubmitButton(document);
-    if (btnGlobal) {
-      btnGlobal.click();
-      return true;
-    }
     if (form && typeof form.requestSubmit === "function") {
       form.requestSubmit();
+      return true;
+    }
+    const btnGlobal = findCommentSubmitButton(document, scopedEditor);
+    if (btnGlobal) {
+      btnGlobal.click();
       return true;
     }
     editor.dispatchEvent(
@@ -4209,7 +4284,7 @@
       if (!await submitOnce()) {
         return {
           ok: false,
-          error: "\u9001\u4FE1\u30DC\u30BF\u30F3\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093\u3002watch\u30DA\u30FC\u30B8\u3092\u518D\u8AAD\u307F\u8FBC\u307F\u3057\u3066\u518D\u8A66\u884C\u3057\u3066\u304F\u3060\u3055\u3044\u3002"
+          error: "\u516C\u5F0F\u306E\u9001\u4FE1\u30DC\u30BF\u30F3\u3092\u898B\u3064\u3051\u3089\u308C\u307E\u305B\u3093\u3067\u3057\u305F\u3002watch\u30DA\u30FC\u30B8\u3092\u518D\u8AAD\u307F\u8FBC\u307F\u3057\u3001\u30B3\u30E1\u30F3\u30C8\u6B04\u304C\u898B\u3048\u308B\u72B6\u614B\u3067\u518D\u8A66\u884C\u3057\u3066\u304F\u3060\u3055\u3044\u3002"
         };
       }
       if (await confirmSubmittedCommentAsync(editor, text)) {
@@ -4218,7 +4293,7 @@
       if (!await submitOnce()) {
         return {
           ok: false,
-          error: "\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1\u3092\u78BA\u8A8D\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002watch\u30DA\u30FC\u30B8\u3092\u958B\u3044\u305F\u307E\u307E\u518D\u8A66\u884C\u3057\u3066\u304F\u3060\u3055\u3044\u3002"
+          error: "\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1\u3092\u78BA\u8A8D\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002watch\u30DA\u30FC\u30B8\u3092\u524D\u9762\u306B\u51FA\u3057\u3001\u5FC5\u8981\u306A\u3089\u518D\u8AAD\u307F\u8FBC\u307F\u3057\u3066\u304B\u3089\u518D\u8A66\u884C\u3057\u3066\u304F\u3060\u3055\u3044\u3002"
         };
       }
       if (await confirmSubmittedCommentAsync(editor, text)) {
@@ -4226,7 +4301,7 @@
       }
       return {
         ok: false,
-        error: "\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1\u3092\u78BA\u8A8D\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002watch\u30DA\u30FC\u30B8\u3092\u958B\u3044\u305F\u307E\u307E\u518D\u8A66\u884C\u3057\u3066\u304F\u3060\u3055\u3044\u3002"
+        error: "\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1\u3092\u78BA\u8A8D\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002watch\u30DA\u30FC\u30B8\u3092\u524D\u9762\u306B\u51FA\u3057\u3001\u5FC5\u8981\u306A\u3089\u518D\u8AAD\u307F\u8FBC\u307F\u3057\u3066\u304B\u3089\u518D\u8A66\u884C\u3057\u3066\u304F\u3060\u3055\u3044\u3002"
       };
     } catch (err) {
       const message = err && typeof err === "object" && "message" in err ? String(

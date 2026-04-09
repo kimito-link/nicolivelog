@@ -6,6 +6,7 @@
 import { escapeHtml } from './htmlEscape.js';
 import { maskLabelForShare } from './privacyDisplay.js';
 import { MKT_ADVISOR_AVATAR_DATA_URI } from './marketingHtmlAdvisorAvatars.js';
+import { buildMarketingEmbedScriptInnerText } from './marketingReportEmbed.js';
 
 /**
  * @param {'tanu' | 'rink' | 'konta'} role
@@ -42,6 +43,11 @@ function sectionFeaturesOverview() {
 <li><strong>ユーザーセグメント</strong> — コメント回数の層（ヘビー〜一見）の割合</li>
 <li><strong>トップコメンター</strong> — 多めに書いてくれた人の並び（順位＝価値の上下ではない旨もメモで触れます）</li>
 <li><strong>時間帯ヒートマップ</strong> — コメントが集中した時間帯の傾向</li>
+<li><strong>本文・属性の傾向</strong> — 文字数の平均・中央値、URL/絵文字の含有、自分投稿・184 の割合、コメント間の最長インターバル</li>
+<li><strong>累積と5分窓</strong> — 経過に沿った累積コメント数と、直近5分の件数の推移（盛り上がりの補助線）</li>
+<li><strong>再生位置の三分割（vpos）</strong> — 記録に vpos が十分あるときだけ、早・中・遅の件数比</li>
+<li><strong>冒頭・終盤の四分位</strong> — 時間幅の最初・最後の四分の一に現れた人数と、「両方にいた」人数の目安</li>
+<li><strong>ページ末尾の JSON 埋め込み</strong> — 同じ .html 内に集計のコピーを入れてあり、表計算やツール連携に使えます（共有伏せ字時は JSON もマスク）</li>
 </ul>
 <p class="mkt-values-note"><strong>どんな配信も否定しません。</strong>静かな雑談も、わいわい型も、ゲーム特化も、歌枠も、それぞれに合ったスタイルがあります。<strong>そのスタイルに数字やメモで縛られる必要もありません。</strong>気になったところだけ眺めて、ひとつの視点・振り返りの補助として使ってください。</p>
 </section>`;
@@ -93,6 +99,246 @@ function sectionAdviceAfterKpi(r) {
   }
 
   return `<div class="mkt-advice-after">${cards.join('')}</div>`;
+}
+
+/** @param {number} ms */
+function formatSilenceMs(ms) {
+  if (ms <= 0) return '—';
+  const s = Math.floor(ms / 1000);
+  if (s < 60) return `${s}秒`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  return rem ? `${m}分${rem}秒` : `${m}分`;
+}
+
+/** @param {MarketingReport} r */
+function sectionContentShape(r) {
+  if (r.totalComments <= 0) return '';
+  const ts = r.textStats;
+  const i = r.is184;
+  const silence = formatSilenceGapLabel(r.maxSilenceGapMs);
+  const cards = [
+    {
+      label: '平均文字数（trim）',
+      value: String(ts.avgChars),
+      icon: '📝'
+    },
+    {
+      label: '中央値文字数',
+      value: String(ts.medianChars),
+      icon: '📏'
+    },
+    {
+      label: 'URL を含む割合',
+      value: `${ts.pctWithUrl}%（${ts.withUrlCount}件）`,
+      icon: '🔗'
+    },
+    {
+      label: '絵文字を含む割合',
+      value: `${ts.pctWithEmoji}%（${ts.withEmojiCount}件）`,
+      icon: '😀'
+    },
+    {
+      label: '自分投稿（selfPosted）',
+      value: `${r.selfPostedPct}%（${r.selfPostedCount}件）`,
+      icon: '🙋'
+    },
+    {
+      label: '184（既知のみ）',
+      value:
+        i.knownCount > 0
+          ? `${i.pctOfKnown}%（${i.count184}/${i.knownCount}件）`
+          : 'データなし',
+      icon: '🎭'
+    },
+    {
+      label: '最長のコメント間隔',
+      value: silence,
+      icon: '⏸️'
+    }
+  ];
+  const inner = cards
+    .map(
+      (c) =>
+        `<div class="mkt-kpi mkt-kpi--compact"><span class="mkt-kpi__icon">${c.icon}</span><span class="mkt-kpi__val">${escapeHtml(c.value)}</span><span class="mkt-kpi__label">${escapeHtml(c.label)}</span></div>`
+    )
+    .join('');
+  return `<section class="mkt-section"><h2>コメント本文・属性の傾向</h2>
+<p class="mkt-note">記録された本文のみを対象。184 は <code>is184</code> が付いている行だけで割合を計算します。</p>
+<div class="mkt-kpi-grid">${inner}</div></section>`;
+}
+
+/** @param {number} ms */
+function formatSilenceGapLabel(ms) {
+  if (ms <= 0) return '—（1件以下または時刻なし）';
+  return `${formatSilenceMs(ms)}（連続する2コメント間の最大）`;
+}
+
+/** @param {MarketingReport} r */
+function sectionAdviceAfterContentShape(r) {
+  if (r.totalComments <= 0) return '';
+  const lines = [
+    '文字数や URL の多さは「話題がリンクを伴いやすい」「短文連打」などの雑なヒントになることがあるのだ。数字だけで良し悪しは決めないでほしいのだ。',
+  ];
+  if (r.textStats.pctWithEmoji >= 25 && r.uniqueUsers >= 8) {
+    lines.push('絵文字の比率が目立つときは、空気が柔らかい・リアクション中心の時間帯だった可能性があるのだ。');
+  }
+  return `<div class="mkt-advice-after">${adviceCard('tanu', 'たぬ姉', lines)}</div>`;
+}
+
+/** @param {MarketingReport} r */
+function sectionQuarterEngagement(r) {
+  if (r.totalComments <= 0 || !r.quarterEngagement) return '';
+  const q = r.quarterEngagement;
+  if (q.skippedShortSpan) {
+    return `<section class="mkt-section"><h2>冒頭・終盤（四分位）</h2>
+<p class="mkt-note">記録の時間幅が1分未満のため、最初・最後の四分の一に現れた人数の比較は出していません。長めの枠ほど指標が意味を持ちやすいです。</p></section>`;
+  }
+  const cards = [
+    {
+      label: '最初の1/4の時間帯にいた人',
+      value: String(q.uniqueCommentersFirstQuarter),
+      icon: '🌅'
+    },
+    {
+      label: '最後の1/4の時間帯にいた人',
+      value: String(q.uniqueCommentersLastQuarter),
+      icon: '🌙'
+    },
+    {
+      label: '冒頭にも終盤にもコメントした人',
+      value: String(q.uniqueCommentersBothQuarters),
+      icon: '🔁'
+    }
+  ];
+  const inner = cards
+    .map(
+      (c) =>
+        `<div class="mkt-kpi mkt-kpi--compact"><span class="mkt-kpi__icon">${c.icon}</span><span class="mkt-kpi__val">${escapeHtml(c.value)}</span><span class="mkt-kpi__label">${escapeHtml(c.label)}</span></div>`
+    )
+    .join('');
+  return `<section class="mkt-section"><h2>冒頭・終盤（四分位）</h2>
+<p class="mkt-note">記録の先頭から末尾までの<strong>実時間幅</strong>を4等分し、最初・最後の区間にコメントした<strong>ユニーク人数</strong>と、両方に現れた人数です（離脱や再訪の目安程度）。</p>
+<div class="mkt-kpi-grid">${inner}</div></section>`;
+}
+
+/** @param {MarketingReport} r */
+function sectionAdviceAfterQuarterEngagement(r) {
+  if (r.totalComments <= 0 || !r.quarterEngagement || r.quarterEngagement.skippedShortSpan) {
+    return '';
+  }
+  return `<div class="mkt-advice-after">${adviceCard('konta', 'こん太', [
+    '「冒頭にも終盤にもいる」は、長く居てくれた可能性のヒントに過ぎないのだ。タブを開いたまま放置、など別の理由もありうるのだ。',
+    '数字でファンの熱さを上下しないでほしいのだ。あくまで記録の出方を眺める補助だと思ってほしいのだ。',
+  ])}</div>`;
+}
+
+/** @param {MarketingReport} r */
+function sectionDerivedTimeline(r) {
+  const tl = r.timeline;
+  const cum = r.timelineCumulative;
+  const roll = r.timelineRolling5Min;
+  if (tl.length < 2 || cum.length !== tl.length || roll.length !== tl.length) return '';
+  const maxC = Math.max(1, ...cum);
+  const maxR = Math.max(1, ...roll);
+  const W = 900;
+  const H = 220;
+  const pad = 40;
+  const innerW = W - pad * 2;
+  const innerH = H - pad * 2;
+  const n = tl.length;
+
+  const cumPts = cum
+    .map((v, i) => {
+      const x = pad + (innerW * (i + 0.5)) / n;
+      const y = pad + innerH - (v / maxC) * innerH;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+  const rollPts = roll
+    .map((v, i) => {
+      const x = pad + (innerW * (i + 0.5)) / n;
+      const y = pad + innerH - (v / maxR) * innerH;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    })
+    .join(' ');
+
+  const yLabelsL = Array.from({ length: 5 }, (_, i) => {
+    const v = Math.round((maxC * (4 - i)) / 4);
+    const y = pad + (innerH * i) / 4;
+    return `<text x="${pad - 4}" y="${y + 4}" text-anchor="end" class="mkt-axis mkt-axis--cum">${v}</text>`;
+  }).join('');
+  const yLabelsR = Array.from({ length: 5 }, (_, i) => {
+    const v = Math.round((maxR * (4 - i)) / 4);
+    const y = pad + (innerH * i) / 4;
+    return `<text x="${W - pad + 4}" y="${y + 4}" text-anchor="start" class="mkt-axis mkt-axis--roll">${v}</text>`;
+  }).join('');
+
+  const xLabels = tl
+    .filter((_, i) => i % Math.max(1, Math.floor(n / 10)) === 0)
+    .map((b) => {
+      const x = pad + (innerW * (b.minute + 0.5)) / n;
+      return `<text x="${x.toFixed(1)}" y="${H - 4}" text-anchor="middle" class="mkt-axis">${b.minute}m</text>`;
+    })
+    .join('');
+
+  return `<section class="mkt-section">
+<h2>累積コメント数と5分窓</h2>
+<p class="mkt-note">緑線＝累積件数 / 紫線＝その分を含む直近5分の合計（分単位の桶に対応）</p>
+<div class="mkt-chart-wrap">
+<svg viewBox="0 0 ${W} ${H}" class="mkt-svg" aria-label="累積と5分窓の折れ線">
+<rect x="${pad}" y="${pad}" width="${innerW}" height="${innerH}" fill="none" stroke="#334155" stroke-width="0.5"/>
+${yLabelsL}${yLabelsR}${xLabels}
+<polyline points="${cumPts}" fill="none" stroke="#22c55e" stroke-width="2.2" stroke-linecap="round"/>
+<polyline points="${rollPts}" fill="none" stroke="#a855f7" stroke-width="2" stroke-linecap="round" stroke-dasharray="6 3"/>
+</svg>
+</div>
+<p class="mkt-note mkt-note--legend"><span class="mkt-leg-inline" style="color:#22c55e">■</span> 累積 <span class="mkt-leg-inline" style="color:#a855f7">■</span> 5分窓（破線）</p>
+</section>`;
+}
+
+/** @param {MarketingReport} r */
+function sectionAdviceAfterDerivedTimeline(r) {
+  if (r.timeline.length < 2) return '';
+  return `<div class="mkt-advice-after">${adviceCard('rink', 'りんく', [
+    '紫の5分窓は「直近で一気に増えたか」の目安になるのだ。累積（緑）は単調に増えるから、波を読むなら紫の方が分かりやすいことが多いのだ。',
+  ])}</div>`;
+}
+
+/** @param {MarketingReport} r */
+function sectionVposThirds(r) {
+  const v = r.vposThirds;
+  if (!v || r.totalComments <= 0) return '';
+  const total = v.early + v.mid + v.late;
+  if (total <= 0) return '';
+  const max = Math.max(1, v.early, v.mid, v.late);
+  const W = 320;
+  const H = 140;
+  const pad = 28;
+  const bw = 56;
+  const gap = 40;
+  const baseY = H - pad;
+  const bars = [
+    { label: '早い帯', n: v.early, x: pad },
+    { label: '中間帯', n: v.mid, x: pad + bw + gap },
+    { label: '遅い帯', n: v.late, x: pad + (bw + gap) * 2 }
+  ]
+    .map((b) => {
+      const h = (b.n / max) * (H - pad * 2);
+      const y = baseY - h;
+      return `<rect x="${b.x}" y="${y}" width="${bw}" height="${h}" fill="#38bdf8" opacity="0.75" rx="4"><title>${b.label}: ${b.n}件</title></rect>
+<text x="${b.x + bw / 2}" y="${baseY + 16}" text-anchor="middle" class="mkt-axis">${escapeHtml(b.label)}</text>
+<text x="${b.x + bw / 2}" y="${y - 4}" text-anchor="middle" class="mkt-axis">${b.n}</text>`;
+    })
+    .join('');
+  return `<section class="mkt-section">
+<h2>再生位置（vpos）の三分割</h2>
+<p class="mkt-note">vpos が付いたコメントが5件以上あるときだけ表示。最大 vpos を3等分して早・中・遅に振り分けています（アーカイブ視聴の目安）。</p>
+<div class="mkt-chart-wrap">
+<svg viewBox="0 0 ${W} ${H}" class="mkt-svg mkt-svg--vpos" aria-label="vpos 三分割">${bars}</svg>
+</div>
+<p class="mkt-note">合計 ${total} 件（該当コメントのみ）</p>
+</section>`;
 }
 
 /** タイムライン直後（チャートがあるときだけ）
@@ -158,6 +404,11 @@ function sectionAdviceAfterRank(r) {
  */
 export function buildMarketingDashboardHtml(r, opts = {}) {
   const maskShare = opts.maskShareLabels === true;
+  const exportedAtIso = new Date().toISOString();
+  const embedJson = buildMarketingEmbedScriptInnerText(r, {
+    maskShareLabels: maskShare,
+    exportedAt: exportedAtIso
+  });
   const subSuffix = maskShare ? ' · 共有向けに表示名を伏せた出力' : '';
   return `<!DOCTYPE html>
 <html lang="ja">
@@ -170,23 +421,46 @@ export function buildMarketingDashboardHtml(r, opts = {}) {
 <body>
 <header class="mkt-header">
 <h1 class="mkt-header__title">📊 配信マーケティング分析</h1>
-<p class="mkt-header__sub">${escapeHtml(r.liveId)} — ${new Date().toLocaleString('ja-JP')} 出力${escapeHtml(subSuffix)}</p>
+<p class="mkt-header__sub">${escapeHtml(r.liveId)} — ${new Date().toLocaleString('ja-JP')} 出力${escapeHtml(subSuffix)} · JSON埋め込み ${escapeHtml(exportedAtIso)}</p>
 </header>
 <main class="mkt-main">
 ${sectionFeaturesOverview()}
 ${sectionAdviceIntro()}
 ${sectionKpi(r)}
 ${sectionAdviceAfterKpi(r)}
+${sectionContentShape(r)}
+${sectionAdviceAfterContentShape(r)}
+${sectionQuarterEngagement(r)}
+${sectionAdviceAfterQuarterEngagement(r)}
 ${sectionTimeline(r)}
 ${sectionAdviceAfterTimeline(r)}
+${sectionDerivedTimeline(r)}
+${sectionAdviceAfterDerivedTimeline(r)}
 ${sectionSegment(r)}
 ${sectionAdviceAfterSegment(r)}
 ${sectionTopUsers(r, maskShare)}
 ${sectionAdviceAfterRank(r)}
+${sectionVposThirds(r)}
 ${sectionHourHeatmap(r)}
 </main>
-<footer class="mkt-footer">追憶のきらめき · マーケ分析（手元用） — ${new Date().toISOString()}</footer>
+<footer class="mkt-footer">追憶のきらめき · マーケ分析（手元用） — ${escapeHtml(exportedAtIso)}</footer>
+${sectionMachineReadableJson(embedJson, maskShare)}
 </body></html>`;
+}
+
+/**
+ * @param {string} embedJson script 内にそのまま入れる JSON 文字列（先に buildMarketingEmbedScriptInnerText）
+ * @param {boolean} maskShare
+ */
+function sectionMachineReadableJson(embedJson, maskShare) {
+  const maskNote = maskShare
+    ? 'この出力では共有向けに<strong>伏せ字</strong>を付けており、JSON 内のトップコメンターの表示名・ID も伏せ、アイコン URL は空です。'
+    : '手元用のため ID がそのまま入ります。第三者に渡すときは拡張の「伏せ字」チェック付きで書き出してください。';
+  return `<section class="mkt-section mkt-section--embed" aria-label="JSON データ">
+<h2>表計算・ツール向け JSON</h2>
+<p class="mkt-note">${maskNote} 中身は <code>id="nl-marketing-export-v1"</code> の <code>script</code> 要素にあります（<code>schemaVersion</code>・<code>report</code> 形式）。</p>
+<script type="application/json" id="nl-marketing-export-v1">${embedJson}</script>
+</section>`;
 }
 
 /** @param {MarketingReport} r */
@@ -378,6 +652,11 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
 .mkt-kpi__icon{font-size:1.4rem;display:block}
 .mkt-kpi__val{font-size:1.3rem;font-weight:700;display:block;color:#f8fafc}
 .mkt-kpi__label{font-size:.72rem;color:#94a3b8}
+.mkt-kpi--compact .mkt-kpi__val{font-size:1.05rem;line-height:1.25}
+.mkt-kpi--compact .mkt-kpi__label{font-size:.68rem;line-height:1.3}
+.mkt-leg-inline{font-weight:700;margin:0 .2rem}
+.mkt-note--legend{margin-top:.35rem}
+.mkt-svg--vpos{max-height:168px}
 .mkt-chart-wrap{overflow-x:auto}
 .mkt-svg{width:100%;height:auto;max-height:260px}
 .mkt-axis{font-size:10px;fill:#94a3b8}
@@ -400,6 +679,8 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
 .mkt-hour__label{font-size:.7rem;color:#94a3b8}
 .mkt-hour__val{font-size:.9rem;font-weight:600}
 .mkt-footer{text-align:center;padding:1.5rem;font-size:.72rem;color:#475569}
+.mkt-section--embed h2{border-left-color:#22d3ee}
+.mkt-section--embed script{display:none}
 .mkt-section--features h2{border-left-color:#34d399}
 .mkt-lead{margin:0 0 .85rem;font-size:.88rem;color:#e2e8f0;line-height:1.65}
 .mkt-feature-list{margin:.4rem 0 0;padding-left:1.15rem;color:#cbd5e1;font-size:.82rem;line-height:1.65}
@@ -442,5 +723,12 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
   .mkt-kpi-grid{grid-template-columns:repeat(2,1fr)}
   .mkt-hour-grid{grid-template-columns:repeat(6,1fr)}
   .mkt-seg-wrap{flex-direction:column;align-items:flex-start}
+}
+@media print{
+  body{background:#fff;color:#0f172a}
+  .mkt-header,.mkt-section{background:#f1f5f9;border-color:#cbd5e1;box-shadow:none}
+  .mkt-advice-row{break-inside:avoid}
+  .mkt-section{break-inside:avoid-page}
+  .mkt-chart-wrap{overflow:visible}
 }
 `;

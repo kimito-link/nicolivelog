@@ -23,6 +23,42 @@
 
 /**
  * @typedef {{
+ *   avgChars: number,
+ *   medianChars: number,
+ *   withUrlCount: number,
+ *   withEmojiCount: number,
+ *   pctWithUrl: number,
+ *   pctWithEmoji: number
+ * }} MarketingTextStats
+ */
+
+/**
+ * @typedef {{
+ *   count184: number,
+ *   knownCount: number,
+ *   pctOfKnown: number
+ * }} Marketing184Stats
+ */
+
+/**
+ * @typedef {{
+ *   early: number,
+ *   mid: number,
+ *   late: number
+ * }} MarketingVposThirds
+ */
+
+/**
+ * @typedef {{
+ *   uniqueCommentersFirstQuarter: number,
+ *   uniqueCommentersLastQuarter: number,
+ *   uniqueCommentersBothQuarters: number,
+ *   skippedShortSpan: boolean
+ * }} MarketingQuarterEngagement
+ */
+
+/**
+ * @typedef {{
  *   liveId: string,
  *   totalComments: number,
  *   uniqueUsers: number,
@@ -36,7 +72,16 @@
  *   timeline: TimelineBucket[],
  *   segmentCounts: { heavy: number, mid: number, light: number, once: number },
  *   segmentPcts: { heavy: number, mid: number, light: number, once: number },
- *   hourDistribution: number[]
+ *   hourDistribution: number[],
+ *   textStats: MarketingTextStats,
+ *   selfPostedCount: number,
+ *   selfPostedPct: number,
+ *   is184: Marketing184Stats,
+ *   timelineCumulative: number[],
+ *   timelineRolling5Min: number[],
+ *   maxSilenceGapMs: number,
+ *   vposThirds: MarketingVposThirds | null,
+ *   quarterEngagement: MarketingQuarterEngagement
  * }} MarketingReport
  */
 
@@ -137,6 +182,19 @@ export function aggregateMarketingReport(comments, liveId) {
     hourDistribution[h]++;
   }
 
+  const textStats = computeTextStats(filtered);
+  const selfPostedCount = filtered.filter((c) => c.selfPosted === true).length;
+  const selfPostedPct =
+    filtered.length > 0
+      ? Math.round((selfPostedCount / filtered.length) * 1000) / 10
+      : 0;
+  const is184 = compute184Stats(filtered);
+  const timelineCumulative = computeTimelineCumulative(timeline);
+  const timelineRolling5Min = computeTimelineRolling5(timeline);
+  const maxSilenceGapMs = computeMaxSilenceGapMs(timestamps);
+  const vposThirds = computeVposThirds(filtered);
+  const quarterEngagement = computeQuarterEngagement(filtered, minT, maxT);
+
   return {
     liveId,
     totalComments: filtered.length,
@@ -158,6 +216,168 @@ export function aggregateMarketingReport(comments, liveId) {
       light: Math.round((light / total) * 1000) / 10,
       once: Math.round((once / total) * 1000) / 10
     },
-    hourDistribution
+    hourDistribution,
+    textStats,
+    selfPostedCount,
+    selfPostedPct,
+    is184,
+    timelineCumulative,
+    timelineRolling5Min,
+    maxSilenceGapMs,
+    vposThirds,
+    quarterEngagement
   };
+}
+
+/** @param {StoredComment[]} filtered */
+function computeTextStats(filtered) {
+  const n = filtered.length;
+  if (!n) {
+    return {
+      avgChars: 0,
+      medianChars: 0,
+      withUrlCount: 0,
+      withEmojiCount: 0,
+      pctWithUrl: 0,
+      pctWithEmoji: 0
+    };
+  }
+  const URL_RE = /https?:\/\/[^\s]+/i;
+  const EMOJI_RE = /\p{Extended_Pictographic}/gu;
+  const lengths = [];
+  let withUrl = 0;
+  let withEmoji = 0;
+  for (const c of filtered) {
+    const t = String(c.text || '').trim();
+    lengths.push(t.length);
+    if (URL_RE.test(t)) withUrl++;
+    const em = t.match(EMOJI_RE);
+    if (em && em.length > 0) withEmoji++;
+  }
+  lengths.sort((a, b) => a - b);
+  const midLen =
+    lengths.length % 2 === 1
+      ? lengths[Math.floor(lengths.length / 2)]
+      : (lengths[lengths.length / 2 - 1] + lengths[lengths.length / 2]) / 2;
+  const sum = lengths.reduce((a, b) => a + b, 0);
+  return {
+    avgChars: Math.round((sum / n) * 10) / 10,
+    medianChars: midLen,
+    withUrlCount: withUrl,
+    withEmojiCount: withEmoji,
+    pctWithUrl: Math.round((withUrl / n) * 1000) / 10,
+    pctWithEmoji: Math.round((withEmoji / n) * 1000) / 10
+  };
+}
+
+/** @param {StoredComment[]} filtered */
+function compute184Stats(filtered) {
+  const known = filtered.filter((c) => typeof c.is184 === 'boolean');
+  const k = known.length;
+  const count184 = known.filter((c) => c.is184 === true).length;
+  return {
+    count184,
+    knownCount: k,
+    pctOfKnown: k > 0 ? Math.round((count184 / k) * 1000) / 10 : 0
+  };
+}
+
+/** @param {TimelineBucket[]} timeline */
+function computeTimelineCumulative(timeline) {
+  let cum = 0;
+  return timeline.map((b) => {
+    cum += b.count;
+    return cum;
+  });
+}
+
+/** @param {TimelineBucket[]} timeline */
+function computeTimelineRolling5(timeline) {
+  return timeline.map((_, i) => {
+    let s = 0;
+    const from = Math.max(0, i - 4);
+    for (let j = from; j <= i; j++) {
+      s += timeline[j].count;
+    }
+    return s;
+  });
+}
+
+/** @param {number[]} timestamps */
+function computeMaxSilenceGapMs(timestamps) {
+  const uniq = [...new Set(timestamps.filter((t) => t > 0))].sort((a, b) => a - b);
+  if (uniq.length < 2) return 0;
+  let maxGap = 0;
+  for (let i = 1; i < uniq.length; i++) {
+    const g = uniq[i] - uniq[i - 1];
+    if (g > maxGap) maxGap = g;
+  }
+  return maxGap;
+}
+
+const MIN_SPAN_MS_FOR_QUARTERS = 60_000;
+
+/**
+ * 記録の時間幅を4分割し、最初・最後の四分位にコメントした人数と「両方にいた」人数。
+ * @param {StoredComment[]} filtered
+ * @param {number} minT
+ * @param {number} maxT
+ * @returns {MarketingQuarterEngagement}
+ */
+function computeQuarterEngagement(filtered, minT, maxT) {
+  const span = maxT - minT;
+  if (span < MIN_SPAN_MS_FOR_QUARTERS || !filtered.length) {
+    return {
+      uniqueCommentersFirstQuarter: 0,
+      uniqueCommentersLastQuarter: 0,
+      uniqueCommentersBothQuarters: 0,
+      skippedShortSpan: span < MIN_SPAN_MS_FOR_QUARTERS
+    };
+  }
+  const q1End = minT + span / 4;
+  const q4Start = maxT - span / 4;
+  /** @type {Set<string>} */
+  const firstQ = new Set();
+  /** @type {Set<string>} */
+  const lastQ = new Set();
+  for (const c of filtered) {
+    const t = c.capturedAt || 0;
+    const uid = c.userId || `anon:${(c.commentNo || c.id || '').slice(0, 12)}`;
+    if (t >= minT && t <= q1End) firstQ.add(uid);
+    if (t >= q4Start && t <= maxT) lastQ.add(uid);
+  }
+  let both = 0;
+  for (const uid of firstQ) {
+    if (lastQ.has(uid)) both++;
+  }
+  return {
+    uniqueCommentersFirstQuarter: firstQ.size,
+    uniqueCommentersLastQuarter: lastQ.size,
+    uniqueCommentersBothQuarters: both,
+    skippedShortSpan: false
+  };
+}
+
+/** @param {StoredComment[]} filtered */
+function computeVposThirds(filtered) {
+  const vps = filtered
+    .map((c) => c.vpos)
+    .filter((v) => typeof v === 'number' && Number.isFinite(v) && v >= 0);
+  if (vps.length < 5) return null;
+  const maxV = Math.max(...vps);
+  let early = 0;
+  let mid = 0;
+  let late = 0;
+  if (maxV <= 0) {
+    early = vps.length;
+  } else {
+    const t1 = maxV / 3;
+    const t2 = (2 * maxV) / 3;
+    for (const v of vps) {
+      if (v < t1) early++;
+      else if (v < t2) mid++;
+      else late++;
+    }
+  }
+  return { early, mid, late };
 }

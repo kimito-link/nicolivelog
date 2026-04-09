@@ -60,6 +60,7 @@ import {
   COMMENT_SUBMIT_CONFIRM_PROBE_MS,
   waitUntilEditorReflectsSubmit
 } from '../lib/commentSubmitConfirm.js';
+import { findCommentSubmitButton } from '../lib/commentPostDom.js';
 import { collectLoggedInViewerProfile } from '../lib/watchPageViewerProfile.js';
 import {
   closestHarvestableNicoCommentRow,
@@ -2133,9 +2134,17 @@ function isContextInvalidatedError(err) {
 /** @param {Element|null|undefined} el */
 function isVisibleElement(el) {
   if (!el || !(el instanceof HTMLElement)) return false;
+  if (!el.isConnected || el.hidden) return false;
   const style = window.getComputedStyle(el);
   if (style.display === 'none' || style.visibility === 'hidden') return false;
-  return el.getClientRects().length > 0;
+  try {
+    if (typeof el.getClientRects === 'function' && el.getClientRects().length > 0) {
+      return true;
+    }
+  } catch {
+    // no-op
+  }
+  return true;
 }
 
 /**
@@ -2253,37 +2262,12 @@ function findVisibleEnabledSubmitForEditor(editor) {
   }
   const form = editor.closest('form');
   const scope =
-    form ||
-    editor.closest('[class*="comment" i], [role="group"]') ||
-    document;
-  const inScope = findCommentSubmitButton(scope);
+      form ||
+      editor.closest('[class*="comment" i], [role="group"]') ||
+      document;
+  const inScope = findCommentSubmitButton(scope, editor);
   if (inScope) return inScope;
-  return findCommentSubmitButton(document);
-}
-
-function findCommentSubmitButton(root) {
-  const selectors = [
-    'button[type="submit"]',
-    'button[aria-label*="送信"]',
-    'button[aria-label*="コメント"]',
-    'button[data-testid*="send" i]',
-    'button[data-testid*="comment" i]',
-    'button[data-testid*="Submit" i]',
-    '[role="button"][aria-label*="送信"]',
-    '[class*="send" i][role="button"]',
-    'button[class*="Send" i]',
-    'button[class*="submit" i]'
-  ];
-  for (const selector of selectors) {
-    const list = root.querySelectorAll(selector);
-    for (const node of list) {
-      if (!(node instanceof HTMLElement)) continue;
-      if (!isVisibleElement(node)) continue;
-      if (node.matches('[disabled],[aria-disabled="true"]')) continue;
-      return node;
-    }
-  }
-  return null;
+  return findCommentSubmitButton(document, editor);
 }
 
 /**
@@ -2299,21 +2283,22 @@ function trySubmitComment(editor) {
       ? editor.closest('[class*="comment" i], [role="group"]')
       : null) ||
     document;
+  const scopedEditor = editor instanceof HTMLElement ? editor : null;
 
-  const btnInScope = findCommentSubmitButton(scope);
+  const btnInScope = findCommentSubmitButton(scope, scopedEditor);
   if (btnInScope) {
     btnInScope.click();
     return true;
   }
 
-  const btnGlobal = findCommentSubmitButton(document);
-  if (btnGlobal) {
-    btnGlobal.click();
+  if (form && typeof form.requestSubmit === 'function') {
+    form.requestSubmit();
     return true;
   }
 
-  if (form && typeof form.requestSubmit === 'function') {
-    form.requestSubmit();
+  const btnGlobal = findCommentSubmitButton(document, scopedEditor);
+  if (btnGlobal) {
+    btnGlobal.click();
     return true;
   }
 
@@ -2415,7 +2400,8 @@ async function postCommentFromContentAsync(rawText) {
     if (!(await submitOnce())) {
       return {
         ok: false,
-        error: '送信ボタンが見つかりません。watchページを再読み込みして再試行してください。'
+        error:
+          '公式の送信ボタンを見つけられませんでした。watchページを再読み込みし、コメント欄が見える状態で再試行してください。'
       };
     }
     if (await confirmSubmittedCommentAsync(editor, text)) {
@@ -2425,7 +2411,8 @@ async function postCommentFromContentAsync(rawText) {
     if (!(await submitOnce())) {
       return {
         ok: false,
-        error: 'コメント送信を確認できませんでした。watchページを開いたまま再試行してください。'
+        error:
+          'コメント送信を確認できませんでした。watchページを前面に出し、必要なら再読み込みしてから再試行してください。'
       };
     }
     if (await confirmSubmittedCommentAsync(editor, text)) {
@@ -2433,7 +2420,8 @@ async function postCommentFromContentAsync(rawText) {
     }
     return {
       ok: false,
-      error: 'コメント送信を確認できませんでした。watchページを開いたまま再試行してください。'
+      error:
+        'コメント送信を確認できませんでした。watchページを前面に出し、必要なら再読み込みしてから再試行してください。'
     };
   } catch (err) {
     const message =

@@ -125,18 +125,7 @@
         display: none;
       }
 
-      /*
-       * watch 直下の埋め込みのみ:
-       * 公式のコメント投稿と重複する primary 欄だけ隠す（応援アイコン列・グリッド・診断は残す）
-       */
-      html.nl-inline-embed-watch
-        body
-        .nl-comment-compose--primary
-        > textarea,
-      html.nl-inline-embed-watch
-        body
-        .nl-comment-compose--primary
-        > .nl-compose-send-row,
+      /* watch 直下の埋め込みでは補助説明だけ省き、送信欄は表示する */
       html.nl-inline-embed-watch
         body
         .nl-comment-compose--primary
@@ -3785,6 +3774,94 @@
         outline-offset: 1px;
       }
 
+      .nl-comment-kindness {
+        margin-top: 8px;
+        display: flex;
+        align-items: flex-start;
+        gap: 10px;
+      }
+
+      .nl-comment-kindness[hidden] {
+        display: none;
+      }
+
+      .nl-comment-kindness__face {
+        width: 52px;
+        height: 52px;
+        flex-shrink: 0;
+        object-fit: contain;
+        filter: drop-shadow(0 4px 10px rgb(15 23 42 / 14%));
+      }
+
+      .nl-comment-kindness__face.is-hop {
+        animation: nl-yukkuri-hop 0.5s cubic-bezier(0.34, 1.55, 0.64, 1);
+        animation-fill-mode: both;
+      }
+
+      .nl-comment-kindness__bubble {
+        position: relative;
+        flex: 1 1 auto;
+        min-width: 0;
+        border-radius: 14px;
+        border: 1px solid #f5d08c;
+        border-left: 4px solid #f59e0b;
+        background: linear-gradient(180deg, #fffaf0 0%, #fffdf8 100%);
+        padding: 10px 12px;
+        box-shadow: 0 8px 18px rgb(148 163 184 / 14%);
+        overflow-wrap: anywhere;
+      }
+
+      .nl-comment-kindness__bubble::before {
+        content: '';
+        position: absolute;
+        left: -7px;
+        top: 18px;
+        width: 12px;
+        height: 12px;
+        background: #fffaf0;
+        border-left: 1px solid #f5d08c;
+        border-bottom: 1px solid #f5d08c;
+        transform: rotate(45deg);
+      }
+
+      .nl-comment-kindness[data-level='strong'] .nl-comment-kindness__bubble {
+        border-color: #f2b3b3;
+        border-left-color: #ef4444;
+        background: linear-gradient(180deg, #fff7f7 0%, #fffdfc 100%);
+      }
+
+      .nl-comment-kindness[data-level='strong'] .nl-comment-kindness__bubble::before {
+        background: #fff7f7;
+        border-left-color: #f2b3b3;
+        border-bottom-color: #f2b3b3;
+      }
+
+      .nl-comment-kindness__title {
+        display: block;
+        font-size: clamp(11px, calc(var(--nl-base-font) * 0.82), 13px);
+        font-weight: 800;
+        color: #9a3412;
+        line-height: 1.25;
+      }
+
+      .nl-comment-kindness[data-level='strong'] .nl-comment-kindness__title {
+        color: #b91c1c;
+      }
+
+      .nl-comment-kindness__body {
+        margin: 4px 0 0;
+        font-size: clamp(11.5px, calc(var(--nl-base-font) * 0.86), 14px);
+        color: var(--nl-text);
+        line-height: 1.45;
+      }
+
+      .nl-comment-kindness__confirm {
+        margin: 6px 0 0;
+        font-size: clamp(10.5px, calc(var(--nl-base-font) * 0.78), 12.5px);
+        color: var(--nl-muted);
+        line-height: 1.4;
+      }
+
       .nl-compose-send-row {
         margin-top: 8px;
         display: flex;
@@ -3796,12 +3873,13 @@
       .nl-compose-send-actions {
         display: flex;
         flex-wrap: wrap;
-        align-items: center;
+        align-items: stretch;
         gap: 8px;
       }
 
       .nl-compose-send-row #postCommentBtn {
-        flex-shrink: 0;
+        flex: 1 1 132px;
+        min-width: min(100%, 132px);
       }
 
       .nl-compose-send-row #postStatus {
@@ -4059,11 +4137,14 @@
         border-radius: 10px;
         background: #0f9f6f;
         color: #fff;
-        padding: 9px 14px;
-        min-height: 40px;
+        padding: 10px 16px;
+        min-height: 44px;
         font-size: clamp(12px, calc(var(--nl-base-font) * 0.92), 16px);
         font-weight: 700;
         cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
       }
 
       #postCommentBtn:disabled {
@@ -4071,13 +4152,17 @@
         cursor: not-allowed;
       }
 
+      #postCommentBtn[aria-busy='true'] {
+        opacity: 0.88;
+      }
+
       #reloadWatchTabBtn {
         border: 1px solid var(--nl-border);
         border-radius: 10px;
         background: var(--nl-bg-soft);
         color: var(--nl-text);
-        padding: 9px 12px;
-        min-height: 40px;
+        padding: 10px 12px;
+        min-height: 44px;
         font-size: clamp(11px, calc(var(--nl-base-font) * 0.85), 15px);
         font-weight: 700;
         cursor: pointer;
@@ -4090,6 +4175,8 @@
       }
 
       #postStatus {
+        display: block;
+        min-height: 1.35em;
         font-size: clamp(11px, calc(var(--nl-base-font) * 0.82), 14px);
         color: var(--nl-muted);
         line-height: 1.35;
@@ -5805,9 +5892,37 @@
         aria-label="コメント投稿"
       >
         <textarea id="commentInput" maxlength="250" placeholder="ここにコメントを書いて送信"></textarea>
+        <div
+          id="commentKindnessPopover"
+          class="nl-comment-kindness"
+          data-level="mild"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          hidden
+        >
+          <img
+            id="commentKindnessFace"
+            class="nl-comment-kindness__face"
+            src="images/yukkuri-charactore-english/link/link-yukkuri-smile-mouth-open.png"
+            alt=""
+            width="52"
+            height="52"
+            decoding="async"
+          />
+          <div class="nl-comment-kindness__bubble">
+            <strong id="commentKindnessTitle" class="nl-comment-kindness__title"
+              >りんくから、ひとこと</strong
+            >
+            <p id="commentKindnessBody" class="nl-comment-kindness__body"></p>
+            <p id="commentKindnessConfirm" class="nl-comment-kindness__confirm"></p>
+          </div>
+        </div>
         <div class="nl-compose-send-row">
           <div class="nl-compose-send-actions">
-            <button type="button" id="postCommentBtn" disabled>コメント送信</button>
+            <button type="button" id="postCommentBtn" disabled aria-busy="false">
+              コメント送信
+            </button>
             <div
               class="nl-compose-quick-toolbar"
               role="toolbar"
@@ -5852,7 +5967,7 @@
               </button>
             </div>
           </div>
-          <span id="postStatus" aria-live="polite"></span>
+          <span id="postStatus" role="status" aria-live="polite" aria-atomic="true"></span>
         </div>
         <p
           class="nl-export-toolbar__hint nl-compose-toolbar-hint"

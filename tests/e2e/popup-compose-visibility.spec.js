@@ -54,7 +54,7 @@ test.describe('popup compose / toolbar-only visibility', () => {
     expect(display).toBe('none');
   });
 
-  test('inline=1（watch 埋め込み）では primary の #commentInput が非表示・sidepanel では表示', async ({
+  test('inline=1（watch 埋め込み）でも primary のコメント入力と送信ボタンを表示する', async ({
     context
   }) => {
     const extensionId = await extensionIdFromContext(context);
@@ -68,11 +68,16 @@ test.describe('popup compose / toolbar-only visibility', () => {
       }
     );
     await dismissExtensionUsageTermsGate(embed);
-    const embedDisplay = await embed.evaluate(() => {
-      const el = document.getElementById('commentInput');
-      return el ? globalThis.getComputedStyle(el).display : null;
+    const embedVisibility = await embed.evaluate(() => {
+      const input = document.getElementById('commentInput');
+      const post = document.getElementById('postCommentBtn');
+      return {
+        inputDisplay: input ? globalThis.getComputedStyle(input).display : null,
+        postDisplay: post ? globalThis.getComputedStyle(post).display : null
+      };
     });
-    expect(embedDisplay).toBe('none');
+    expect(embedVisibility.inputDisplay).not.toBe('none');
+    expect(embedVisibility.postDisplay).not.toBe('none');
 
     const side = await context.newPage();
     await side.goto(
@@ -83,10 +88,15 @@ test.describe('popup compose / toolbar-only visibility', () => {
       }
     );
     await dismissExtensionUsageTermsGate(side);
-    const sideDisplay = await side.evaluate(() => {
-      const el = document.getElementById('commentInput');
-      return el ? globalThis.getComputedStyle(el).display : null;
+    const sideVisibility = await side.evaluate(() => {
+      const input = document.getElementById('commentInput');
+      const post = document.getElementById('postCommentBtn');
+      return {
+        inputDisplay: input ? globalThis.getComputedStyle(input).display : null,
+        postDisplay: post ? globalThis.getComputedStyle(post).display : null
+      };
     });
-    expect(sideDisplay).not.toBe('none');
+    expect(sideVisibility.inputDisplay).not.toBe('none');
+    expect(sideVisibility.postDisplay).not.toBe('none');
   });
 });

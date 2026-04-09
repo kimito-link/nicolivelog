@@ -5,6 +5,7 @@ import {
   watchPageUrlsMatchForSnapshot
 } from '../lib/broadcastUrl.js';
 import { resolveWatchUrlFromTabAndStash } from '../lib/popupWatchUrlResolve.js';
+import { deriveCommentPostUiState } from '../lib/commentPostUi.js';
 import {
   anonymousNicknameFallback,
   compactNicoLaneUserId
@@ -58,6 +59,7 @@ import {
 import { normalizeSupportVisualExpanded } from '../lib/supportVisualExpanded.js';
 import { computeScrollDeltaToRevealInParent } from '../lib/nlMainScrollReveal.js';
 import { commentComposeKeyAction } from '../lib/commentComposeShortcuts.js';
+import { detectCommentKindnessNudge } from '../lib/commentKindnessNudge.js';
 import {
   audioConstraintsForDevice,
   probeMicrophoneLevel
@@ -241,13 +243,12 @@ function $(id) {
 
 function syncVoiceCommentButton() {
   if (!hasExtensionContext()) return;
-  const post = /** @type {HTMLButtonElement|null} */ ($('postCommentBtn'));
   const voice = /** @type {HTMLButtonElement|null} */ ($('voiceCommentBtn'));
   const srCheck = /** @type {HTMLButtonElement|null} */ ($('voiceSrCheck'));
   if (!voice) return;
   voice.title =
     '聞き取りは watch ページ上で行います（タップで開始・もう一度で停止）';
-  const dis = Boolean(post?.disabled);
+  const dis = !canUseCommentPostWatchTools();
   voice.disabled = dis;
   if (srCheck) {
     srCheck.disabled = dis;
@@ -562,23 +563,237 @@ function setPostStatus(message, kind = 'idle') {
 }
 
 const COMMENT_POST_UI_STATE = {
-  submitting: false
+  submitting: false,
+  watchUrl: '',
+  liveId: '',
+  panelStatusCode: '',
+  notice: null
 };
+
+const COMMENT_KINDNESS_FACE_SRC = {
+  mild: 'images/yukkuri-charactore-english/link/link-yukkuri-smile-mouth-open.png',
+  strong: 'images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-closed.png'
+};
+
+const COMMENT_KINDNESS_UI_STATE = {
+  armedText: '',
+  lastVisibleKey: '',
+  forceHop: false
+};
+
+/**
+ * @param {string} rawText
+ * @returns {{
+ *   normalized: string;
+ *   warning: ReturnType<typeof detectCommentKindnessNudge>;
+ *   confirmPending: boolean;
+ *   visibleKey: string;
+ * }}
+ */
+function resolveCommentKindnessView(rawText) {
+  const normalized = normalizeCommentText(rawText);
+  if (!normalized) {
+    COMMENT_KINDNESS_UI_STATE.armedText = '';
+    return {
+      normalized: '',
+      warning: null,
+      confirmPending: false,
+      visibleKey: ''
+    };
+  }
+  if (
+    COMMENT_KINDNESS_UI_STATE.armedText &&
+    COMMENT_KINDNESS_UI_STATE.armedText !== normalized
+  ) {
+    COMMENT_KINDNESS_UI_STATE.armedText = '';
+  }
+  const warning = detectCommentKindnessNudge(normalized);
+  if (!warning) {
+    COMMENT_KINDNESS_UI_STATE.armedText = '';
+    return {
+      normalized,
+      warning: null,
+      confirmPending: false,
+      visibleKey: ''
+    };
+  }
+  return {
+    normalized,
+    warning,
+    confirmPending: COMMENT_KINDNESS_UI_STATE.armedText === normalized,
+    visibleKey: `${warning.level}|${warning.id}|${normalized}`
+  };
+}
+
+function requestCommentKindnessHop() {
+  COMMENT_KINDNESS_UI_STATE.forceHop = true;
+}
+
+/**
+ * @param {string} rawText
+ * @returns {ReturnType<typeof resolveCommentKindnessView>}
+ */
+function paintCommentKindnessUi(rawText) {
+  const wrap = /** @type {HTMLElement|null} */ ($('commentKindnessPopover'));
+  const face = /** @type {HTMLImageElement|null} */ ($('commentKindnessFace'));
+  const title = $('commentKindnessTitle');
+  const body = $('commentKindnessBody');
+  const confirm = $('commentKindnessConfirm');
+  const view = resolveCommentKindnessView(rawText);
+  if (!wrap || !face || !title || !body || !confirm) return view;
+
+  if (!view.warning) {
+    wrap.hidden = true;
+    wrap.setAttribute('aria-hidden', 'true');
+    wrap.dataset.level = 'mild';
+    body.textContent = '';
+    confirm.textContent = '';
+    COMMENT_KINDNESS_UI_STATE.lastVisibleKey = '';
+    COMMENT_KINDNESS_UI_STATE.forceHop = false;
+    return view;
+  }
+
+  wrap.hidden = false;
+  wrap.setAttribute('aria-hidden', 'false');
+  wrap.dataset.level = view.warning.level;
+  title.textContent = view.warning.title;
+  body.textContent = view.warning.body;
+  confirm.textContent = view.confirmPending
+    ? view.warning.confirm
+    : '送る前に、ひと呼吸おいて言い換えも考えてみよう。';
+  face.src = COMMENT_KINDNESS_FACE_SRC[view.warning.level] || COMMENT_KINDNESS_FACE_SRC.mild;
+
+  const shouldHop =
+    COMMENT_KINDNESS_UI_STATE.forceHop ||
+    COMMENT_KINDNESS_UI_STATE.lastVisibleKey !== view.visibleKey;
+  if (shouldHop) {
+    face.classList.remove('is-hop');
+    void face.offsetWidth;
+    face.classList.add('is-hop');
+    globalThis.setTimeout(() => {
+      face.classList.remove('is-hop');
+    }, 520);
+  }
+  COMMENT_KINDNESS_UI_STATE.lastVisibleKey = view.visibleKey;
+  COMMENT_KINDNESS_UI_STATE.forceHop = false;
+  return view;
+}
+
+function canUseCommentPostWatchTools() {
+  return Boolean(
+    String(COMMENT_POST_UI_STATE.watchUrl || '').trim() &&
+      String(COMMENT_POST_UI_STATE.liveId || '').trim()
+  ) && !COMMENT_POST_UI_STATE.submitting;
+}
+
+/**
+ * @param {string} watchUrl
+ * @param {string} liveId
+ * @param {string} panelStatusCode
+ */
+function updateCommentPostUiContext(watchUrl, liveId, panelStatusCode = '') {
+  const nextWatchUrl = String(watchUrl || '').trim();
+  const nextLiveId = String(liveId || '').trim().toLowerCase();
+  const nextPanelCode = String(panelStatusCode || '').trim();
+  const changed =
+    COMMENT_POST_UI_STATE.watchUrl !== nextWatchUrl ||
+    COMMENT_POST_UI_STATE.liveId !== nextLiveId ||
+    COMMENT_POST_UI_STATE.panelStatusCode !== nextPanelCode;
+  COMMENT_POST_UI_STATE.watchUrl = nextWatchUrl;
+  COMMENT_POST_UI_STATE.liveId = nextLiveId;
+  COMMENT_POST_UI_STATE.panelStatusCode = nextPanelCode;
+  if (changed) {
+    COMMENT_POST_UI_STATE.notice = null;
+  }
+}
+
+/**
+ * @param {string} message
+ * @param {'idle'|'error'|'success'} kind
+ */
+function setCommentPostNotice(message, kind = 'idle') {
+  const next = String(message || '').trim();
+  COMMENT_POST_UI_STATE.notice = next ? { message: next, kind } : null;
+}
+
+function clearCommentPostNotice() {
+  COMMENT_POST_UI_STATE.notice = null;
+}
+
+function paintCommentComposeUi() {
+  const commentInput = /** @type {HTMLTextAreaElement|null} */ ($('commentInput'));
+  const postBtn = /** @type {HTMLButtonElement|null} */ ($('postCommentBtn'));
+  const rawText = String(commentInput?.value || '');
+  const kindnessView = paintCommentKindnessUi(rawText);
+  const baseState = deriveCommentPostUiState({
+    hasWatchUrl: Boolean(COMMENT_POST_UI_STATE.watchUrl),
+    hasLiveId: Boolean(COMMENT_POST_UI_STATE.liveId),
+    hasText: Boolean(rawText.trim()),
+    isSubmitting: COMMENT_POST_UI_STATE.submitting,
+    panelStatusCode: COMMENT_POST_UI_STATE.panelStatusCode
+  });
+
+  if (commentInput) {
+    commentInput.placeholder = baseState.placeholder;
+    commentInput.readOnly = COMMENT_POST_UI_STATE.submitting;
+    commentInput.setAttribute(
+      'aria-busy',
+      COMMENT_POST_UI_STATE.submitting ? 'true' : 'false'
+    );
+    commentInput.setAttribute(
+      'aria-describedby',
+      kindnessView.warning
+        ? 'commentKindnessBody commentKindnessConfirm postStatus exportToolbarHint'
+        : 'postStatus exportToolbarHint'
+    );
+  }
+
+  if (postBtn) {
+    postBtn.disabled = baseState.buttonDisabled;
+    postBtn.textContent = baseState.buttonLabel;
+    postBtn.setAttribute(
+      'aria-busy',
+      COMMENT_POST_UI_STATE.submitting ? 'true' : 'false'
+    );
+    postBtn.setAttribute(
+      'aria-describedby',
+      kindnessView.warning ? 'commentKindnessBody commentKindnessConfirm postStatus' : 'postStatus'
+    );
+  }
+
+  let statusMessage = baseState.statusMessage;
+  let statusKind = baseState.statusKind;
+  const notice = COMMENT_POST_UI_STATE.notice;
+  const baseOverridesNotice =
+    baseState.mode === 'no_watch' ||
+    baseState.mode === 'no_live_id' ||
+    baseState.mode === 'submitting';
+  if (notice && notice.message && !baseOverridesNotice) {
+    statusMessage = notice.message;
+    statusKind = notice.kind;
+  }
+  setPostStatus(statusMessage, statusKind);
+  syncVoiceCommentButton();
+}
 
 /** 拡張コンテキスト無効化・更新手順の共通文案（UI とヒントで揃える） */
 const EXTENSION_RELOAD_USER_GUIDE_JA =
-  'chrome://extensions を開き、「君斗りんくの追憶のきらめき」の「更新」で拡張を再読み込みしてください。';
+  '改善しなければ chrome://extensions を開き、「君斗りんくの追憶のきらめき」の「更新」で拡張を再読み込みしてください。';
 
 /** コメント送信まわりのエラーに、再読み込み案内を1回だけ足す */
 function withCommentSendTroubleshootHint(message) {
   const s = String(message || '').trim();
   if (!s) return '';
-  if (
-    /再読み込み（F5）|chrome:\/\/extensions|うまくいかないとき|「更新」/.test(s)
-  ) {
-    return s;
+  const hintLines = [];
+  if (!/再読み込み|F5|別タブ|前面/.test(s)) {
+    hintLines.push(
+      'watchページを再読み込み（F5）し、別タブで開いている放送ページを前面にしてください。'
+    );
   }
-  return `${s}\n※うまくいかないとき：watchページを再読み込み（F5）。${EXTENSION_RELOAD_USER_GUIDE_JA}`;
+  if (!/chrome:\/\/extensions|「更新」/.test(s)) {
+    hintLines.push(EXTENSION_RELOAD_USER_GUIDE_JA);
+  }
+  return hintLines.length ? `${s}\n※うまくいかないとき: ${hintLines.join('\n')}` : s;
 }
 
 /** @param {unknown} err */
@@ -5424,6 +5639,14 @@ async function refresh() {
   const resolvedLv = extractLiveIdFromUrl(url);
   const viewerLvForError =
     isNicoLiveWatchUrl(url) && resolvedLv ? resolvedLv : '';
+  const commentPanelPayload = parseCommentPanelStatusPayload(
+    openBag[KEY_COMMENT_PANEL_STATUS]
+  );
+  const relevantCommentPanelCode =
+    commentPanelPayload &&
+    commentPanelStatusRelevantToLiveId(commentPanelPayload, viewerLvForError)
+      ? String(commentPanelPayload.code || '').trim()
+      : '';
   applyStorageErrorBannerFromBag(openBag, viewerLvForError);
   applyCommentHarvestBannerFromBag(openBag, viewerLvForError);
 
@@ -5527,12 +5750,9 @@ async function refresh() {
       liveId: '',
       snapshot: null
     });
-    if (postBtn) postBtn.disabled = true;
+    updateCommentPostUiContext('', '', '');
+    paintCommentComposeUi();
     setReloadWatchTabUiDisabled(true);
-    syncVoiceCommentButton();
-    if (commentInput) {
-      commentInput.placeholder = 'watchページを開くとコメント送信できます';
-    }
     renderUserRooms([], '');
     renderDevMonitorPanel({
       snapshot: null,
@@ -5578,12 +5798,9 @@ async function refresh() {
       liveId: '',
       snapshot: null
     });
-    if (postBtn) postBtn.disabled = true;
+    updateCommentPostUiContext(url, '', relevantCommentPanelCode);
+    paintCommentComposeUi();
     setReloadWatchTabUiDisabled(true);
-    syncVoiceCommentButton();
-    if (commentInput) {
-      commentInput.placeholder = 'コメントを入力して送信';
-    }
     renderUserRooms([], '');
     renderDevMonitorPanel({
       snapshot: null,
@@ -5725,12 +5942,9 @@ async function refresh() {
       captureBtn.disabled = false;
       captureBtn.dataset.watchUrl = url;
     }
-    if (postBtn) postBtn.disabled = COMMENT_POST_UI_STATE.submitting;
+    updateCommentPostUiContext(url, lv, relevantCommentPanelCode);
+    paintCommentComposeUi();
     setReloadWatchTabUiDisabled(false);
-    syncVoiceCommentButton();
-    if (commentInput) {
-      commentInput.placeholder = 'コメントを入力して送信';
-    }
     syncStorySourceEntries(lv, displayEntries);
     renderUserRooms(arr, lv);
     renderCharacterScene({
@@ -7838,19 +8052,31 @@ function initPopup() {
     const text = String(commentInput?.value || '').trim();
     const watchUrl = exportBtn.dataset.watchUrl || '';
     if (!text) {
-      setPostStatus('コメントを入力してください。', 'error');
+      clearCommentPostNotice();
+      paintCommentComposeUi();
       return;
     }
     if (!watchUrl) {
-      setPostStatus('watchページを開いてから送信してください。', 'error');
+      clearCommentPostNotice();
+      paintCommentComposeUi();
+      return;
+    }
+    const kindnessView = resolveCommentKindnessView(text);
+    if (
+      kindnessView.warning &&
+      COMMENT_KINDNESS_UI_STATE.armedText !== kindnessView.normalized
+    ) {
+      COMMENT_KINDNESS_UI_STATE.armedText = kindnessView.normalized;
+      requestCommentKindnessHop();
+      setCommentPostNotice('送信の前に、りんくのひとことを見てね。', 'idle');
+      paintCommentComposeUi();
       return;
     }
     const lvPost = String(exportBtn.dataset.liveId || '').trim().toLowerCase();
     let optimisticLogged = false;
     COMMENT_POST_UI_STATE.submitting = true;
-    if (postBtn) postBtn.disabled = true;
-    syncVoiceCommentButton();
-    setPostStatus('送信中…', 'idle');
+    clearCommentPostNotice();
+    paintCommentComposeUi();
     try {
       if (lvPost && toggle.checked) {
         await appendSelfPostedComment(lvPost, text);
@@ -7861,7 +8087,8 @@ function initPopup() {
       if (!hasExtensionContext()) return;
       if (result.ok) {
         if (commentInput) commentInput.value = '';
-        setPostStatus('コメントを送信しました。', 'success');
+        COMMENT_KINDNESS_UI_STATE.armedText = '';
+        setCommentPostNotice('コメントを送信しました。', 'success');
         const growthEl = /** @type {HTMLElement|null} */ ($('sceneStoryGrowth'));
         if (growthEl) patchStoryGrowthIconsFromSource(growthEl);
         return;
@@ -7870,10 +8097,8 @@ function initPopup() {
         await revertLastSelfPostedComment(lvPost, text);
         optimisticLogged = false;
       }
-      setPostStatus(
-        withCommentSendTroubleshootHint(
-          result.error || '送信に失敗しました。'
-        ),
+      setCommentPostNotice(
+        withCommentSendTroubleshootHint(result.error || '送信に失敗しました。'),
         'error'
       );
     } catch (e) {
@@ -7885,8 +8110,7 @@ function initPopup() {
     } finally {
       COMMENT_POST_UI_STATE.submitting = false;
       if (hasExtensionContext()) {
-        if (postBtn) postBtn.disabled = false;
-        syncVoiceCommentButton();
+        paintCommentComposeUi();
       }
     }
   }
@@ -8147,10 +8371,11 @@ function initPopup() {
           setVoiceLevelMeter(msg.level);
           return;
         }
-        if ('partial' in msg && commentInput) {
-          commentInput.value = String(msg.partial || '').slice(0, 250);
-          return;
-        }
+          if ('partial' in msg && commentInput) {
+            commentInput.value = String(msg.partial || '').slice(0, 250);
+            paintCommentComposeUi();
+            return;
+          }
         if (msg.error === true) {
           setVoiceListeningUi(false);
           setPostStatus(String(msg.message || '音声入力に失敗しました。'), 'error');
@@ -8160,19 +8385,26 @@ function initPopup() {
           setVoiceListeningUi(false);
           const text = String(msg.text || '').trim();
           if (commentInput) commentInput.value = text.slice(0, 250);
+          paintCommentComposeUi();
           if (!text) {
-            setPostStatus('', 'idle');
+            clearCommentPostNotice();
+            paintCommentComposeUi();
             return;
           }
           if (voiceAutoSend?.checked) {
             submitComment().catch(() => {
-              setPostStatus(
+              setCommentPostNotice(
                 withCommentSendTroubleshootHint('送信に失敗しました。'),
                 'error'
               );
+              paintCommentComposeUi();
             });
           } else {
-            setPostStatus('内容を確認して「コメント送信」を押してください。', 'success');
+            setCommentPostNotice(
+              '内容を確認して「コメント送信」を押してください。',
+              'success'
+            );
+            paintCommentComposeUi();
           }
         }
       });
@@ -8244,11 +8476,10 @@ function initPopup() {
   });
 
   postBtn?.addEventListener('click', () => {
+    if (postBtn.disabled) return;
     submitComment().catch(() => {
-      setPostStatus(
-        withCommentSendTroubleshootHint('送信に失敗しました。'),
-        'error'
-      );
+      setCommentPostNotice(withCommentSendTroubleshootHint('送信に失敗しました。'), 'error');
+      paintCommentComposeUi();
     });
   });
 
@@ -8263,16 +8494,19 @@ function initPopup() {
     });
     if (action !== 'submit') return;
     e.preventDefault();
+    if (postBtn?.disabled) {
+      paintCommentComposeUi();
+      return;
+    }
     submitComment().catch(() => {
-      setPostStatus(
-        withCommentSendTroubleshootHint('送信に失敗しました。'),
-        'error'
-      );
+      setCommentPostNotice(withCommentSendTroubleshootHint('送信に失敗しました。'), 'error');
+      paintCommentComposeUi();
     });
   });
 
   commentInput?.addEventListener('input', () => {
-    setPostStatus('', 'idle');
+    clearCommentPostNotice();
+    paintCommentComposeUi();
   });
 
   loadPopupFrameSettings()

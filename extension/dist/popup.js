@@ -61,6 +61,73 @@
     return { url: "", fromActiveTab: true };
   }
 
+  // src/lib/commentPostUi.js
+  function deriveCommentPostUiState(input) {
+    const hasWatchUrl = Boolean(input?.hasWatchUrl);
+    const hasLiveId = Boolean(input?.hasLiveId);
+    const hasText = Boolean(input?.hasText);
+    const isSubmitting = Boolean(input?.isSubmitting);
+    const panelStatusCode = String(input?.panelStatusCode || "").trim();
+    if (!hasWatchUrl) {
+      return {
+        mode: "no_watch",
+        buttonDisabled: true,
+        buttonLabel: "\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1",
+        placeholder: "watch\u30DA\u30FC\u30B8\u3092\u958B\u304F\u3068\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1\u3067\u304D\u307E\u3059",
+        statusMessage: "watch\u30DA\u30FC\u30B8\u3092\u958B\u304F\u3068\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1\u3067\u304D\u307E\u3059\u3002",
+        statusKind: "idle"
+      };
+    }
+    if (!hasLiveId) {
+      return {
+        mode: "no_live_id",
+        buttonDisabled: true,
+        buttonLabel: "\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1",
+        placeholder: "\u653E\u9001ID\u3092\u78BA\u8A8D\u3067\u304D\u305F\u3089\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1\u3067\u304D\u307E\u3059",
+        statusMessage: "\u653E\u9001ID\u3092\u78BA\u8A8D\u3067\u304D\u307E\u305B\u3093\u3002watch\u30DA\u30FC\u30B8\u3092\u958B\u304D\u76F4\u3057\u3066\u304F\u3060\u3055\u3044\u3002",
+        statusKind: "error"
+      };
+    }
+    if (isSubmitting) {
+      return {
+        mode: "submitting",
+        buttonDisabled: true,
+        buttonLabel: "\u9001\u4FE1\u4E2D\u2026",
+        placeholder: "\u30B3\u30E1\u30F3\u30C8\u3092\u5165\u529B\u3057\u3066\u9001\u4FE1",
+        statusMessage: "\u9001\u4FE1\u4E2D\u2026",
+        statusKind: "idle"
+      };
+    }
+    if (panelStatusCode === "no_comment_panel") {
+      return {
+        mode: "panel_warning",
+        buttonDisabled: !hasText,
+        buttonLabel: "\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1",
+        placeholder: "\u30B3\u30E1\u30F3\u30C8\u6B04\u304C\u898B\u3048\u306A\u3044\u3068\u304D\u306F\u518D\u8AAD\u307F\u8FBC\u307F\u5F8C\u306B\u9001\u4FE1\u3067\u304D\u307E\u3059",
+        statusMessage: "\u30B3\u30E1\u30F3\u30C8\u6B04\u3092\u898B\u5931\u3063\u3066\u3044\u307E\u3059\u3002watch\u30DA\u30FC\u30B8\u3092\u518D\u8AAD\u307F\u8FBC\u307F\u3057\u3066\u304B\u3089\u518D\u8A66\u884C\u3057\u3066\u304F\u3060\u3055\u3044\u3002",
+        statusKind: "error"
+      };
+    }
+    if (!hasText) {
+      return {
+        mode: "empty",
+        buttonDisabled: true,
+        buttonLabel: "\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1",
+        placeholder: "\u30B3\u30E1\u30F3\u30C8\u3092\u5165\u529B\u3057\u3066\u9001\u4FE1",
+        statusMessage: "",
+        statusKind: "idle"
+      };
+    }
+    return {
+      mode: "ready",
+      buttonDisabled: false,
+      buttonLabel: "\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1",
+      placeholder: "\u30B3\u30E1\u30F3\u30C8\u3092\u5165\u529B\u3057\u3066\u9001\u4FE1",
+      statusMessage: "",
+      statusKind: "idle"
+    };
+  }
+
   // src/lib/nicoAnonymousDisplay.js
   function isNiconicoAnonymousUserId(userId) {
     const s = String(userId ?? "").trim();
@@ -207,92 +274,6 @@
     return "default";
   }
 
-  // src/lib/voiceInputDevices.js
-  var VOICE_MIC_PROBE_MS = 1e3;
-  var VOICE_MIC_LEVEL_THRESHOLD = 6;
-  function audioConstraintsForDevice(deviceId) {
-    const id = String(deviceId || "").trim();
-    if (!id) {
-      return { audio: true };
-    }
-    return { audio: { deviceId: { ideal: id } } };
-  }
-  async function probeMicrophoneLevel(constraints, sampleMs = VOICE_MIC_PROBE_MS) {
-    let stream;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia(constraints);
-    } catch {
-      return {
-        ok: false,
-        peak: 0,
-        error: "\u30DE\u30A4\u30AF\u306B\u63A5\u7D9A\u3067\u304D\u307E\u305B\u3093\u3002\u8A31\u53EF\u30FB\u30C7\u30D0\u30A4\u30B9\u9078\u629E\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044\u3002"
-      };
-    }
-    let ctx = null;
-    try {
-      const AC = window.AudioContext || /** @type {typeof window & { webkitAudioContext?: typeof AudioContext }} */
-      window.webkitAudioContext;
-      if (typeof AC !== "function") {
-        return { ok: true, peak: 255, error: void 0 };
-      }
-      ctx = new AC();
-      const src = ctx.createMediaStreamSource(stream);
-      const analyser = ctx.createAnalyser();
-      analyser.fftSize = 512;
-      src.connect(analyser);
-      const buf = new Uint8Array(analyser.frequencyBinCount);
-      let peak = 0;
-      const end = Date.now() + sampleMs;
-      while (Date.now() < end) {
-        analyser.getByteFrequencyData(buf);
-        for (let i = 0; i < buf.length; i++) {
-          if (buf[i] > peak) peak = buf[i];
-        }
-        await new Promise((r) => {
-          requestAnimationFrame(r);
-        });
-      }
-      const ok = peak >= VOICE_MIC_LEVEL_THRESHOLD;
-      return {
-        ok,
-        peak,
-        error: ok ? void 0 : "\u97F3\u304C\u691C\u51FA\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002\u30DE\u30A4\u30AF\u97F3\u91CF\u3092\u4E0A\u3052\u308B\u304B\u3001\u5225\u306E\u7AEF\u672B\u3092\u9078\u3093\u3067\u304F\u3060\u3055\u3044\u3002"
-      };
-    } finally {
-      stream.getTracks().forEach((t) => t.stop());
-      if (ctx) {
-        await ctx.close().catch(() => {
-        });
-      }
-    }
-  }
-
-  // src/lib/videoCapture.js
-  function buildScreenshotFilename(liveId, ext, nowMs) {
-    const safeLv = String(liveId || "unknown").replace(/[/\\:*?"<>|]/g, "").replace(/\.\./g, "").slice(0, 32) || "unknown";
-    const e = String(ext || "png").replace(/^\./, "").toLowerCase() || "png";
-    const ts = Math.floor(Number(nowMs) || Date.now());
-    return `nicolivelog-${safeLv}-${ts}.${e}`;
-  }
-
-  // src/lib/thumbSettings.js
-  var THUMB_INTERVAL_PRESET_MS = Object.freeze([
-    0,
-    3e4,
-    6e4,
-    3e5
-  ]);
-  var ALLOWED = new Set(THUMB_INTERVAL_PRESET_MS);
-  function normalizeThumbIntervalMs(raw) {
-    const n = typeof raw === "string" ? Number(raw) : Number(raw);
-    if (!Number.isFinite(n) || n < 0) return 0;
-    if (ALLOWED.has(n)) return n;
-    return 0;
-  }
-  function isThumbAutoEnabled(v) {
-    return v === true;
-  }
-
   // src/lib/supportGrowthTileSrc.js
   function isHttpOrHttpsUrl(url) {
     const s = String(url || "").trim();
@@ -424,6 +405,129 @@
     }
     const sec = Math.floor(Number(rec.capturedAt || 0) / 1e3);
     return `${liveId}||${text}|${sec}`;
+  }
+
+  // src/lib/commentKindnessNudge.js
+  var COMMENT_KINDNESS_CONFIRM_JA = "\u305D\u306E\u307E\u307E\u9001\u308B\u306A\u3089\u3001\u3082\u3046\u4E00\u5EA6\u300C\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1\u300D\u3092\u62BC\u3057\u3066\u306D\u3002";
+  var COMMENT_KINDNESS_RULES = [
+    {
+      id: "direct-harm",
+      level: "strong",
+      pattern: /(死ね|しね|氏ね|消えろ|失せろ|くたばれ|ぶっころす|ぶっ殺す|殺してやる|ころしてやる)/i,
+      ignore: /(死ねない|死ねる|消えろ線|消えろくん)/i,
+      body: "\u305D\u306E\u3053\u3068\u3070\u306F\u3001\u76F8\u624B\u3092\u5F37\u304F\u50B7\u3064\u3051\u308B\u304B\u3082\u3002\u3084\u308F\u3089\u304B\u3044\u8A00\u3044\u65B9\u306B\u3057\u3066\u307F\u3088\u3046\uFF1F"
+    },
+    {
+      id: "harsh-insult",
+      level: "mild",
+      pattern: /(きもい|キモい|きしょ|キショ|ばか|バカ|あほ|アホ|うざい|ウザい|カス|かす|クズ|くず|ゴミ|ごみ|ブス|ぶす|黙れ)/,
+      ignore: /(バカ売れ|アホ毛|ゴミ箱|ごみ箱)/,
+      body: "\u305D\u306E\u8A00\u3044\u65B9\u3001\u304D\u3064\u304F\u898B\u3048\u308B\u304B\u3082\u3002\u5C11\u3057\u3060\u3051\u3084\u308F\u3089\u304B\u304F\u3057\u3066\u307F\u3088\u3046\uFF1F"
+    }
+  ];
+  function detectCommentKindnessNudge(rawText) {
+    const normalized = normalizeCommentText(rawText);
+    if (!normalized) return null;
+    for (const rule of COMMENT_KINDNESS_RULES) {
+      if (rule.ignore && rule.ignore.test(normalized)) continue;
+      const matched = normalized.match(rule.pattern);
+      if (!matched) continue;
+      return {
+        id: rule.id,
+        level: rule.level,
+        matchedText: String(matched[0] || "").trim(),
+        title: "\u308A\u3093\u304F\u304B\u3089\u3001\u3072\u3068\u3053\u3068",
+        body: rule.body,
+        confirm: COMMENT_KINDNESS_CONFIRM_JA
+      };
+    }
+    return null;
+  }
+
+  // src/lib/voiceInputDevices.js
+  var VOICE_MIC_PROBE_MS = 1e3;
+  var VOICE_MIC_LEVEL_THRESHOLD = 6;
+  function audioConstraintsForDevice(deviceId) {
+    const id = String(deviceId || "").trim();
+    if (!id) {
+      return { audio: true };
+    }
+    return { audio: { deviceId: { ideal: id } } };
+  }
+  async function probeMicrophoneLevel(constraints, sampleMs = VOICE_MIC_PROBE_MS) {
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+    } catch {
+      return {
+        ok: false,
+        peak: 0,
+        error: "\u30DE\u30A4\u30AF\u306B\u63A5\u7D9A\u3067\u304D\u307E\u305B\u3093\u3002\u8A31\u53EF\u30FB\u30C7\u30D0\u30A4\u30B9\u9078\u629E\u3092\u78BA\u8A8D\u3057\u3066\u304F\u3060\u3055\u3044\u3002"
+      };
+    }
+    let ctx = null;
+    try {
+      const AC = window.AudioContext || /** @type {typeof window & { webkitAudioContext?: typeof AudioContext }} */
+      window.webkitAudioContext;
+      if (typeof AC !== "function") {
+        return { ok: true, peak: 255, error: void 0 };
+      }
+      ctx = new AC();
+      const src = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      src.connect(analyser);
+      const buf = new Uint8Array(analyser.frequencyBinCount);
+      let peak = 0;
+      const end = Date.now() + sampleMs;
+      while (Date.now() < end) {
+        analyser.getByteFrequencyData(buf);
+        for (let i = 0; i < buf.length; i++) {
+          if (buf[i] > peak) peak = buf[i];
+        }
+        await new Promise((r) => {
+          requestAnimationFrame(r);
+        });
+      }
+      const ok = peak >= VOICE_MIC_LEVEL_THRESHOLD;
+      return {
+        ok,
+        peak,
+        error: ok ? void 0 : "\u97F3\u304C\u691C\u51FA\u3067\u304D\u307E\u305B\u3093\u3067\u3057\u305F\u3002\u30DE\u30A4\u30AF\u97F3\u91CF\u3092\u4E0A\u3052\u308B\u304B\u3001\u5225\u306E\u7AEF\u672B\u3092\u9078\u3093\u3067\u304F\u3060\u3055\u3044\u3002"
+      };
+    } finally {
+      stream.getTracks().forEach((t) => t.stop());
+      if (ctx) {
+        await ctx.close().catch(() => {
+        });
+      }
+    }
+  }
+
+  // src/lib/videoCapture.js
+  function buildScreenshotFilename(liveId, ext, nowMs) {
+    const safeLv = String(liveId || "unknown").replace(/[/\\:*?"<>|]/g, "").replace(/\.\./g, "").slice(0, 32) || "unknown";
+    const e = String(ext || "png").replace(/^\./, "").toLowerCase() || "png";
+    const ts = Math.floor(Number(nowMs) || Date.now());
+    return `nicolivelog-${safeLv}-${ts}.${e}`;
+  }
+
+  // src/lib/thumbSettings.js
+  var THUMB_INTERVAL_PRESET_MS = Object.freeze([
+    0,
+    3e4,
+    6e4,
+    3e5
+  ]);
+  var ALLOWED = new Set(THUMB_INTERVAL_PRESET_MS);
+  function normalizeThumbIntervalMs(raw) {
+    const n = typeof raw === "string" ? Number(raw) : Number(raw);
+    if (!Number.isFinite(n) || n < 0) return 0;
+    if (ALLOWED.has(n)) return n;
+    return 0;
+  }
+  function isThumbAutoEnabled(v) {
+    return v === true;
   }
 
   // src/lib/liveCommenterStats.js
@@ -2108,6 +2212,15 @@ ${body}`;
       const h = new Date(t).getHours();
       hourDistribution[h]++;
     }
+    const textStats = computeTextStats(filtered);
+    const selfPostedCount = filtered.filter((c) => c.selfPosted === true).length;
+    const selfPostedPct = filtered.length > 0 ? Math.round(selfPostedCount / filtered.length * 1e3) / 10 : 0;
+    const is184 = compute184Stats(filtered);
+    const timelineCumulative = computeTimelineCumulative(timeline);
+    const timelineRolling5Min = computeTimelineRolling5(timeline);
+    const maxSilenceGapMs = computeMaxSilenceGapMs(timestamps);
+    const vposThirds = computeVposThirds(filtered);
+    const quarterEngagement = computeQuarterEngagement(filtered, minT, maxT);
     return {
       liveId,
       totalComments: filtered.length,
@@ -2127,8 +2240,142 @@ ${body}`;
         light: Math.round(light / total * 1e3) / 10,
         once: Math.round(once / total * 1e3) / 10
       },
-      hourDistribution
+      hourDistribution,
+      textStats,
+      selfPostedCount,
+      selfPostedPct,
+      is184,
+      timelineCumulative,
+      timelineRolling5Min,
+      maxSilenceGapMs,
+      vposThirds,
+      quarterEngagement
     };
+  }
+  function computeTextStats(filtered) {
+    const n = filtered.length;
+    if (!n) {
+      return {
+        avgChars: 0,
+        medianChars: 0,
+        withUrlCount: 0,
+        withEmojiCount: 0,
+        pctWithUrl: 0,
+        pctWithEmoji: 0
+      };
+    }
+    const URL_RE = /https?:\/\/[^\s]+/i;
+    const EMOJI_RE = new RegExp("\\p{Extended_Pictographic}", "gu");
+    const lengths = [];
+    let withUrl = 0;
+    let withEmoji = 0;
+    for (const c of filtered) {
+      const t = String(c.text || "").trim();
+      lengths.push(t.length);
+      if (URL_RE.test(t)) withUrl++;
+      const em = t.match(EMOJI_RE);
+      if (em && em.length > 0) withEmoji++;
+    }
+    lengths.sort((a, b) => a - b);
+    const midLen = lengths.length % 2 === 1 ? lengths[Math.floor(lengths.length / 2)] : (lengths[lengths.length / 2 - 1] + lengths[lengths.length / 2]) / 2;
+    const sum = lengths.reduce((a, b) => a + b, 0);
+    return {
+      avgChars: Math.round(sum / n * 10) / 10,
+      medianChars: midLen,
+      withUrlCount: withUrl,
+      withEmojiCount: withEmoji,
+      pctWithUrl: Math.round(withUrl / n * 1e3) / 10,
+      pctWithEmoji: Math.round(withEmoji / n * 1e3) / 10
+    };
+  }
+  function compute184Stats(filtered) {
+    const known = filtered.filter((c) => typeof c.is184 === "boolean");
+    const k = known.length;
+    const count184 = known.filter((c) => c.is184 === true).length;
+    return {
+      count184,
+      knownCount: k,
+      pctOfKnown: k > 0 ? Math.round(count184 / k * 1e3) / 10 : 0
+    };
+  }
+  function computeTimelineCumulative(timeline) {
+    let cum = 0;
+    return timeline.map((b) => {
+      cum += b.count;
+      return cum;
+    });
+  }
+  function computeTimelineRolling5(timeline) {
+    return timeline.map((_, i) => {
+      let s = 0;
+      const from = Math.max(0, i - 4);
+      for (let j = from; j <= i; j++) {
+        s += timeline[j].count;
+      }
+      return s;
+    });
+  }
+  function computeMaxSilenceGapMs(timestamps) {
+    const uniq = [...new Set(timestamps.filter((t) => t > 0))].sort((a, b) => a - b);
+    if (uniq.length < 2) return 0;
+    let maxGap = 0;
+    for (let i = 1; i < uniq.length; i++) {
+      const g = uniq[i] - uniq[i - 1];
+      if (g > maxGap) maxGap = g;
+    }
+    return maxGap;
+  }
+  var MIN_SPAN_MS_FOR_QUARTERS = 6e4;
+  function computeQuarterEngagement(filtered, minT, maxT) {
+    const span = maxT - minT;
+    if (span < MIN_SPAN_MS_FOR_QUARTERS || !filtered.length) {
+      return {
+        uniqueCommentersFirstQuarter: 0,
+        uniqueCommentersLastQuarter: 0,
+        uniqueCommentersBothQuarters: 0,
+        skippedShortSpan: span < MIN_SPAN_MS_FOR_QUARTERS
+      };
+    }
+    const q1End = minT + span / 4;
+    const q4Start = maxT - span / 4;
+    const firstQ = /* @__PURE__ */ new Set();
+    const lastQ = /* @__PURE__ */ new Set();
+    for (const c of filtered) {
+      const t = c.capturedAt || 0;
+      const uid = c.userId || `anon:${(c.commentNo || c.id || "").slice(0, 12)}`;
+      if (t >= minT && t <= q1End) firstQ.add(uid);
+      if (t >= q4Start && t <= maxT) lastQ.add(uid);
+    }
+    let both = 0;
+    for (const uid of firstQ) {
+      if (lastQ.has(uid)) both++;
+    }
+    return {
+      uniqueCommentersFirstQuarter: firstQ.size,
+      uniqueCommentersLastQuarter: lastQ.size,
+      uniqueCommentersBothQuarters: both,
+      skippedShortSpan: false
+    };
+  }
+  function computeVposThirds(filtered) {
+    const vps = filtered.map((c) => c.vpos).filter((v) => typeof v === "number" && Number.isFinite(v) && v >= 0);
+    if (vps.length < 5) return null;
+    const maxV = Math.max(...vps);
+    let early = 0;
+    let mid = 0;
+    let late = 0;
+    if (maxV <= 0) {
+      early = vps.length;
+    } else {
+      const t1 = maxV / 3;
+      const t2 = 2 * maxV / 3;
+      for (const v of vps) {
+        if (v < t1) early++;
+        else if (v < t2) mid++;
+        else late++;
+      }
+    }
+    return { early, mid, late };
   }
 
   // src/lib/privacyDisplay.js
@@ -2146,6 +2393,35 @@ ${body}`;
     konta: "data:image/png;base64,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",
     tanu: "data:image/png;base64,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"
   };
+
+  // src/lib/marketingReportEmbed.js
+  function cloneReportForJsonEmbed(report, maskShareLabels) {
+    const r = (
+      /** @type {MarketingReport} */
+      JSON.parse(JSON.stringify(report))
+    );
+    if (!maskShareLabels) return r;
+    r.topUsers = r.topUsers.map((u) => ({
+      ...u,
+      nickname: maskLabelForShare(String(u.nickname || "")),
+      userId: maskLabelForShare(String(u.userId || "")),
+      avatarUrl: ""
+    }));
+    return r;
+  }
+  function buildMarketingEmbedScriptInnerText(report, opts = {}) {
+    const maskShareLabels = opts.maskShareLabels === true;
+    const exportedAt = opts.exportedAt || (/* @__PURE__ */ new Date()).toISOString();
+    const safeReport = cloneReportForJsonEmbed(report, maskShareLabels);
+    const payload = {
+      schemaVersion: 1,
+      exportedAt,
+      maskShareLabels,
+      liveId: report.liveId,
+      report: safeReport
+    };
+    return JSON.stringify(payload).replace(/</g, "\\u003c");
+  }
 
   // src/lib/marketingChartsHtml.js
   function adviceCard(role, displayName, lines) {
@@ -2172,6 +2448,11 @@ ${ps}
 <li><strong>\u30E6\u30FC\u30B6\u30FC\u30BB\u30B0\u30E1\u30F3\u30C8</strong> \u2014 \u30B3\u30E1\u30F3\u30C8\u56DE\u6570\u306E\u5C64\uFF08\u30D8\u30D3\u30FC\u301C\u4E00\u898B\uFF09\u306E\u5272\u5408</li>
 <li><strong>\u30C8\u30C3\u30D7\u30B3\u30E1\u30F3\u30BF\u30FC</strong> \u2014 \u591A\u3081\u306B\u66F8\u3044\u3066\u304F\u308C\u305F\u4EBA\u306E\u4E26\u3073\uFF08\u9806\u4F4D\uFF1D\u4FA1\u5024\u306E\u4E0A\u4E0B\u3067\u306F\u306A\u3044\u65E8\u3082\u30E1\u30E2\u3067\u89E6\u308C\u307E\u3059\uFF09</li>
 <li><strong>\u6642\u9593\u5E2F\u30D2\u30FC\u30C8\u30DE\u30C3\u30D7</strong> \u2014 \u30B3\u30E1\u30F3\u30C8\u304C\u96C6\u4E2D\u3057\u305F\u6642\u9593\u5E2F\u306E\u50BE\u5411</li>
+<li><strong>\u672C\u6587\u30FB\u5C5E\u6027\u306E\u50BE\u5411</strong> \u2014 \u6587\u5B57\u6570\u306E\u5E73\u5747\u30FB\u4E2D\u592E\u5024\u3001URL/\u7D75\u6587\u5B57\u306E\u542B\u6709\u3001\u81EA\u5206\u6295\u7A3F\u30FB184 \u306E\u5272\u5408\u3001\u30B3\u30E1\u30F3\u30C8\u9593\u306E\u6700\u9577\u30A4\u30F3\u30BF\u30FC\u30D0\u30EB</li>
+<li><strong>\u7D2F\u7A4D\u30685\u5206\u7A93</strong> \u2014 \u7D4C\u904E\u306B\u6CBF\u3063\u305F\u7D2F\u7A4D\u30B3\u30E1\u30F3\u30C8\u6570\u3068\u3001\u76F4\u8FD15\u5206\u306E\u4EF6\u6570\u306E\u63A8\u79FB\uFF08\u76DB\u308A\u4E0A\u304C\u308A\u306E\u88DC\u52A9\u7DDA\uFF09</li>
+<li><strong>\u518D\u751F\u4F4D\u7F6E\u306E\u4E09\u5206\u5272\uFF08vpos\uFF09</strong> \u2014 \u8A18\u9332\u306B vpos \u304C\u5341\u5206\u3042\u308B\u3068\u304D\u3060\u3051\u3001\u65E9\u30FB\u4E2D\u30FB\u9045\u306E\u4EF6\u6570\u6BD4</li>
+<li><strong>\u5192\u982D\u30FB\u7D42\u76E4\u306E\u56DB\u5206\u4F4D</strong> \u2014 \u6642\u9593\u5E45\u306E\u6700\u521D\u30FB\u6700\u5F8C\u306E\u56DB\u5206\u306E\u4E00\u306B\u73FE\u308C\u305F\u4EBA\u6570\u3068\u3001\u300C\u4E21\u65B9\u306B\u3044\u305F\u300D\u4EBA\u6570\u306E\u76EE\u5B89</li>
+<li><strong>\u30DA\u30FC\u30B8\u672B\u5C3E\u306E JSON \u57CB\u3081\u8FBC\u307F</strong> \u2014 \u540C\u3058 .html \u5185\u306B\u96C6\u8A08\u306E\u30B3\u30D4\u30FC\u3092\u5165\u308C\u3066\u3042\u308A\u3001\u8868\u8A08\u7B97\u3084\u30C4\u30FC\u30EB\u9023\u643A\u306B\u4F7F\u3048\u307E\u3059\uFF08\u5171\u6709\u4F0F\u305B\u5B57\u6642\u306F JSON \u3082\u30DE\u30B9\u30AF\uFF09</li>
 </ul>
 <p class="mkt-values-note"><strong>\u3069\u3093\u306A\u914D\u4FE1\u3082\u5426\u5B9A\u3057\u307E\u305B\u3093\u3002</strong>\u9759\u304B\u306A\u96D1\u8AC7\u3082\u3001\u308F\u3044\u308F\u3044\u578B\u3082\u3001\u30B2\u30FC\u30E0\u7279\u5316\u3082\u3001\u6B4C\u67A0\u3082\u3001\u305D\u308C\u305E\u308C\u306B\u5408\u3063\u305F\u30B9\u30BF\u30A4\u30EB\u304C\u3042\u308A\u307E\u3059\u3002<strong>\u305D\u306E\u30B9\u30BF\u30A4\u30EB\u306B\u6570\u5B57\u3084\u30E1\u30E2\u3067\u7E1B\u3089\u308C\u308B\u5FC5\u8981\u3082\u3042\u308A\u307E\u305B\u3093\u3002</strong>\u6C17\u306B\u306A\u3063\u305F\u3068\u3053\u308D\u3060\u3051\u773A\u3081\u3066\u3001\u3072\u3068\u3064\u306E\u8996\u70B9\u30FB\u632F\u308A\u8FD4\u308A\u306E\u88DC\u52A9\u3068\u3057\u3066\u4F7F\u3063\u3066\u304F\u3060\u3055\u3044\u3002</p>
 </section>`;
@@ -2216,6 +2497,206 @@ ${ps}
       );
     }
     return `<div class="mkt-advice-after">${cards.join("")}</div>`;
+  }
+  function formatSilenceMs(ms) {
+    if (ms <= 0) return "\u2014";
+    const s = Math.floor(ms / 1e3);
+    if (s < 60) return `${s}\u79D2`;
+    const m = Math.floor(s / 60);
+    const rem = s % 60;
+    return rem ? `${m}\u5206${rem}\u79D2` : `${m}\u5206`;
+  }
+  function sectionContentShape(r) {
+    if (r.totalComments <= 0) return "";
+    const ts = r.textStats;
+    const i = r.is184;
+    const silence = formatSilenceGapLabel(r.maxSilenceGapMs);
+    const cards = [
+      {
+        label: "\u5E73\u5747\u6587\u5B57\u6570\uFF08trim\uFF09",
+        value: String(ts.avgChars),
+        icon: "\u{1F4DD}"
+      },
+      {
+        label: "\u4E2D\u592E\u5024\u6587\u5B57\u6570",
+        value: String(ts.medianChars),
+        icon: "\u{1F4CF}"
+      },
+      {
+        label: "URL \u3092\u542B\u3080\u5272\u5408",
+        value: `${ts.pctWithUrl}%\uFF08${ts.withUrlCount}\u4EF6\uFF09`,
+        icon: "\u{1F517}"
+      },
+      {
+        label: "\u7D75\u6587\u5B57\u3092\u542B\u3080\u5272\u5408",
+        value: `${ts.pctWithEmoji}%\uFF08${ts.withEmojiCount}\u4EF6\uFF09`,
+        icon: "\u{1F600}"
+      },
+      {
+        label: "\u81EA\u5206\u6295\u7A3F\uFF08selfPosted\uFF09",
+        value: `${r.selfPostedPct}%\uFF08${r.selfPostedCount}\u4EF6\uFF09`,
+        icon: "\u{1F64B}"
+      },
+      {
+        label: "184\uFF08\u65E2\u77E5\u306E\u307F\uFF09",
+        value: i.knownCount > 0 ? `${i.pctOfKnown}%\uFF08${i.count184}/${i.knownCount}\u4EF6\uFF09` : "\u30C7\u30FC\u30BF\u306A\u3057",
+        icon: "\u{1F3AD}"
+      },
+      {
+        label: "\u6700\u9577\u306E\u30B3\u30E1\u30F3\u30C8\u9593\u9694",
+        value: silence,
+        icon: "\u23F8\uFE0F"
+      }
+    ];
+    const inner = cards.map(
+      (c) => `<div class="mkt-kpi mkt-kpi--compact"><span class="mkt-kpi__icon">${c.icon}</span><span class="mkt-kpi__val">${escapeHtml(c.value)}</span><span class="mkt-kpi__label">${escapeHtml(c.label)}</span></div>`
+    ).join("");
+    return `<section class="mkt-section"><h2>\u30B3\u30E1\u30F3\u30C8\u672C\u6587\u30FB\u5C5E\u6027\u306E\u50BE\u5411</h2>
+<p class="mkt-note">\u8A18\u9332\u3055\u308C\u305F\u672C\u6587\u306E\u307F\u3092\u5BFE\u8C61\u3002184 \u306F <code>is184</code> \u304C\u4ED8\u3044\u3066\u3044\u308B\u884C\u3060\u3051\u3067\u5272\u5408\u3092\u8A08\u7B97\u3057\u307E\u3059\u3002</p>
+<div class="mkt-kpi-grid">${inner}</div></section>`;
+  }
+  function formatSilenceGapLabel(ms) {
+    if (ms <= 0) return "\u2014\uFF081\u4EF6\u4EE5\u4E0B\u307E\u305F\u306F\u6642\u523B\u306A\u3057\uFF09";
+    return `${formatSilenceMs(ms)}\uFF08\u9023\u7D9A\u3059\u308B2\u30B3\u30E1\u30F3\u30C8\u9593\u306E\u6700\u5927\uFF09`;
+  }
+  function sectionAdviceAfterContentShape(r) {
+    if (r.totalComments <= 0) return "";
+    const lines = [
+      "\u6587\u5B57\u6570\u3084 URL \u306E\u591A\u3055\u306F\u300C\u8A71\u984C\u304C\u30EA\u30F3\u30AF\u3092\u4F34\u3044\u3084\u3059\u3044\u300D\u300C\u77ED\u6587\u9023\u6253\u300D\u306A\u3069\u306E\u96D1\u306A\u30D2\u30F3\u30C8\u306B\u306A\u308B\u3053\u3068\u304C\u3042\u308B\u306E\u3060\u3002\u6570\u5B57\u3060\u3051\u3067\u826F\u3057\u60AA\u3057\u306F\u6C7A\u3081\u306A\u3044\u3067\u307B\u3057\u3044\u306E\u3060\u3002"
+    ];
+    if (r.textStats.pctWithEmoji >= 25 && r.uniqueUsers >= 8) {
+      lines.push("\u7D75\u6587\u5B57\u306E\u6BD4\u7387\u304C\u76EE\u7ACB\u3064\u3068\u304D\u306F\u3001\u7A7A\u6C17\u304C\u67D4\u3089\u304B\u3044\u30FB\u30EA\u30A2\u30AF\u30B7\u30E7\u30F3\u4E2D\u5FC3\u306E\u6642\u9593\u5E2F\u3060\u3063\u305F\u53EF\u80FD\u6027\u304C\u3042\u308B\u306E\u3060\u3002");
+    }
+    return `<div class="mkt-advice-after">${adviceCard("tanu", "\u305F\u306C\u59C9", lines)}</div>`;
+  }
+  function sectionQuarterEngagement(r) {
+    if (r.totalComments <= 0 || !r.quarterEngagement) return "";
+    const q = r.quarterEngagement;
+    if (q.skippedShortSpan) {
+      return `<section class="mkt-section"><h2>\u5192\u982D\u30FB\u7D42\u76E4\uFF08\u56DB\u5206\u4F4D\uFF09</h2>
+<p class="mkt-note">\u8A18\u9332\u306E\u6642\u9593\u5E45\u304C1\u5206\u672A\u6E80\u306E\u305F\u3081\u3001\u6700\u521D\u30FB\u6700\u5F8C\u306E\u56DB\u5206\u306E\u4E00\u306B\u73FE\u308C\u305F\u4EBA\u6570\u306E\u6BD4\u8F03\u306F\u51FA\u3057\u3066\u3044\u307E\u305B\u3093\u3002\u9577\u3081\u306E\u67A0\u307B\u3069\u6307\u6A19\u304C\u610F\u5473\u3092\u6301\u3061\u3084\u3059\u3044\u3067\u3059\u3002</p></section>`;
+    }
+    const cards = [
+      {
+        label: "\u6700\u521D\u306E1/4\u306E\u6642\u9593\u5E2F\u306B\u3044\u305F\u4EBA",
+        value: String(q.uniqueCommentersFirstQuarter),
+        icon: "\u{1F305}"
+      },
+      {
+        label: "\u6700\u5F8C\u306E1/4\u306E\u6642\u9593\u5E2F\u306B\u3044\u305F\u4EBA",
+        value: String(q.uniqueCommentersLastQuarter),
+        icon: "\u{1F319}"
+      },
+      {
+        label: "\u5192\u982D\u306B\u3082\u7D42\u76E4\u306B\u3082\u30B3\u30E1\u30F3\u30C8\u3057\u305F\u4EBA",
+        value: String(q.uniqueCommentersBothQuarters),
+        icon: "\u{1F501}"
+      }
+    ];
+    const inner = cards.map(
+      (c) => `<div class="mkt-kpi mkt-kpi--compact"><span class="mkt-kpi__icon">${c.icon}</span><span class="mkt-kpi__val">${escapeHtml(c.value)}</span><span class="mkt-kpi__label">${escapeHtml(c.label)}</span></div>`
+    ).join("");
+    return `<section class="mkt-section"><h2>\u5192\u982D\u30FB\u7D42\u76E4\uFF08\u56DB\u5206\u4F4D\uFF09</h2>
+<p class="mkt-note">\u8A18\u9332\u306E\u5148\u982D\u304B\u3089\u672B\u5C3E\u307E\u3067\u306E<strong>\u5B9F\u6642\u9593\u5E45</strong>\u30924\u7B49\u5206\u3057\u3001\u6700\u521D\u30FB\u6700\u5F8C\u306E\u533A\u9593\u306B\u30B3\u30E1\u30F3\u30C8\u3057\u305F<strong>\u30E6\u30CB\u30FC\u30AF\u4EBA\u6570</strong>\u3068\u3001\u4E21\u65B9\u306B\u73FE\u308C\u305F\u4EBA\u6570\u3067\u3059\uFF08\u96E2\u8131\u3084\u518D\u8A2A\u306E\u76EE\u5B89\u7A0B\u5EA6\uFF09\u3002</p>
+<div class="mkt-kpi-grid">${inner}</div></section>`;
+  }
+  function sectionAdviceAfterQuarterEngagement(r) {
+    if (r.totalComments <= 0 || !r.quarterEngagement || r.quarterEngagement.skippedShortSpan) {
+      return "";
+    }
+    return `<div class="mkt-advice-after">${adviceCard("konta", "\u3053\u3093\u592A", [
+      "\u300C\u5192\u982D\u306B\u3082\u7D42\u76E4\u306B\u3082\u3044\u308B\u300D\u306F\u3001\u9577\u304F\u5C45\u3066\u304F\u308C\u305F\u53EF\u80FD\u6027\u306E\u30D2\u30F3\u30C8\u306B\u904E\u304E\u306A\u3044\u306E\u3060\u3002\u30BF\u30D6\u3092\u958B\u3044\u305F\u307E\u307E\u653E\u7F6E\u3001\u306A\u3069\u5225\u306E\u7406\u7531\u3082\u3042\u308A\u3046\u308B\u306E\u3060\u3002",
+      "\u6570\u5B57\u3067\u30D5\u30A1\u30F3\u306E\u71B1\u3055\u3092\u4E0A\u4E0B\u3057\u306A\u3044\u3067\u307B\u3057\u3044\u306E\u3060\u3002\u3042\u304F\u307E\u3067\u8A18\u9332\u306E\u51FA\u65B9\u3092\u773A\u3081\u308B\u88DC\u52A9\u3060\u3068\u601D\u3063\u3066\u307B\u3057\u3044\u306E\u3060\u3002"
+    ])}</div>`;
+  }
+  function sectionDerivedTimeline(r) {
+    const tl = r.timeline;
+    const cum = r.timelineCumulative;
+    const roll = r.timelineRolling5Min;
+    if (tl.length < 2 || cum.length !== tl.length || roll.length !== tl.length) return "";
+    const maxC = Math.max(1, ...cum);
+    const maxR = Math.max(1, ...roll);
+    const W = 900;
+    const H = 220;
+    const pad = 40;
+    const innerW = W - pad * 2;
+    const innerH = H - pad * 2;
+    const n = tl.length;
+    const cumPts = cum.map((v, i) => {
+      const x = pad + innerW * (i + 0.5) / n;
+      const y = pad + innerH - v / maxC * innerH;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+    const rollPts = roll.map((v, i) => {
+      const x = pad + innerW * (i + 0.5) / n;
+      const y = pad + innerH - v / maxR * innerH;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(" ");
+    const yLabelsL = Array.from({ length: 5 }, (_, i) => {
+      const v = Math.round(maxC * (4 - i) / 4);
+      const y = pad + innerH * i / 4;
+      return `<text x="${pad - 4}" y="${y + 4}" text-anchor="end" class="mkt-axis mkt-axis--cum">${v}</text>`;
+    }).join("");
+    const yLabelsR = Array.from({ length: 5 }, (_, i) => {
+      const v = Math.round(maxR * (4 - i) / 4);
+      const y = pad + innerH * i / 4;
+      return `<text x="${W - pad + 4}" y="${y + 4}" text-anchor="start" class="mkt-axis mkt-axis--roll">${v}</text>`;
+    }).join("");
+    const xLabels = tl.filter((_, i) => i % Math.max(1, Math.floor(n / 10)) === 0).map((b) => {
+      const x = pad + innerW * (b.minute + 0.5) / n;
+      return `<text x="${x.toFixed(1)}" y="${H - 4}" text-anchor="middle" class="mkt-axis">${b.minute}m</text>`;
+    }).join("");
+    return `<section class="mkt-section">
+<h2>\u7D2F\u7A4D\u30B3\u30E1\u30F3\u30C8\u6570\u30685\u5206\u7A93</h2>
+<p class="mkt-note">\u7DD1\u7DDA\uFF1D\u7D2F\u7A4D\u4EF6\u6570 / \u7D2B\u7DDA\uFF1D\u305D\u306E\u5206\u3092\u542B\u3080\u76F4\u8FD15\u5206\u306E\u5408\u8A08\uFF08\u5206\u5358\u4F4D\u306E\u6876\u306B\u5BFE\u5FDC\uFF09</p>
+<div class="mkt-chart-wrap">
+<svg viewBox="0 0 ${W} ${H}" class="mkt-svg" aria-label="\u7D2F\u7A4D\u30685\u5206\u7A93\u306E\u6298\u308C\u7DDA">
+<rect x="${pad}" y="${pad}" width="${innerW}" height="${innerH}" fill="none" stroke="#334155" stroke-width="0.5"/>
+${yLabelsL}${yLabelsR}${xLabels}
+<polyline points="${cumPts}" fill="none" stroke="#22c55e" stroke-width="2.2" stroke-linecap="round"/>
+<polyline points="${rollPts}" fill="none" stroke="#a855f7" stroke-width="2" stroke-linecap="round" stroke-dasharray="6 3"/>
+</svg>
+</div>
+<p class="mkt-note mkt-note--legend"><span class="mkt-leg-inline" style="color:#22c55e">\u25A0</span> \u7D2F\u7A4D <span class="mkt-leg-inline" style="color:#a855f7">\u25A0</span> 5\u5206\u7A93\uFF08\u7834\u7DDA\uFF09</p>
+</section>`;
+  }
+  function sectionAdviceAfterDerivedTimeline(r) {
+    if (r.timeline.length < 2) return "";
+    return `<div class="mkt-advice-after">${adviceCard("rink", "\u308A\u3093\u304F", [
+      "\u7D2B\u306E5\u5206\u7A93\u306F\u300C\u76F4\u8FD1\u3067\u4E00\u6C17\u306B\u5897\u3048\u305F\u304B\u300D\u306E\u76EE\u5B89\u306B\u306A\u308B\u306E\u3060\u3002\u7D2F\u7A4D\uFF08\u7DD1\uFF09\u306F\u5358\u8ABF\u306B\u5897\u3048\u308B\u304B\u3089\u3001\u6CE2\u3092\u8AAD\u3080\u306A\u3089\u7D2B\u306E\u65B9\u304C\u5206\u304B\u308A\u3084\u3059\u3044\u3053\u3068\u304C\u591A\u3044\u306E\u3060\u3002"
+    ])}</div>`;
+  }
+  function sectionVposThirds(r) {
+    const v = r.vposThirds;
+    if (!v || r.totalComments <= 0) return "";
+    const total = v.early + v.mid + v.late;
+    if (total <= 0) return "";
+    const max = Math.max(1, v.early, v.mid, v.late);
+    const W = 320;
+    const H = 140;
+    const pad = 28;
+    const bw = 56;
+    const gap = 40;
+    const baseY = H - pad;
+    const bars = [
+      { label: "\u65E9\u3044\u5E2F", n: v.early, x: pad },
+      { label: "\u4E2D\u9593\u5E2F", n: v.mid, x: pad + bw + gap },
+      { label: "\u9045\u3044\u5E2F", n: v.late, x: pad + (bw + gap) * 2 }
+    ].map((b) => {
+      const h = b.n / max * (H - pad * 2);
+      const y = baseY - h;
+      return `<rect x="${b.x}" y="${y}" width="${bw}" height="${h}" fill="#38bdf8" opacity="0.75" rx="4"><title>${b.label}: ${b.n}\u4EF6</title></rect>
+<text x="${b.x + bw / 2}" y="${baseY + 16}" text-anchor="middle" class="mkt-axis">${escapeHtml(b.label)}</text>
+<text x="${b.x + bw / 2}" y="${y - 4}" text-anchor="middle" class="mkt-axis">${b.n}</text>`;
+    }).join("");
+    return `<section class="mkt-section">
+<h2>\u518D\u751F\u4F4D\u7F6E\uFF08vpos\uFF09\u306E\u4E09\u5206\u5272</h2>
+<p class="mkt-note">vpos \u304C\u4ED8\u3044\u305F\u30B3\u30E1\u30F3\u30C8\u304C5\u4EF6\u4EE5\u4E0A\u3042\u308B\u3068\u304D\u3060\u3051\u8868\u793A\u3002\u6700\u5927 vpos \u30923\u7B49\u5206\u3057\u3066\u65E9\u30FB\u4E2D\u30FB\u9045\u306B\u632F\u308A\u5206\u3051\u3066\u3044\u307E\u3059\uFF08\u30A2\u30FC\u30AB\u30A4\u30D6\u8996\u8074\u306E\u76EE\u5B89\uFF09\u3002</p>
+<div class="mkt-chart-wrap">
+<svg viewBox="0 0 ${W} ${H}" class="mkt-svg mkt-svg--vpos" aria-label="vpos \u4E09\u5206\u5272">${bars}</svg>
+</div>
+<p class="mkt-note">\u5408\u8A08 ${total} \u4EF6\uFF08\u8A72\u5F53\u30B3\u30E1\u30F3\u30C8\u306E\u307F\uFF09</p>
+</section>`;
   }
   function sectionAdviceAfterTimeline(r) {
     if (r.timeline.length < 2) return "";
@@ -2262,6 +2743,11 @@ ${ps}
   }
   function buildMarketingDashboardHtml(r, opts = {}) {
     const maskShare = opts.maskShareLabels === true;
+    const exportedAtIso = (/* @__PURE__ */ new Date()).toISOString();
+    const embedJson = buildMarketingEmbedScriptInnerText(r, {
+      maskShareLabels: maskShare,
+      exportedAt: exportedAtIso
+    });
     const subSuffix = maskShare ? " \xB7 \u5171\u6709\u5411\u3051\u306B\u8868\u793A\u540D\u3092\u4F0F\u305B\u305F\u51FA\u529B" : "";
     return `<!DOCTYPE html>
 <html lang="ja">
@@ -2274,23 +2760,39 @@ ${ps}
 <body>
 <header class="mkt-header">
 <h1 class="mkt-header__title">\u{1F4CA} \u914D\u4FE1\u30DE\u30FC\u30B1\u30C6\u30A3\u30F3\u30B0\u5206\u6790</h1>
-<p class="mkt-header__sub">${escapeHtml(r.liveId)} \u2014 ${(/* @__PURE__ */ new Date()).toLocaleString("ja-JP")} \u51FA\u529B${escapeHtml(subSuffix)}</p>
+<p class="mkt-header__sub">${escapeHtml(r.liveId)} \u2014 ${(/* @__PURE__ */ new Date()).toLocaleString("ja-JP")} \u51FA\u529B${escapeHtml(subSuffix)} \xB7 JSON\u57CB\u3081\u8FBC\u307F ${escapeHtml(exportedAtIso)}</p>
 </header>
 <main class="mkt-main">
 ${sectionFeaturesOverview()}
 ${sectionAdviceIntro()}
 ${sectionKpi(r)}
 ${sectionAdviceAfterKpi(r)}
+${sectionContentShape(r)}
+${sectionAdviceAfterContentShape(r)}
+${sectionQuarterEngagement(r)}
+${sectionAdviceAfterQuarterEngagement(r)}
 ${sectionTimeline(r)}
 ${sectionAdviceAfterTimeline(r)}
+${sectionDerivedTimeline(r)}
+${sectionAdviceAfterDerivedTimeline(r)}
 ${sectionSegment(r)}
 ${sectionAdviceAfterSegment(r)}
 ${sectionTopUsers(r, maskShare)}
 ${sectionAdviceAfterRank(r)}
+${sectionVposThirds(r)}
 ${sectionHourHeatmap(r)}
 </main>
-<footer class="mkt-footer">\u8FFD\u61B6\u306E\u304D\u3089\u3081\u304D \xB7 \u30DE\u30FC\u30B1\u5206\u6790\uFF08\u624B\u5143\u7528\uFF09 \u2014 ${(/* @__PURE__ */ new Date()).toISOString()}</footer>
+<footer class="mkt-footer">\u8FFD\u61B6\u306E\u304D\u3089\u3081\u304D \xB7 \u30DE\u30FC\u30B1\u5206\u6790\uFF08\u624B\u5143\u7528\uFF09 \u2014 ${escapeHtml(exportedAtIso)}</footer>
+${sectionMachineReadableJson(embedJson, maskShare)}
 </body></html>`;
+  }
+  function sectionMachineReadableJson(embedJson, maskShare) {
+    const maskNote = maskShare ? "\u3053\u306E\u51FA\u529B\u3067\u306F\u5171\u6709\u5411\u3051\u306B<strong>\u4F0F\u305B\u5B57</strong>\u3092\u4ED8\u3051\u3066\u304A\u308A\u3001JSON \u5185\u306E\u30C8\u30C3\u30D7\u30B3\u30E1\u30F3\u30BF\u30FC\u306E\u8868\u793A\u540D\u30FBID \u3082\u4F0F\u305B\u3001\u30A2\u30A4\u30B3\u30F3 URL \u306F\u7A7A\u3067\u3059\u3002" : "\u624B\u5143\u7528\u306E\u305F\u3081 ID \u304C\u305D\u306E\u307E\u307E\u5165\u308A\u307E\u3059\u3002\u7B2C\u4E09\u8005\u306B\u6E21\u3059\u3068\u304D\u306F\u62E1\u5F35\u306E\u300C\u4F0F\u305B\u5B57\u300D\u30C1\u30A7\u30C3\u30AF\u4ED8\u304D\u3067\u66F8\u304D\u51FA\u3057\u3066\u304F\u3060\u3055\u3044\u3002";
+    return `<section class="mkt-section mkt-section--embed" aria-label="JSON \u30C7\u30FC\u30BF">
+<h2>\u8868\u8A08\u7B97\u30FB\u30C4\u30FC\u30EB\u5411\u3051 JSON</h2>
+<p class="mkt-note">${maskNote} \u4E2D\u8EAB\u306F <code>id="nl-marketing-export-v1"</code> \u306E <code>script</code> \u8981\u7D20\u306B\u3042\u308A\u307E\u3059\uFF08<code>schemaVersion</code>\u30FB<code>report</code> \u5F62\u5F0F\uFF09\u3002</p>
+<script type="application/json" id="nl-marketing-export-v1">${embedJson}<\/script>
+</section>`;
   }
   function sectionKpi(r) {
     const cards = [
@@ -2435,6 +2937,11 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
 .mkt-kpi__icon{font-size:1.4rem;display:block}
 .mkt-kpi__val{font-size:1.3rem;font-weight:700;display:block;color:#f8fafc}
 .mkt-kpi__label{font-size:.72rem;color:#94a3b8}
+.mkt-kpi--compact .mkt-kpi__val{font-size:1.05rem;line-height:1.25}
+.mkt-kpi--compact .mkt-kpi__label{font-size:.68rem;line-height:1.3}
+.mkt-leg-inline{font-weight:700;margin:0 .2rem}
+.mkt-note--legend{margin-top:.35rem}
+.mkt-svg--vpos{max-height:168px}
 .mkt-chart-wrap{overflow-x:auto}
 .mkt-svg{width:100%;height:auto;max-height:260px}
 .mkt-axis{font-size:10px;fill:#94a3b8}
@@ -2457,6 +2964,8 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
 .mkt-hour__label{font-size:.7rem;color:#94a3b8}
 .mkt-hour__val{font-size:.9rem;font-weight:600}
 .mkt-footer{text-align:center;padding:1.5rem;font-size:.72rem;color:#475569}
+.mkt-section--embed h2{border-left-color:#22d3ee}
+.mkt-section--embed script{display:none}
 .mkt-section--features h2{border-left-color:#34d399}
 .mkt-lead{margin:0 0 .85rem;font-size:.88rem;color:#e2e8f0;line-height:1.65}
 .mkt-feature-list{margin:.4rem 0 0;padding-left:1.15rem;color:#cbd5e1;font-size:.82rem;line-height:1.65}
@@ -2499,6 +3008,13 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
   .mkt-kpi-grid{grid-template-columns:repeat(2,1fr)}
   .mkt-hour-grid{grid-template-columns:repeat(6,1fr)}
   .mkt-seg-wrap{flex-direction:column;align-items:flex-start}
+}
+@media print{
+  body{background:#fff;color:#0f172a}
+  .mkt-header,.mkt-section{background:#f1f5f9;border-color:#cbd5e1;box-shadow:none}
+  .mkt-advice-row{break-inside:avoid}
+  .mkt-section{break-inside:avoid-page}
+  .mkt-chart-wrap{overflow:visible}
 }
 `;
 
@@ -3155,10 +3671,6 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
   }
   function syncVoiceCommentButton() {
     if (!hasExtensionContext()) return;
-    const post = (
-      /** @type {HTMLButtonElement|null} */
-      $("postCommentBtn")
-    );
     const voice = (
       /** @type {HTMLButtonElement|null} */
       $("voiceCommentBtn")
@@ -3169,7 +3681,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     );
     if (!voice) return;
     voice.title = "\u805E\u304D\u53D6\u308A\u306F watch \u30DA\u30FC\u30B8\u4E0A\u3067\u884C\u3044\u307E\u3059\uFF08\u30BF\u30C3\u30D7\u3067\u958B\u59CB\u30FB\u3082\u3046\u4E00\u5EA6\u3067\u505C\u6B62\uFF09";
-    const dis = Boolean(post?.disabled);
+    const dis = !canUseCommentPostWatchTools();
     voice.disabled = dis;
     if (srCheck) {
       srCheck.disabled = dis;
@@ -3420,17 +3932,191 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     if (kind === "success") status.classList.add("success");
   }
   var COMMENT_POST_UI_STATE = {
-    submitting: false
+    submitting: false,
+    watchUrl: "",
+    liveId: "",
+    panelStatusCode: "",
+    notice: null
   };
-  var EXTENSION_RELOAD_USER_GUIDE_JA = "chrome://extensions \u3092\u958B\u304D\u3001\u300C\u541B\u6597\u308A\u3093\u304F\u306E\u8FFD\u61B6\u306E\u304D\u3089\u3081\u304D\u300D\u306E\u300C\u66F4\u65B0\u300D\u3067\u62E1\u5F35\u3092\u518D\u8AAD\u307F\u8FBC\u307F\u3057\u3066\u304F\u3060\u3055\u3044\u3002";
+  var COMMENT_KINDNESS_FACE_SRC = {
+    mild: "images/yukkuri-charactore-english/link/link-yukkuri-smile-mouth-open.png",
+    strong: "images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-closed.png"
+  };
+  var COMMENT_KINDNESS_UI_STATE = {
+    armedText: "",
+    lastVisibleKey: "",
+    forceHop: false
+  };
+  function resolveCommentKindnessView(rawText) {
+    const normalized = normalizeCommentText(rawText);
+    if (!normalized) {
+      COMMENT_KINDNESS_UI_STATE.armedText = "";
+      return {
+        normalized: "",
+        warning: null,
+        confirmPending: false,
+        visibleKey: ""
+      };
+    }
+    if (COMMENT_KINDNESS_UI_STATE.armedText && COMMENT_KINDNESS_UI_STATE.armedText !== normalized) {
+      COMMENT_KINDNESS_UI_STATE.armedText = "";
+    }
+    const warning = detectCommentKindnessNudge(normalized);
+    if (!warning) {
+      COMMENT_KINDNESS_UI_STATE.armedText = "";
+      return {
+        normalized,
+        warning: null,
+        confirmPending: false,
+        visibleKey: ""
+      };
+    }
+    return {
+      normalized,
+      warning,
+      confirmPending: COMMENT_KINDNESS_UI_STATE.armedText === normalized,
+      visibleKey: `${warning.level}|${warning.id}|${normalized}`
+    };
+  }
+  function requestCommentKindnessHop() {
+    COMMENT_KINDNESS_UI_STATE.forceHop = true;
+  }
+  function paintCommentKindnessUi(rawText) {
+    const wrap = (
+      /** @type {HTMLElement|null} */
+      $("commentKindnessPopover")
+    );
+    const face = (
+      /** @type {HTMLImageElement|null} */
+      $("commentKindnessFace")
+    );
+    const title = $("commentKindnessTitle");
+    const body = $("commentKindnessBody");
+    const confirm = $("commentKindnessConfirm");
+    const view = resolveCommentKindnessView(rawText);
+    if (!wrap || !face || !title || !body || !confirm) return view;
+    if (!view.warning) {
+      wrap.hidden = true;
+      wrap.setAttribute("aria-hidden", "true");
+      wrap.dataset.level = "mild";
+      body.textContent = "";
+      confirm.textContent = "";
+      COMMENT_KINDNESS_UI_STATE.lastVisibleKey = "";
+      COMMENT_KINDNESS_UI_STATE.forceHop = false;
+      return view;
+    }
+    wrap.hidden = false;
+    wrap.setAttribute("aria-hidden", "false");
+    wrap.dataset.level = view.warning.level;
+    title.textContent = view.warning.title;
+    body.textContent = view.warning.body;
+    confirm.textContent = view.confirmPending ? view.warning.confirm : "\u9001\u308B\u524D\u306B\u3001\u3072\u3068\u547C\u5438\u304A\u3044\u3066\u8A00\u3044\u63DB\u3048\u3082\u8003\u3048\u3066\u307F\u3088\u3046\u3002";
+    face.src = COMMENT_KINDNESS_FACE_SRC[view.warning.level] || COMMENT_KINDNESS_FACE_SRC.mild;
+    const shouldHop = COMMENT_KINDNESS_UI_STATE.forceHop || COMMENT_KINDNESS_UI_STATE.lastVisibleKey !== view.visibleKey;
+    if (shouldHop) {
+      face.classList.remove("is-hop");
+      void face.offsetWidth;
+      face.classList.add("is-hop");
+      globalThis.setTimeout(() => {
+        face.classList.remove("is-hop");
+      }, 520);
+    }
+    COMMENT_KINDNESS_UI_STATE.lastVisibleKey = view.visibleKey;
+    COMMENT_KINDNESS_UI_STATE.forceHop = false;
+    return view;
+  }
+  function canUseCommentPostWatchTools() {
+    return Boolean(
+      String(COMMENT_POST_UI_STATE.watchUrl || "").trim() && String(COMMENT_POST_UI_STATE.liveId || "").trim()
+    ) && !COMMENT_POST_UI_STATE.submitting;
+  }
+  function updateCommentPostUiContext(watchUrl, liveId, panelStatusCode = "") {
+    const nextWatchUrl = String(watchUrl || "").trim();
+    const nextLiveId = String(liveId || "").trim().toLowerCase();
+    const nextPanelCode = String(panelStatusCode || "").trim();
+    const changed = COMMENT_POST_UI_STATE.watchUrl !== nextWatchUrl || COMMENT_POST_UI_STATE.liveId !== nextLiveId || COMMENT_POST_UI_STATE.panelStatusCode !== nextPanelCode;
+    COMMENT_POST_UI_STATE.watchUrl = nextWatchUrl;
+    COMMENT_POST_UI_STATE.liveId = nextLiveId;
+    COMMENT_POST_UI_STATE.panelStatusCode = nextPanelCode;
+    if (changed) {
+      COMMENT_POST_UI_STATE.notice = null;
+    }
+  }
+  function setCommentPostNotice(message, kind = "idle") {
+    const next = String(message || "").trim();
+    COMMENT_POST_UI_STATE.notice = next ? { message: next, kind } : null;
+  }
+  function clearCommentPostNotice() {
+    COMMENT_POST_UI_STATE.notice = null;
+  }
+  function paintCommentComposeUi() {
+    const commentInput = (
+      /** @type {HTMLTextAreaElement|null} */
+      $("commentInput")
+    );
+    const postBtn = (
+      /** @type {HTMLButtonElement|null} */
+      $("postCommentBtn")
+    );
+    const rawText = String(commentInput?.value || "");
+    const kindnessView = paintCommentKindnessUi(rawText);
+    const baseState = deriveCommentPostUiState({
+      hasWatchUrl: Boolean(COMMENT_POST_UI_STATE.watchUrl),
+      hasLiveId: Boolean(COMMENT_POST_UI_STATE.liveId),
+      hasText: Boolean(rawText.trim()),
+      isSubmitting: COMMENT_POST_UI_STATE.submitting,
+      panelStatusCode: COMMENT_POST_UI_STATE.panelStatusCode
+    });
+    if (commentInput) {
+      commentInput.placeholder = baseState.placeholder;
+      commentInput.readOnly = COMMENT_POST_UI_STATE.submitting;
+      commentInput.setAttribute(
+        "aria-busy",
+        COMMENT_POST_UI_STATE.submitting ? "true" : "false"
+      );
+      commentInput.setAttribute(
+        "aria-describedby",
+        kindnessView.warning ? "commentKindnessBody commentKindnessConfirm postStatus exportToolbarHint" : "postStatus exportToolbarHint"
+      );
+    }
+    if (postBtn) {
+      postBtn.disabled = baseState.buttonDisabled;
+      postBtn.textContent = baseState.buttonLabel;
+      postBtn.setAttribute(
+        "aria-busy",
+        COMMENT_POST_UI_STATE.submitting ? "true" : "false"
+      );
+      postBtn.setAttribute(
+        "aria-describedby",
+        kindnessView.warning ? "commentKindnessBody commentKindnessConfirm postStatus" : "postStatus"
+      );
+    }
+    let statusMessage = baseState.statusMessage;
+    let statusKind = baseState.statusKind;
+    const notice = COMMENT_POST_UI_STATE.notice;
+    const baseOverridesNotice = baseState.mode === "no_watch" || baseState.mode === "no_live_id" || baseState.mode === "submitting";
+    if (notice && notice.message && !baseOverridesNotice) {
+      statusMessage = notice.message;
+      statusKind = notice.kind;
+    }
+    setPostStatus(statusMessage, statusKind);
+    syncVoiceCommentButton();
+  }
+  var EXTENSION_RELOAD_USER_GUIDE_JA = "\u6539\u5584\u3057\u306A\u3051\u308C\u3070 chrome://extensions \u3092\u958B\u304D\u3001\u300C\u541B\u6597\u308A\u3093\u304F\u306E\u8FFD\u61B6\u306E\u304D\u3089\u3081\u304D\u300D\u306E\u300C\u66F4\u65B0\u300D\u3067\u62E1\u5F35\u3092\u518D\u8AAD\u307F\u8FBC\u307F\u3057\u3066\u304F\u3060\u3055\u3044\u3002";
   function withCommentSendTroubleshootHint(message) {
     const s = String(message || "").trim();
     if (!s) return "";
-    if (/再読み込み（F5）|chrome:\/\/extensions|うまくいかないとき|「更新」/.test(s)) {
-      return s;
+    const hintLines = [];
+    if (!/再読み込み|F5|別タブ|前面/.test(s)) {
+      hintLines.push(
+        "watch\u30DA\u30FC\u30B8\u3092\u518D\u8AAD\u307F\u8FBC\u307F\uFF08F5\uFF09\u3057\u3001\u5225\u30BF\u30D6\u3067\u958B\u3044\u3066\u3044\u308B\u653E\u9001\u30DA\u30FC\u30B8\u3092\u524D\u9762\u306B\u3057\u3066\u304F\u3060\u3055\u3044\u3002"
+      );
     }
-    return `${s}
-\u203B\u3046\u307E\u304F\u3044\u304B\u306A\u3044\u3068\u304D\uFF1Awatch\u30DA\u30FC\u30B8\u3092\u518D\u8AAD\u307F\u8FBC\u307F\uFF08F5\uFF09\u3002${EXTENSION_RELOAD_USER_GUIDE_JA}`;
+    if (!/chrome:\/\/extensions|「更新」/.test(s)) {
+      hintLines.push(EXTENSION_RELOAD_USER_GUIDE_JA);
+    }
+    return hintLines.length ? `${s}
+\u203B\u3046\u307E\u304F\u3044\u304B\u306A\u3044\u3068\u304D: ${hintLines.join("\n")}` : s;
   }
   function isExtensionContextInvalidatedError(err) {
     const msg = err && typeof err === "object" && "message" in err ? String(
@@ -7289,12 +7975,9 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
           captureBtn.disabled = false;
           captureBtn.dataset.watchUrl = url;
         }
-        if (postBtn) postBtn.disabled = COMMENT_POST_UI_STATE.submitting;
+        updateCommentPostUiContext(url, lv, relevantCommentPanelCode);
+        paintCommentComposeUi();
         setReloadWatchTabUiDisabled(false);
-        syncVoiceCommentButton();
-        if (commentInput) {
-          commentInput.placeholder = "\u30B3\u30E1\u30F3\u30C8\u3092\u5165\u529B\u3057\u3066\u9001\u4FE1";
-        }
         syncStorySourceEntries(lv, displayEntries);
         renderUserRooms(arr, lv);
         renderCharacterScene({
@@ -7381,6 +8064,10 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       );
       const resolvedLv = extractLiveIdFromUrl(url);
       const viewerLvForError = isNicoLiveWatchUrl(url) && resolvedLv ? resolvedLv : "";
+      const commentPanelPayload = parseCommentPanelStatusPayload(
+        openBag[KEY_COMMENT_PANEL_STATUS]
+      );
+      const relevantCommentPanelCode = commentPanelPayload && commentPanelStatusRelevantToLiveId(commentPanelPayload, viewerLvForError) ? String(commentPanelPayload.code || "").trim() : "";
       applyStorageErrorBannerFromBag(openBag, viewerLvForError);
       applyCommentHarvestBannerFromBag(openBag, viewerLvForError);
       toggle.checked = isRecordingEnabled(openBag[KEY_RECORDING]);
@@ -7484,12 +8171,9 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
           liveId: "",
           snapshot: null
         });
-        if (postBtn) postBtn.disabled = true;
+        updateCommentPostUiContext("", "", "");
+        paintCommentComposeUi();
         setReloadWatchTabUiDisabled(true);
-        syncVoiceCommentButton();
-        if (commentInput) {
-          commentInput.placeholder = "watch\u30DA\u30FC\u30B8\u3092\u958B\u304F\u3068\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1\u3067\u304D\u307E\u3059";
-        }
         renderUserRooms([], "");
         renderDevMonitorPanel({
           snapshot: null,
@@ -7533,12 +8217,9 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
           liveId: "",
           snapshot: null
         });
-        if (postBtn) postBtn.disabled = true;
+        updateCommentPostUiContext(url, "", relevantCommentPanelCode);
+        paintCommentComposeUi();
         setReloadWatchTabUiDisabled(true);
-        syncVoiceCommentButton();
-        if (commentInput) {
-          commentInput.placeholder = "\u30B3\u30E1\u30F3\u30C8\u3092\u5165\u529B\u3057\u3066\u9001\u4FE1";
-        }
         renderUserRooms([], "");
         renderDevMonitorPanel({
           snapshot: null,
@@ -9530,19 +10211,28 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       const text = String(commentInput?.value || "").trim();
       const watchUrl = exportBtn.dataset.watchUrl || "";
       if (!text) {
-        setPostStatus("\u30B3\u30E1\u30F3\u30C8\u3092\u5165\u529B\u3057\u3066\u304F\u3060\u3055\u3044\u3002", "error");
+        clearCommentPostNotice();
+        paintCommentComposeUi();
         return;
       }
       if (!watchUrl) {
-        setPostStatus("watch\u30DA\u30FC\u30B8\u3092\u958B\u3044\u3066\u304B\u3089\u9001\u4FE1\u3057\u3066\u304F\u3060\u3055\u3044\u3002", "error");
+        clearCommentPostNotice();
+        paintCommentComposeUi();
+        return;
+      }
+      const kindnessView = resolveCommentKindnessView(text);
+      if (kindnessView.warning && COMMENT_KINDNESS_UI_STATE.armedText !== kindnessView.normalized) {
+        COMMENT_KINDNESS_UI_STATE.armedText = kindnessView.normalized;
+        requestCommentKindnessHop();
+        setCommentPostNotice("\u9001\u4FE1\u306E\u524D\u306B\u3001\u308A\u3093\u304F\u306E\u3072\u3068\u3053\u3068\u3092\u898B\u3066\u306D\u3002", "idle");
+        paintCommentComposeUi();
         return;
       }
       const lvPost = String(exportBtn.dataset.liveId || "").trim().toLowerCase();
       let optimisticLogged = false;
       COMMENT_POST_UI_STATE.submitting = true;
-      if (postBtn) postBtn.disabled = true;
-      syncVoiceCommentButton();
-      setPostStatus("\u9001\u4FE1\u4E2D\u2026", "idle");
+      clearCommentPostNotice();
+      paintCommentComposeUi();
       try {
         if (lvPost && toggle.checked) {
           await appendSelfPostedComment(lvPost, text);
@@ -9553,7 +10243,8 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         if (!hasExtensionContext()) return;
         if (result.ok) {
           if (commentInput) commentInput.value = "";
-          setPostStatus("\u30B3\u30E1\u30F3\u30C8\u3092\u9001\u4FE1\u3057\u307E\u3057\u305F\u3002", "success");
+          COMMENT_KINDNESS_UI_STATE.armedText = "";
+          setCommentPostNotice("\u30B3\u30E1\u30F3\u30C8\u3092\u9001\u4FE1\u3057\u307E\u3057\u305F\u3002", "success");
           const growthEl = (
             /** @type {HTMLElement|null} */
             $("sceneStoryGrowth")
@@ -9565,10 +10256,8 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
           await revertLastSelfPostedComment(lvPost, text);
           optimisticLogged = false;
         }
-        setPostStatus(
-          withCommentSendTroubleshootHint(
-            result.error || "\u9001\u4FE1\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002"
-          ),
+        setCommentPostNotice(
+          withCommentSendTroubleshootHint(result.error || "\u9001\u4FE1\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002"),
           "error"
         );
       } catch (e) {
@@ -9581,8 +10270,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       } finally {
         COMMENT_POST_UI_STATE.submitting = false;
         if (hasExtensionContext()) {
-          if (postBtn) postBtn.disabled = false;
-          syncVoiceCommentButton();
+          paintCommentComposeUi();
         }
       }
     }
@@ -9813,6 +10501,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
           }
           if ("partial" in msg && commentInput) {
             commentInput.value = String(msg.partial || "").slice(0, 250);
+            paintCommentComposeUi();
             return;
           }
           if (msg.error === true) {
@@ -9824,19 +10513,26 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
             setVoiceListeningUi(false);
             const text = String(msg.text || "").trim();
             if (commentInput) commentInput.value = text.slice(0, 250);
+            paintCommentComposeUi();
             if (!text) {
-              setPostStatus("", "idle");
+              clearCommentPostNotice();
+              paintCommentComposeUi();
               return;
             }
             if (voiceAutoSend?.checked) {
               submitComment().catch(() => {
-                setPostStatus(
+                setCommentPostNotice(
                   withCommentSendTroubleshootHint("\u9001\u4FE1\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002"),
                   "error"
                 );
+                paintCommentComposeUi();
               });
             } else {
-              setPostStatus("\u5185\u5BB9\u3092\u78BA\u8A8D\u3057\u3066\u300C\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1\u300D\u3092\u62BC\u3057\u3066\u304F\u3060\u3055\u3044\u3002", "success");
+              setCommentPostNotice(
+                "\u5185\u5BB9\u3092\u78BA\u8A8D\u3057\u3066\u300C\u30B3\u30E1\u30F3\u30C8\u9001\u4FE1\u300D\u3092\u62BC\u3057\u3066\u304F\u3060\u3055\u3044\u3002",
+                "success"
+              );
+              paintCommentComposeUi();
             }
           }
         });
@@ -9904,11 +10600,10 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       void triggerReloadWatchTabFromPopup();
     });
     postBtn?.addEventListener("click", () => {
+      if (postBtn.disabled) return;
       submitComment().catch(() => {
-        setPostStatus(
-          withCommentSendTroubleshootHint("\u9001\u4FE1\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002"),
-          "error"
-        );
+        setCommentPostNotice(withCommentSendTroubleshootHint("\u9001\u4FE1\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002"), "error");
+        paintCommentComposeUi();
       });
     });
     commentInput?.addEventListener("keydown", (e) => {
@@ -9922,15 +10617,18 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       });
       if (action !== "submit") return;
       e.preventDefault();
+      if (postBtn?.disabled) {
+        paintCommentComposeUi();
+        return;
+      }
       submitComment().catch(() => {
-        setPostStatus(
-          withCommentSendTroubleshootHint("\u9001\u4FE1\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002"),
-          "error"
-        );
+        setCommentPostNotice(withCommentSendTroubleshootHint("\u9001\u4FE1\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002"), "error");
+        paintCommentComposeUi();
       });
     });
     commentInput?.addEventListener("input", () => {
-      setPostStatus("", "idle");
+      clearCommentPostNotice();
+      paintCommentComposeUi();
     });
     loadPopupFrameSettings().catch(() => {
       applyPopupFrame(popupFrameState.id, popupFrameState.custom);

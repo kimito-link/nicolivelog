@@ -23,6 +23,13 @@ describe('aggregateMarketingReport', () => {
     expect(r.totalComments).toBe(0);
     expect(r.uniqueUsers).toBe(0);
     expect(r.timeline.length).toBeGreaterThanOrEqual(1);
+    expect(r.textStats.avgChars).toBe(0);
+    expect(r.selfPostedCount).toBe(0);
+    expect(r.is184.knownCount).toBe(0);
+    expect(r.timelineCumulative.length).toBe(r.timeline.length);
+    expect(r.vposThirds).toBeNull();
+    expect(r.quarterEngagement.skippedShortSpan).toBe(true);
+    expect(r.quarterEngagement.uniqueCommentersBothQuarters).toBe(0);
   });
 
   it('ユーザー別の集計・セグメント分類が正しい', () => {
@@ -82,5 +89,46 @@ describe('aggregateMarketingReport', () => {
     ];
     const r = aggregateMarketingReport(comments, 'lv1');
     expect(r.medianCommentsPerUser).toBe(1);
+  });
+
+  it('textStats・184・累積・沈黙・vpos 三分割', () => {
+    const comments = [
+      { ...c(1, 'a', 'short', 0), is184: true, vpos: 0 },
+      { ...c(2, 'a', 'https://x.test/y 😊', 30_000), is184: false, vpos: 100 },
+      { ...c(3, 'b', 'bb', 90_000), is184: false, vpos: 200 },
+      { ...c(4, 'b', 'cc', 120_000), is184: false, vpos: 500 },
+      { ...c(5, 'c', 'dd', 400_000), is184: false, vpos: 1000 },
+      { ...c(6, 'c', 'ee', 450_000), is184: false, vpos: 1500 },
+      { ...c(7, 'd', 'ff', 500_000), is184: false, vpos: 2000, selfPosted: true }
+    ];
+    const r = aggregateMarketingReport(comments, 'lv1');
+    expect(r.textStats.withUrlCount).toBeGreaterThanOrEqual(1);
+    expect(r.textStats.withEmojiCount).toBeGreaterThanOrEqual(1);
+    expect(r.is184.knownCount).toBe(7);
+    expect(r.is184.count184).toBe(1);
+    expect(r.selfPostedCount).toBe(1);
+    const lastCum = r.timelineCumulative[r.timelineCumulative.length - 1];
+    expect(lastCum).toBe(r.totalComments);
+    expect(r.maxSilenceGapMs).toBeGreaterThanOrEqual(400_000 - 120_000);
+    expect(r.vposThirds).not.toBeNull();
+    if (r.vposThirds) {
+      expect(r.vposThirds.early + r.vposThirds.mid + r.vposThirds.late).toBe(7);
+    }
+  });
+
+  it('四分位エンゲージメント（長いスパンで冒頭・終盤の人数）', () => {
+    const t0 = BASE;
+    const comments = [
+      c(1, 'early', 'a', 0),
+      c(2, 'early', 'b', 30_000),
+      c(3, 'late', 'c', 500_000),
+      c(4, 'both', 'd', 20_000),
+      c(5, 'both', 'e', 480_000)
+    ];
+    const r = aggregateMarketingReport(comments, 'lv1');
+    expect(r.quarterEngagement.skippedShortSpan).toBe(false);
+    expect(r.quarterEngagement.uniqueCommentersFirstQuarter).toBeGreaterThanOrEqual(2);
+    expect(r.quarterEngagement.uniqueCommentersLastQuarter).toBeGreaterThanOrEqual(2);
+    expect(r.quarterEngagement.uniqueCommentersBothQuarters).toBe(1);
   });
 });

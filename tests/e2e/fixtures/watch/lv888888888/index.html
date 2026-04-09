@@ -93,14 +93,44 @@
 
     <!-- NLS_POST_COMMENT E2E: 送信後 1.8s で欄が空く（React 遅延クリアの模倣） -->
     <!-- comment-panel クラスはこのブロックのみ（.comment-panel セレクタの strict 一意） -->
-    <div class="ga-ns-comment-panel comment-panel" id="e2e-comment-compose">
-      <form id="e2e-comment-form">
-        <textarea placeholder="コメントを入力" name="comment" rows="2"></textarea>
-        <button type="submit" aria-label="コメントを送信">送信</button>
-      </form>
-    </div>
+    <div class="ga-ns-comment-panel comment-panel" id="e2e-comment-compose"></div>
     <script>
       (function () {
+        var wrap = document.getElementById('e2e-comment-compose');
+        if (!wrap) return;
+        var params = new URLSearchParams(location.search);
+        var variant = params.get('commentVariant') || 'submit';
+        if (variant === 'text-button') {
+          wrap.innerHTML =
+            '<div class="comment-box">' +
+            '<textarea id="e2e-comment-text-button" placeholder="コメントを入力" name="comment" rows="2"></textarea>' +
+            '<div class="comment-actions">' +
+            '<button type="button" id="e2e-comment-send-text">コメントを送信</button>' +
+            '</div>' +
+            '</div>';
+          var textEditor = document.getElementById('e2e-comment-text-button');
+          var textButton = document.getElementById('e2e-comment-send-text');
+          if (!(textEditor instanceof HTMLTextAreaElement) || !(textButton instanceof HTMLButtonElement)) {
+            return;
+          }
+          textButton.addEventListener('click', function () {
+            setTimeout(function () {
+              textEditor.value = '';
+              try {
+                textEditor.dispatchEvent(new Event('input', { bubbles: true }));
+              } catch (err) {
+                /* ignore */
+              }
+            }, 1800);
+          });
+          return;
+        }
+
+        wrap.innerHTML =
+          '<form id="e2e-comment-form">' +
+          '<textarea placeholder="コメントを入力" name="comment" rows="2"></textarea>' +
+          '<button type="submit" aria-label="コメントを送信">送信</button>' +
+          '</form>';
         var form = document.getElementById('e2e-comment-form');
         if (!form) return;
         form.addEventListener('submit', function (e) {
