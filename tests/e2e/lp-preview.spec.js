@@ -502,4 +502,17 @@ test.describe('lp-preview', () => {
     await expect(block).toContainText('nl-marketing-export-v1');
     await expect(block).toContainText('schemaVersion');
   });
+
+  test('マーケ読み方: #marketing-what-you-can-do に3人の吹き出し・390幅ではみ出しなし', async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`${lpHref}#marketing-what-you-can-do`, { waitUntil: 'domcontentloaded' });
+
+    const block = page.locator('#marketing-what-you-can-do');
+    await expect(block).toBeVisible();
+    await expect(block).toHaveAttribute('data-lp-feature', 'marketing-advice-intro');
+    await expect(block.locator('.yukkuri-thread .y-row')).toHaveCount(3);
+    await block.scrollIntoViewIfNeeded();
+    const noOverflow = await block.evaluate((el) => el.scrollWidth <= el.clientWidth + 2);
+    expect(noOverflow).toBe(true);
+  });
 });

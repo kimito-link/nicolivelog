@@ -32,6 +32,14 @@ describe('lpIndexFeatures', () => {
     expect(html).toMatch(/5分|5 分/);
   });
 
+  it('マーケ分析の読み方ブロックと実装に沿った用語', () => {
+    expect(html).toContain('id="marketing-what-you-can-do"');
+    expect(html).toContain('data-lp-feature="marketing-advice-intro"');
+    expect(html).toMatch(/この表がわかると|何ができる/);
+    expect(html).toContain('selfPosted');
+    expect(html).toContain('is184');
+  });
+
   it('用語⑧がコメント送信の現状説明を含む', () => {
     expect(html).toContain('id="extension-guide-comment-voice"');
     expect(html).toMatch(/#commentInput|コメント送信/);
