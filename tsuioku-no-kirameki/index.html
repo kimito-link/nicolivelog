@@ -3163,188 +3163,7 @@
         max-width:100%;
         height:auto
       }
-      /* ── 水鏡：夜空に月、水面に映り込み、底から濁りが晴れるループ ── */
-      .lp-worldview__moonwater{
-        position:relative;
-        margin:clamp(18px,4vw,28px) auto 0;
-        width:100%;
-        max-width:min(100%,52rem);
-        aspect-ratio:5/2;
-        border-radius:var(--r3);
-        overflow:hidden;
-        isolation:isolate;
-        border:1px solid rgba(88,62,28,.12);
-        box-shadow:inset 0 1px 0 rgba(255,255,255,.12)
-      }
-      /* 上半分＝夜空、下半分＝泥水（茶濁り） */
-      .lp-worldview__moonwater__surface{
-        position:absolute;inset:0;z-index:0;
-        background:
-          linear-gradient(180deg,
-            rgba(12,18,32,1) 0%,
-            rgba(18,28,48,.98) 38%,
-            rgba(28,42,58,.92) 47%,
-            rgba(52,44,34,.96) 53%,
-            rgba(58,48,36,.97) 62%,
-            rgba(48,40,30,.98) 78%,
-            rgba(38,32,24,1) 100%)
-      }
-      /* 水平線のきらめき */
-      .lp-worldview__moonwater__surface::before{
-        content:"";position:absolute;z-index:4;
-        left:0;right:0;top:48%;height:5%;
-        background:linear-gradient(90deg,
-          transparent 5%,rgba(200,210,220,.1) 18%,rgba(255,250,240,.2) 35%,
-          rgba(240,235,220,.32) 48%,rgba(255,250,240,.2) 62%,
-          rgba(200,210,220,.1) 80%,transparent 95%);
-        filter:blur(.6px);
-        animation:lp-mw-horizon-glint 6s ease-in-out infinite alternate
-      }
-      /* 水面下のリップル（横の細い波紋） */
-      .lp-worldview__moonwater__surface::after{
-        content:"";position:absolute;z-index:3;
-        left:0;right:0;top:52%;bottom:0;
-        background:repeating-linear-gradient(180deg,
-          transparent 0,transparent 4px,
-          rgba(220,200,160,.08) 4px,rgba(220,200,160,.08) 5px);
-        animation:lp-mw-ripple 4s linear infinite;
-        pointer-events:none
-      }
-      /* 夜空の星（水平線より上だけ） */
-      .lp-worldview__moonwater__stars{
-        position:absolute;z-index:1;
-        inset:0 0 52% 0;
-        background:
-          radial-gradient(circle at 15% 22%,rgba(255,255,255,.7) .6px,transparent 1.2px),
-          radial-gradient(circle at 72% 14%,rgba(210,230,255,.65) .5px,transparent 1px),
-          radial-gradient(circle at 88% 36%,rgba(255,255,255,.6) .4px,transparent .9px),
-          radial-gradient(circle at 35% 8%,rgba(200,220,255,.55) .5px,transparent 1px),
-          radial-gradient(circle at 58% 32%,rgba(255,255,255,.5) .35px,transparent .8px),
-          radial-gradient(circle at 6% 40%,rgba(230,240,255,.55) .4px,transparent .9px),
-          radial-gradient(circle at 95% 18%,rgba(255,248,240,.5) .45px,transparent 1px),
-          radial-gradient(circle at 42% 44%,rgba(220,235,255,.45) .35px,transparent .75px)
-      }
-      /* 月（中央やや上） */
-      .lp-worldview__moonwater__moon{
-        position:absolute;z-index:5;
-        left:50%;top:16%;
-        width:clamp(32px,7vw,56px);height:clamp(32px,7vw,56px);
-        border-radius:50%;
-        transform:translateX(-50%);
-        pointer-events:none;
-        background:radial-gradient(circle at 38% 34%,
-          rgba(255,253,248,.96),rgba(232,240,252,.78) 40%,
-          rgba(200,218,240,.42) 62%,transparent 72%);
-        box-shadow:
-          0 0 clamp(14px,3.5vw,28px) rgba(220,235,255,.55),
-          0 0 clamp(32px,8vw,64px) rgba(160,200,240,.25);
-        opacity:.95
-      }
-      /* 月のハロ（にじみ） */
-      .lp-worldview__moonwater__moon::after{
-        content:"";position:absolute;
-        inset:-60%;border-radius:50%;
-        background:radial-gradient(circle,rgba(200,225,255,.18),transparent 60%);
-        pointer-events:none
-      }
-      /* 水面への映り込み（月の真下に鏡像） */
-      .lp-worldview__moonwater__reflection{
-        position:absolute;z-index:4;
-        left:50%;top:52%;
-        width:clamp(28px,6vw,48px);
-        height:42%;
-        transform:translateX(-50%);
-        pointer-events:none;
-        background:linear-gradient(180deg,
-          rgba(255,253,248,.5) 0%,
-          rgba(210,228,248,.32) 16%,
-          rgba(160,195,225,.2) 38%,
-          rgba(120,165,200,.1) 62%,
-          transparent 88%);
-        filter:blur(2px);
-        mix-blend-mode:screen;
-        opacity:.88;
-        animation:lp-mw-shimmer 7s ease-in-out infinite
-      }
-      /* 映り込みの波紋（同心円リング、常に広がり続ける） */
-      .lp-worldview__moonwater__ripples{
-        position:absolute;z-index:7;
-        left:50%;top:55%;
-        width:0;height:0;
-        transform:translateX(-50%);
-        pointer-events:none
-      }
-      .lp-worldview__moonwater__ripples .lp-mw-ring{
-        position:absolute;
-        left:50%;top:50%;
-        border-radius:50%;
-        border:1.2px solid rgba(220,235,255,.35);
-        box-shadow:0 0 3px rgba(200,225,250,.12);
-        background:transparent;
-        transform:translate(-50%,-50%) scale(.2);
-        opacity:0;
-        animation:lp-mw-ring-expand 4s ease-out infinite
-      }
-      .lp-worldview__moonwater__ripples .lp-mw-ring:nth-child(2){animation-delay:.8s}
-      .lp-worldview__moonwater__ripples .lp-mw-ring:nth-child(3){animation-delay:1.6s}
-      .lp-worldview__moonwater__ripples .lp-mw-ring:nth-child(4){animation-delay:2.4s}
-      .lp-worldview__moonwater__ripples .lp-mw-ring:nth-child(5){animation-delay:3.2s}
-      @keyframes lp-mw-ring-expand{
-        0%{
-          width:clamp(8px,2vw,14px);height:clamp(4px,1vw,7px);
-          opacity:.6;transform:translate(-50%,-50%) scale(.3)
-        }
-        40%{opacity:.4}
-        75%{opacity:.18}
-        100%{
-          width:clamp(120px,28vw,240px);height:clamp(32px,7vw,60px);
-          opacity:0;transform:translate(-50%,-50%) scale(1)
-        }
-      }
-      /* 濁りレイヤー（泥水の茶色→月光で少し澄むループ） */
-      .lp-worldview__moonwater__murk{
-        position:absolute;z-index:6;
-        left:0;right:0;top:50%;bottom:0;
-        pointer-events:none;
-        background:
-          radial-gradient(ellipse 60% 80% at 50% 20%,transparent 30%,rgba(62,48,32,.6) 70%),
-          linear-gradient(0deg,
-            rgba(55,42,28,.85) 0%,rgba(65,50,34,.72) 22%,
-            rgba(58,48,36,.58) 45%,rgba(50,44,34,.35) 68%,
-            transparent 90%);
-        animation:lp-mw-murk-clear 14s ease-in-out infinite
-      }
-      @keyframes lp-mw-murk-clear{
-        0%,100%{opacity:1;filter:brightness(.78) saturate(.9)}
-        42%,58%{opacity:.3;filter:brightness(1.1) saturate(1.05)}
-      }
-      @keyframes lp-mw-shimmer{
-        0%,100%{transform:translateX(-50%) scaleX(1);opacity:.7}
-        50%{transform:translateX(-50%) scaleX(1.15);opacity:.95}
-      }
-      @keyframes lp-mw-ripple{
-        0%{transform:translateY(0)}100%{transform:translateY(6px)}
-      }
-      @keyframes lp-mw-horizon-glint{
-        0%{opacity:.55}100%{opacity:.9}
-      }
-      /* 夜パネル（.lp-dawn-arc）固有 */
-      .lp-dawn-arc .lp-worldview__moonwater{
-        border-color:rgba(180,210,255,.16);
-        box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 8px 32px rgba(0,8,20,.3)
-      }
-      @media (prefers-reduced-motion:reduce){
-        .lp-worldview__moonwater__surface::before,
-        .lp-worldview__moonwater__surface::after,
-        .lp-worldview__moonwater__murk,
-        .lp-worldview__moonwater__reflection,
-        .lp-worldview__moonwater__ripples .lp-mw-ring{animation:none}
-        .lp-worldview__moonwater__murk{opacity:.35;filter:none}
-        .lp-worldview__moonwater__reflection{opacity:.8;transform:translateX(-50%)}
-        .lp-worldview__moonwater__ripples .lp-mw-ring{opacity:.18;transform:translate(-50%,-50%) scale(.6);width:clamp(50px,12vw,100px);height:clamp(16px,3.5vw,28px)}
-        .lp-worldview__moonwater__ripples .lp-mw-ring:nth-child(2){width:clamp(70px,16vw,140px);height:clamp(22px,5vw,40px);opacity:.12}
-        .lp-worldview__moonwater__ripples .lp-mw-ring:nth-child(3){width:clamp(90px,20vw,180px);height:clamp(26px,6vw,48px);opacity:.08}
-      }
+      
       .lp-worldview__brand-note{
         margin:var(--space-md) 0 0;
         padding:12px 14px;border-radius:var(--r3);
@@ -3357,23 +3176,7 @@
         color:#1f568d;font-weight:600
       }
       .lp-worldview__brand-note a:hover,.lp-worldview__brand-note a:focus-visible{color:#153d66}
-      .lp-worldview__moonwater-figure{
-        margin:clamp(18px,4vw,28px) 0 0;
-        padding:0;
-        border:0;
-        max-width:100%
-      }
-      .lp-worldview__moonwater-figure .lp-worldview__moonwater{margin-top:0}
-      .lp-worldview__moonwater__caption{
-        margin:clamp(10px,2.2vw,14px) auto 0;
-        max-width:min(100%,36rem);
-        padding:0 clamp(4px,2vw,12px);
-        font-size:.84rem;
-        line-height:var(--lh-body);
-        text-align:center;
-        letter-spacing:.02em;
-        color:var(--text-secondary)
-      }
+      
 
       /* 前半：銀河 → 夜明け（天の川がふわっと流れる）＋ヒーローでコメントが「むくむ」 */
       .lp-dawn-arc{
@@ -3794,8 +3597,7 @@
       }
       .lp-dawn-arc .lp-worldview__brand-note a{color:#b8e0ff}
       .lp-dawn-arc .lp-worldview__brand-note a:hover,.lp-dawn-arc .lp-worldview__brand-note a:focus-visible{color:#e0f2ff}
-      .lp-dawn-arc .lp-worldview__moonwater__caption{color:rgba(220,212,200,.84)}
-      .lp-dawn-arc .lp-worldview__moonwater__caption strong{color:rgba(252,248,238,.96);font-weight:650}
+      
       .lp-dawn-arc .lp-worldview__cc-poster{
         border-color:rgba(255,255,255,.14);
         box-shadow:0 18px 48px rgba(0,0,0,.35),inset 0 1px 0 rgba(255,255,255,.06);
@@ -3810,7 +3612,7 @@
       @media (prefers-contrast:more){
         .lp-dawn-arc .lp-worldview__metaphor-whisper__line{color:#fff;opacity:1}
         .lp-dawn-arc .lp-worldview__metaphor-whisper__sub{color:rgba(255,245,230,.85);opacity:1}
-        .lp-dawn-arc .lp-worldview__moonwater__caption{color:rgba(245,238,228,.92)}
+      
       }
 
       .lp-dawn-arc .hero{
@@ -4656,26 +4458,15 @@
                   何世代もの帳をめくって、やっと一晩だけ蕾がほどける——<br>
                   そういうめぐり合わせが、いま、ここにある。
                 </p>
-                <figure class="lp-worldview__moonwater-figure">
-                  <div class="lp-worldview__moonwater" aria-hidden="true">
-                    <div class="lp-worldview__moonwater__surface"></div>
-                    <div class="lp-worldview__moonwater__stars"></div>
-                    <div class="lp-worldview__moonwater__moon"></div>
-                    <div class="lp-worldview__moonwater__reflection"></div>
-                    <div class="lp-worldview__moonwater__ripples" aria-hidden="true">
-                      <span class="lp-mw-ring"></span>
-                      <span class="lp-mw-ring"></span>
-                      <span class="lp-mw-ring"></span>
-                      <span class="lp-mw-ring"></span>
-                      <span class="lp-mw-ring"></span>
-                    </div>
-                    <div class="lp-worldview__moonwater__murk"></div>
-                  </div>
-                  <figcaption class="lp-worldview__moonwater__caption">
-                    泥水でも、月が映れば澄んでくる。<br>
-                    泥水でも、花は綺麗に咲く。
-                  </figcaption>
-                </figure>
+                <p class="lp-worldview__epilogue-mid">
+                  泥水でも、月が映れば澄んでくる。<br>
+                  泥水でも、花は綺麗に咲く。
+                </p>
+                <p class="lp-worldview__epilogue-mid">
+                  キミの気持ちがまっすぐなら、かならず伝わる。<br>
+                  AIは鏡のようなものだから——<br>
+                  向けた想いを、そのまま映してくれる。
+                </p>
                 <p class="lp-worldview__epilogue-accent">想いが強いほど、届くから。</p>
                 <p class="lp-worldview__epilogue-accent lp-worldview__epilogue-climax">ここから、つながっていく。</p>
               </div>
