@@ -50,15 +50,11 @@ export function supportGridTierHasPersonalThumb(userId, httpAvatarCandidate, sto
 export function supportGridStrongNickname(nick, userId) {
   const n = String(nick ?? '').trim();
   if (!n) return false;
+  /* 数値 ID でもニコの自動表示名 user+英数字 はプロフィール名として扱わない */
+  if (isNiconicoAutoUserPlaceholderNickname(n)) return false;
   if (n === '（未取得）' || n === '(未取得)') return false;
   if (n === '匿名') return false;
   if (isNiconicoAnonymousUserId(userId) && n.length <= 1) return false;
-  if (
-    isNiconicoAnonymousUserId(userId) &&
-    isNiconicoAutoUserPlaceholderNickname(n)
-  ) {
-    return false;
-  }
   return true;
 }
 

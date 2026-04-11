@@ -127,12 +127,28 @@
         display: none;
       }
 
-      /* watch 直下の埋め込みでは補助説明だけ省き、送信欄は表示する */
+      /* watch 埋め込み: 公式コメント欄と二重になるためテキストエリア・送信ボタンは隠し、書き出しツールバーは残す */
+      html.nl-inline-embed-watch body .nl-comment-compose--primary > textarea,
+      html.nl-inline-embed-watch body .nl-comment-compose--primary > #commentKindnessPopover,
       html.nl-inline-embed-watch
         body
         .nl-comment-compose--primary
-        > .nl-compose-toolbar-hint {
+        .nl-compose-send-actions
+        > #postCommentBtn {
+        display: none !important;
+      }
+
+      html.nl-inline-embed-watch body .nl-comment-compose--primary > #exportToolbarHint {
         display: none;
+      }
+
+      html.nl-inline-embed-watch body .nl-comment-compose--primary::before {
+        content: 'コメント送信は watch の公式欄から。ここでは HTML 保存・スクショ・再読み込みが使えます。';
+        display: block;
+        font-size: 12.5px;
+        line-height: 1.45;
+        color: var(--nl-text-sub, #64748b);
+        margin: 0 0 8px;
       }
 
       html.nl-inline-embed-watch body .nl-comment-compose--primary {
@@ -5789,9 +5805,18 @@
                 <input
                   type="radio"
                   name="inlinePanelPlacement"
+                  value="dock_bottom"
+                  id="inlinePanelPlacementDockBottom"
+                  checked
+                />
+                画面下いっぱい（既定・視聴ページに固定。ポップアップ風より見つけやすい）
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="inlinePanelPlacement"
                   value="below"
                   id="inlinePanelPlacementBelow"
-                  checked
                 />
                 プレイヤー行の下（ワイド画面で横に回り込まない）
               </label>
@@ -5814,6 +5839,8 @@
                   id="inlinePanelPlacementFloating"
                 />
                 ポップアップ風（ページから分離して固定・角は下で選べます）
+                <span class="nl-panel-placement-hint"
+                  >公式の右パネルや動画と重なりやすいです。通常は上の「画面下いっぱい」を推奨します。</span>
               </label>
             </div>
             <div

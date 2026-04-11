@@ -182,4 +182,14 @@ describe('effectiveInlinePanelPlacement', () => {
     expect(effectiveInlinePanelPlacement('floating', 400)).toBe('floating');
     expect(effectiveInlinePanelPlacement('below', 400)).toBe('below');
   });
+
+  it('dock_bottom は幅に関係なくそのまま', () => {
+    expect(effectiveInlinePanelPlacement('dock_bottom', 400)).toBe(
+      'dock_bottom'
+    );
+  });
+
+  it('空の保存値は dock_bottom 扱い', () => {
+    expect(effectiveInlinePanelPlacement('', 400)).toBe('dock_bottom');
+  });
 });

@@ -91,8 +91,16 @@ export const KEY_INLINE_PANEL_WIDTH_MODE = 'nls_inline_panel_width_mode';
  * 視聴ページインラインパネルの DOM 位置。
  * `below`＝プレイヤー行の直下（flex 行の「横並び」に挟まない）。`beside`＝従来どおり親の flex 次第で横に付くことがある。
  * `floating`＝ツールバー型ポップアップのように画面右上付近に固定（プレイヤー DOM には挿入しない）。
+ * `dock_bottom`＝画面下いっぱいに固定（プレイヤー DOM 非依存・未設定時の既定）。
  */
 export const KEY_INLINE_PANEL_PLACEMENT = 'nls_inline_panel_placement';
+
+/**
+ * `floating` → `dock_bottom` のワンショット移行済み（再実行で上書きしない）。
+ * @see migrateInlinePanelFloatToDock.js
+ */
+export const KEY_INLINE_PANEL_FLOAT_TO_DOCK_MIGRATED =
+  'nls_inline_panel_float_to_dock_migrated';
 
 /** @type {'below'} */
 export const INLINE_PANEL_PLACEMENT_BELOW = 'below';
@@ -100,6 +108,8 @@ export const INLINE_PANEL_PLACEMENT_BELOW = 'below';
 export const INLINE_PANEL_PLACEMENT_BESIDE = 'beside';
 /** @type {'floating'} */
 export const INLINE_PANEL_PLACEMENT_FLOATING = 'floating';
+/** @type {'dock_bottom'} */
+export const INLINE_PANEL_PLACEMENT_DOCK_BOTTOM = 'dock_bottom';
 
 /** floating 配置時の画面角（ビューポート fixed）。未設定は top_right（従来挙動） */
 export const KEY_INLINE_FLOATING_ANCHOR = 'nls_inline_floating_anchor';
@@ -140,6 +150,15 @@ export function normalizeInlinePanelPlacement(raw) {
   const s = String(raw || '').trim().toLowerCase();
   if (s === INLINE_PANEL_PLACEMENT_BESIDE) return INLINE_PANEL_PLACEMENT_BESIDE;
   if (s === INLINE_PANEL_PLACEMENT_FLOATING) return INLINE_PANEL_PLACEMENT_FLOATING;
+  if (s === INLINE_PANEL_PLACEMENT_BELOW) return INLINE_PANEL_PLACEMENT_BELOW;
+  if (
+    s === INLINE_PANEL_PLACEMENT_DOCK_BOTTOM ||
+    s === 'dock' ||
+    s === 'bottom_dock'
+  ) {
+    return INLINE_PANEL_PLACEMENT_DOCK_BOTTOM;
+  }
+  if (!s) return INLINE_PANEL_PLACEMENT_DOCK_BOTTOM;
   return INLINE_PANEL_PLACEMENT_BELOW;
 }
 

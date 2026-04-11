@@ -152,7 +152,7 @@ export function computeInlinePanelLayout(mode, args) {
 export const INLINE_VIEWPORT_BESIDE_MIN_WIDTH = 1200;
 
 /**
- * @param {string} storedPlacement `below` | `beside` | `floating`
+ * @param {string} storedPlacement `below` | `beside` | `floating` | `dock_bottom`
  * @param {number} viewportInnerWidth
  * @returns {string}
  */
@@ -160,7 +160,8 @@ export function effectiveInlinePanelPlacement(
   storedPlacement,
   viewportInnerWidth
 ) {
-  const s = String(storedPlacement || 'below');
+  let s = String(storedPlacement || '').trim();
+  if (!s) s = 'dock_bottom';
   const w = Number(viewportInnerWidth) || 0;
   if (s === 'beside' && w > 0 && w < INLINE_VIEWPORT_BESIDE_MIN_WIDTH) {
     return 'below';

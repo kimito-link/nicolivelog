@@ -82,9 +82,11 @@
   ]);
   var KEY_INLINE_PANEL_WIDTH_MODE = "nls_inline_panel_width_mode";
   var KEY_INLINE_PANEL_PLACEMENT = "nls_inline_panel_placement";
+  var KEY_INLINE_PANEL_FLOAT_TO_DOCK_MIGRATED = "nls_inline_panel_float_to_dock_migrated";
   var INLINE_PANEL_PLACEMENT_BELOW = "below";
   var INLINE_PANEL_PLACEMENT_BESIDE = "beside";
   var INLINE_PANEL_PLACEMENT_FLOATING = "floating";
+  var INLINE_PANEL_PLACEMENT_DOCK_BOTTOM = "dock_bottom";
   var KEY_INLINE_FLOATING_ANCHOR = "nls_inline_floating_anchor";
   var INLINE_FLOATING_ANCHOR_TOP_RIGHT = "top_right";
   var INLINE_FLOATING_ANCHOR_BOTTOM_LEFT = "bottom_left";
@@ -99,6 +101,11 @@
     const s = String(raw || "").trim().toLowerCase();
     if (s === INLINE_PANEL_PLACEMENT_BESIDE) return INLINE_PANEL_PLACEMENT_BESIDE;
     if (s === INLINE_PANEL_PLACEMENT_FLOATING) return INLINE_PANEL_PLACEMENT_FLOATING;
+    if (s === INLINE_PANEL_PLACEMENT_BELOW) return INLINE_PANEL_PLACEMENT_BELOW;
+    if (s === INLINE_PANEL_PLACEMENT_DOCK_BOTTOM || s === "dock" || s === "bottom_dock") {
+      return INLINE_PANEL_PLACEMENT_DOCK_BOTTOM;
+    }
+    if (!s) return INLINE_PANEL_PLACEMENT_DOCK_BOTTOM;
     return INLINE_PANEL_PLACEMENT_BELOW;
   }
   function normalizeInlineFloatingAnchor(raw) {
@@ -2215,7 +2222,8 @@
   }
   var INLINE_VIEWPORT_BESIDE_MIN_WIDTH = 1200;
   function effectiveInlinePanelPlacement(storedPlacement, viewportInnerWidth) {
-    const s = String(storedPlacement || "below");
+    let s = String(storedPlacement || "").trim();
+    if (!s) s = "dock_bottom";
     const w = Number(viewportInnerWidth) || 0;
     if (s === "beside" && w > 0 && w < INLINE_VIEWPORT_BESIDE_MIN_WIDTH) {
       return "below";
@@ -2516,6 +2524,26 @@
       }
     }
     return appendCommentIngestLog(prevRaw, entry, maxItems);
+  }
+
+  // src/lib/migrateInlinePanelFloatToDock.js
+  async function migrateFloatingInlinePanelToDockOnce(storage) {
+    const bag = await storage.get([
+      KEY_INLINE_PANEL_PLACEMENT,
+      KEY_INLINE_PANEL_FLOAT_TO_DOCK_MIGRATED
+    ]);
+    if (bag[KEY_INLINE_PANEL_FLOAT_TO_DOCK_MIGRATED] === true) {
+      return { changed: false };
+    }
+    const p = String(bag[KEY_INLINE_PANEL_PLACEMENT] ?? "").trim().toLowerCase();
+    if (p !== INLINE_PANEL_PLACEMENT_FLOATING) {
+      return { changed: false };
+    }
+    await storage.set({
+      [KEY_INLINE_PANEL_PLACEMENT]: INLINE_PANEL_PLACEMENT_DOCK_BOTTOM,
+      [KEY_INLINE_PANEL_FLOAT_TO_DOCK_MIGRATED]: true
+    });
+    return { changed: true };
   }
 
   // src/extension/content-entry.js
@@ -3432,6 +3460,19 @@
     #${INLINE_POPUP_HOST_ID}.nls-inline-host--floating {
       -webkit-overflow-scrolling: touch;
     }
+    #${INLINE_POPUP_HOST_ID}.nls-inline-host--dock-bottom {
+      -webkit-overflow-scrolling: touch;
+      min-height: 200px;
+      /* iframe \u63CF\u753B\u524D\u306E\u767D\u30D5\u30E9\u30C3\u30B7\u30E5\u3092\u6291\u3048\u308B */
+      background: rgb(15 23 42 / 92%);
+    }
+    #${INLINE_POPUP_HOST_ID}.nls-inline-host--dock-bottom iframe {
+      width: 100% !important;
+      height: min(520px, 52vh);
+      min-height: 220px;
+      max-height: min(680px, 56vh);
+      background: rgb(17 24 39);
+    }
   `;
     document.head.appendChild(style);
   }
@@ -3482,6 +3523,7 @@
   function clearInlineHostFloatingLayout(host) {
     if (!(host instanceof HTMLElement)) return;
     host.classList.remove("nls-inline-host--floating");
+    host.classList.remove("nls-inline-host--dock-bottom");
     host.style.position = "";
     host.style.top = "";
     host.style.right = "";
@@ -3498,11 +3540,14 @@
   }
   function renderInlinePanelFloatingHost() {
     const host = ensureInlinePopupHost();
+    host.classList.remove("nls-inline-host--dock-bottom");
     const viewport = nlsViewportSize();
+    let vh = Number(viewport.innerHeight) || 0;
+    if (vh < 200) vh = 640;
     const pad = 12;
     const panelW = Math.min(420, Math.max(280, viewport.innerWidth - pad * 2));
-    const maxH = Math.min(Math.round(viewport.innerHeight * 0.92), 900);
-    const iframeH = Math.min(580, Math.round(viewport.innerHeight * 0.78));
+    const maxH = Math.min(Math.round(vh * 0.92), 900);
+    const iframeH = Math.min(580, Math.round(vh * 0.78));
     if (host.parentNode !== document.body) {
       document.body.appendChild(host);
     }
@@ -3538,6 +3583,51 @@
       iframe.style.width = `${panelW}px`;
       iframe.style.height = `${Math.min(iframeH, maxH - 12)}px`;
       iframe.style.maxHeight = `${Math.min(iframeH, maxH - 12)}px`;
+    }
+    host.style.pointerEvents = "auto";
+    host.setAttribute("aria-hidden", "false");
+    host.style.display = "block";
+  }
+  function renderInlinePanelDockBottomHost() {
+    const host = ensureInlinePopupHost();
+    clearInlineHostFloatingLayout(host);
+    host.classList.remove("nls-inline-host--floating");
+    host.classList.add("nls-inline-host--dock-bottom");
+    const viewport = nlsViewportSize();
+    let vh = Number(viewport.innerHeight) || 0;
+    if (vh < 280) vh = 720;
+    const maxDockH = watchDockPanelMaxHeightPx();
+    const iframeInnerH = Math.max(
+      200,
+      Math.min(maxDockH - 16, Math.round(vh * 0.5))
+    );
+    if (host.parentNode !== document.body) {
+      document.body.appendChild(host);
+    }
+    host.style.position = "fixed";
+    host.style.left = "0";
+    host.style.right = "0";
+    host.style.bottom = "env(safe-area-inset-bottom, 0px)";
+    host.style.top = "";
+    host.style.width = "100%";
+    host.style.maxWidth = "100%";
+    host.style.maxHeight = `${maxDockH}px`;
+    host.style.marginLeft = "0";
+    host.style.overflow = "auto";
+    host.style.overflowX = "hidden";
+    host.style.boxSizing = "border-box";
+    host.style.zIndex = "2147483646";
+    host.style.boxShadow = "0 -10px 36px rgba(15, 23, 42, 0.18), 0 0 0 1px rgba(15, 23, 42, 0.06)";
+    host.style.borderRadius = "14px 14px 0 0";
+    host.style.background = "rgb(15 23 42 / 92%)";
+    const iframe = (
+      /** @type {HTMLIFrameElement|null} */
+      host.querySelector(`#${INLINE_POPUP_IFRAME_ID}`)
+    );
+    if (iframe) {
+      iframe.style.width = "100%";
+      iframe.style.height = `${iframeInnerH}px`;
+      iframe.style.maxHeight = `${iframeInnerH}px`;
     }
     host.style.pointerEvents = "auto";
     host.setAttribute("aria-hidden", "false");
@@ -3662,7 +3752,7 @@
         hostParent: null
       };
     }
-    if (placement === INLINE_PANEL_PLACEMENT_FLOATING) {
+    if (placement === INLINE_PANEL_PLACEMENT_FLOATING || placement === INLINE_PANEL_PLACEMENT_DOCK_BOTTOM) {
       return {
         insertAfter: domAnchor,
         hostParent: null
@@ -3723,6 +3813,14 @@
   function renderInlineHostAnchoredToVideo(video) {
     clearInlineHostFloatingLayout(ensureInlinePopupHost());
     const placement = getEffectiveInlinePanelPlacement();
+    if (placement === INLINE_PANEL_PLACEMENT_FLOATING) {
+      renderInlinePanelFloatingHost();
+      return;
+    }
+    if (placement === INLINE_PANEL_PLACEMENT_DOCK_BOTTOM) {
+      renderInlinePanelDockBottomHost();
+      return;
+    }
     const domAnchor = findFrameInsertAnchorFromVideo(video);
     const insertResolveAnchor = placement === INLINE_PANEL_PLACEMENT_BESIDE ? video : domAnchor;
     let insertAfter;
@@ -3805,6 +3903,15 @@
   function renderInlinePopupHost(target) {
     if (!(target instanceof HTMLElement)) return;
     clearInlineHostFloatingLayout(ensureInlinePopupHost());
+    const effPlacement = getEffectiveInlinePanelPlacement();
+    if (effPlacement === INLINE_PANEL_PLACEMENT_FLOATING) {
+      renderInlinePanelFloatingHost();
+      return;
+    }
+    if (effPlacement === INLINE_PANEL_PLACEMENT_DOCK_BOTTOM) {
+      renderInlinePanelDockBottomHost();
+      return;
+    }
     let video = null;
     if (target instanceof HTMLVideoElement) {
       video = target;
@@ -3892,6 +3999,7 @@
       host.setAttribute("aria-hidden", "true");
     }
     stableFrameTarget = null;
+    syncWatchPageDockBodyReserve();
   }
   function applyPageFramePalette(frameId, custom) {
     const overlay = ensurePageFrameOverlay();
@@ -3915,6 +4023,19 @@
   var stableFrameTarget = null;
   function nlsViewportSize() {
     return { innerWidth: window.innerWidth, innerHeight: window.innerHeight };
+  }
+  function watchDockPanelMaxHeightPx() {
+    let ih = Number(nlsViewportSize().innerHeight) || 0;
+    if (ih < 280) ih = 720;
+    const capped = Math.min(Math.round(ih * 0.58), 720);
+    return Math.max(260, capped);
+  }
+  function syncWatchPageDockBodyReserve() {
+    if (!isWatchInlinePanelTopFrame()) return;
+    try {
+      document.documentElement.style.removeProperty("padding-bottom");
+    } catch {
+    }
   }
   function getEffectiveInlinePanelPlacement() {
     return effectiveInlinePanelPlacement(
@@ -4020,16 +4141,19 @@
     try {
       const overlay = ensurePageFrameOverlay();
       overlay.style.display = "none";
-      if (getEffectiveInlinePanelPlacement() === INLINE_PANEL_PLACEMENT_FLOATING) {
+      const effPlacement = getEffectiveInlinePanelPlacement();
+      if (effPlacement === INLINE_PANEL_PLACEMENT_FLOATING) {
         renderInlinePanelFloatingHost();
+      } else if (effPlacement === INLINE_PANEL_PLACEMENT_DOCK_BOTTOM) {
+        renderInlinePanelDockBottomHost();
       } else {
         const target = findWatchFrameTargetElement();
         if (!target) {
-          hidePageFrameOverlay();
+          renderInlinePanelDockBottomHost();
         } else {
           const rect = target.getBoundingClientRect();
           if (rect.width < 260 || rect.height < 140) {
-            hidePageFrameOverlay();
+            renderInlinePanelDockBottomHost();
           } else {
             renderInlinePopupHost(target);
           }
@@ -4037,6 +4161,8 @@
       }
     } catch (e) {
       noteInlinePanelRenderError("renderPageFrameOverlay", e);
+    } finally {
+      syncWatchPageDockBodyReserve();
     }
     startPageFrameLoop();
   }
@@ -4787,6 +4913,11 @@
       insertionPlan = {
         mode: "floating",
         description: "fixed top-right on viewport; not inserted into player DOM"
+      };
+    } else if (placementEffective === INLINE_PANEL_PLACEMENT_DOCK_BOTTOM) {
+      insertionPlan = {
+        mode: "dock_bottom",
+        description: "fixed full-width bottom of viewport; not inserted into player DOM"
       };
     } else if (target instanceof HTMLElement) {
       let video = null;
@@ -5628,10 +5759,12 @@
     );
     host.style.cssText = [
       "position:fixed",
-      "z-index:2147483646",
-      "right:max(16px,env(safe-area-inset-right))",
-      "bottom:max(16px,env(safe-area-inset-bottom))",
-      "left:auto",
+      /* ドック（画面下全幅）と重ならないよう左上付近。旧: 右下でドックと干渉し「消えたあとなにも」と誤認されやすい */
+      "z-index:2147483647",
+      "left:max(14px,env(safe-area-inset-left))",
+      "top:max(72px,calc(env(safe-area-inset-top) + 56px))",
+      "right:auto",
+      "bottom:auto",
       "max-width:min(320px,calc(100vw - 32px))",
       "box-sizing:border-box",
       "padding:12px 14px",
@@ -5686,6 +5819,9 @@
     deepHarvestTimer = setTimeout(() => {
       deepHarvestTimer = null;
       removeDeepHarvestLoadingUi();
+      if (isWatchInlinePanelTopFrame() && isNicoLiveWatchUrl(window.location.href)) {
+        renderPageFrameOverlay();
+      }
       runDeepHarvest().catch(() => {
       });
     }, delayMs);
@@ -5908,6 +6044,10 @@
     await readDeepHarvestQuietUiFromStorage();
     if (isWatchInlinePanelTopFrame()) {
       ensurePageFrameStyle();
+      await migrateFloatingInlinePanelToDockOnce({
+        get: (keys) => chrome.storage.local.get(keys),
+        set: (obj) => chrome.storage.local.set(obj)
+      }).catch(() => ({ changed: false }));
       await loadPageFrameSettings().catch(() => {
       });
       if (isNicoLiveWatchUrl(window.location.href)) {

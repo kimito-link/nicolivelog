@@ -20,6 +20,7 @@ import {
   INLINE_PANEL_PLACEMENT_BELOW,
   INLINE_PANEL_PLACEMENT_BESIDE,
   INLINE_PANEL_PLACEMENT_FLOATING,
+  INLINE_PANEL_PLACEMENT_DOCK_BOTTOM,
   commentsStorageKey,
   devMonitorTrendStorageKey,
   giftUsersStorageKey,
@@ -30,6 +31,7 @@ import {
   normalizeInlinePanelWidthMode,
   normalizeInlinePanelPlacement,
   KEY_INLINE_PANEL_PLACEMENT,
+  KEY_INLINE_PANEL_FLOAT_TO_DOCK_MIGRATED,
   KEY_INLINE_FLOATING_ANCHOR,
   INLINE_FLOATING_ANCHOR_TOP_RIGHT,
   INLINE_FLOATING_ANCHOR_BOTTOM_LEFT,
@@ -138,11 +140,20 @@ describe('storage key constants', () => {
     );
   });
 
-  it('normalizeInlinePanelPlacement は below / beside / floating', () => {
+  it('KEY_INLINE_PANEL_FLOAT_TO_DOCK_MIGRATED は nls_ 接頭辞', () => {
+    expect(KEY_INLINE_PANEL_FLOAT_TO_DOCK_MIGRATED).toMatch(/^nls_/);
+  });
+
+  it('normalizeInlinePanelPlacement は dock_bottom 既定と明示値', () => {
     expect(normalizeInlinePanelPlacement(undefined)).toBe(
+      INLINE_PANEL_PLACEMENT_DOCK_BOTTOM
+    );
+    expect(normalizeInlinePanelPlacement('')).toBe(
+      INLINE_PANEL_PLACEMENT_DOCK_BOTTOM
+    );
+    expect(normalizeInlinePanelPlacement('below')).toBe(
       INLINE_PANEL_PLACEMENT_BELOW
     );
-    expect(normalizeInlinePanelPlacement('')).toBe(INLINE_PANEL_PLACEMENT_BELOW);
     expect(normalizeInlinePanelPlacement('beside')).toBe(
       INLINE_PANEL_PLACEMENT_BESIDE
     );
@@ -154,6 +165,15 @@ describe('storage key constants', () => {
     );
     expect(normalizeInlinePanelPlacement('FLOATING')).toBe(
       INLINE_PANEL_PLACEMENT_FLOATING
+    );
+    expect(normalizeInlinePanelPlacement('dock_bottom')).toBe(
+      INLINE_PANEL_PLACEMENT_DOCK_BOTTOM
+    );
+    expect(normalizeInlinePanelPlacement('dock')).toBe(
+      INLINE_PANEL_PLACEMENT_DOCK_BOTTOM
+    );
+    expect(normalizeInlinePanelPlacement('garbageKey')).toBe(
+      INLINE_PANEL_PLACEMENT_BELOW
     );
   });
 

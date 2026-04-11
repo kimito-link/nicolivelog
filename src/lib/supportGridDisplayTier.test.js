@@ -30,6 +30,10 @@ describe('supportGridStrongNickname', () => {
     );
     expect(supportGridStrongNickname('nora', 'a:AbCdEfGhIjKlMnOp')).toBe(true);
   });
+
+  it('数値 ID でも user+英数字 自動名は弱い', () => {
+    expect(supportGridStrongNickname('user 0539Z74OJ13', '88210441')).toBe(false);
+  });
 });
 
 describe('supportGridDisplayTier', () => {
@@ -125,6 +129,16 @@ describe('supportGridDisplayTier', () => {
     expect(
       supportGridDisplayTier({
         userId: 'a:AbCdEfGhIjKlMnOp',
+        nickname: 'user 0539Z74OJ13',
+        httpAvatarCandidate: 'https://example.com/u.jpg'
+      })
+    ).toBe(SUPPORT_GRID_TIER_KONTA);
+  });
+
+  it('数値 ID＋自動名＋良サムネも konta（rink にしない）', () => {
+    expect(
+      supportGridDisplayTier({
+        userId: '88210441',
         nickname: 'user 0539Z74OJ13',
         httpAvatarCandidate: 'https://example.com/u.jpg'
       })

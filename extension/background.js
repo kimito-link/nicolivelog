@@ -289,19 +289,44 @@ function ensureToolbarOpensPopupNotSidePanel() {
   }
 }
 
+/**
+ * 内容は src/lib/migrateInlinePanelFloatToDock.js と同一（SW は ESM バンドル外のため重複）。
+ */
+async function migrateFloatingPanelToDockProfileOnce() {
+  const K_PLACEMENT = 'nls_inline_panel_placement';
+  const K_DONE = 'nls_inline_panel_float_to_dock_migrated';
+  try {
+    const bag = await chrome.storage.local.get([K_PLACEMENT, K_DONE]);
+    if (bag[K_DONE] === true) return;
+    if (String(bag[K_PLACEMENT] || '').trim().toLowerCase() !== 'floating') {
+      return;
+    }
+    await chrome.storage.local.set({
+      [K_PLACEMENT]: 'dock_bottom',
+      [K_DONE]: true
+    });
+  } catch {
+    // no-op
+  }
+}
+
 chrome.runtime.onInstalled.addListener((details) => {
   ensureToolbarOpensPopupNotSidePanel();
   void ensureAutoBackupAlarm();
-  if (details?.reason === 'update') {
-    void reloadExistingWatchTabs();
-    return;
-  }
-  void injectIntoExistingTabs();
+  void (async () => {
+    await migrateFloatingPanelToDockProfileOnce();
+    if (details?.reason === 'update') {
+      await reloadExistingWatchTabs();
+    } else {
+      await injectIntoExistingTabs();
+    }
+  })();
 });
 
 chrome.runtime.onStartup.addListener(() => {
   ensureToolbarOpensPopupNotSidePanel();
   void ensureAutoBackupAlarm();
+  void migrateFloatingPanelToDockProfileOnce();
   void injectIntoExistingTabs();
 });
 

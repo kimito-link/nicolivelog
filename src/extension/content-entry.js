@@ -11,6 +11,7 @@ import {
   KEY_INLINE_PANEL_PLACEMENT,
   INLINE_PANEL_PLACEMENT_BESIDE,
   INLINE_PANEL_PLACEMENT_FLOATING,
+  INLINE_PANEL_PLACEMENT_DOCK_BOTTOM,
   KEY_INLINE_FLOATING_ANCHOR,
   INLINE_FLOATING_ANCHOR_BOTTOM_LEFT,
   KEY_LAST_WATCH_URL,
@@ -105,6 +106,7 @@ import {
 } from '../lib/supportGrowthTileSrc.js';
 import { mergeUserIdForEnrichment } from '../lib/userIdPreference.js';
 import { maybeAppendCommentIngestLog } from '../lib/commentIngestLog.js';
+import { migrateFloatingInlinePanelToDockOnce } from '../lib/migrateInlinePanelFloatToDock.js';
 
 /**
  * @typedef {{ commentNo: string, text: string, userId: string|null, avatarUrl?: string }} ParsedCommentRow
@@ -1254,6 +1256,19 @@ function ensurePageFrameStyle() {
     #${INLINE_POPUP_HOST_ID}.nls-inline-host--floating {
       -webkit-overflow-scrolling: touch;
     }
+    #${INLINE_POPUP_HOST_ID}.nls-inline-host--dock-bottom {
+      -webkit-overflow-scrolling: touch;
+      min-height: 200px;
+      /* iframe 描画前の白フラッシュを抑える */
+      background: rgb(15 23 42 / 92%);
+    }
+    #${INLINE_POPUP_HOST_ID}.nls-inline-host--dock-bottom iframe {
+      width: 100% !important;
+      height: min(520px, 52vh);
+      min-height: 220px;
+      max-height: min(680px, 56vh);
+      background: rgb(17 24 39);
+    }
   `;
   document.head.appendChild(style);
 }
@@ -1328,6 +1343,7 @@ function inlinePopupHostIsCorrectlyPlaced(host, hostParent, insertAfter) {
 function clearInlineHostFloatingLayout(host) {
   if (!(host instanceof HTMLElement)) return;
   host.classList.remove('nls-inline-host--floating');
+  host.classList.remove('nls-inline-host--dock-bottom');
   host.style.position = '';
   host.style.top = '';
   host.style.right = '';
@@ -1349,11 +1365,14 @@ function clearInlineHostFloatingLayout(host) {
  */
 function renderInlinePanelFloatingHost() {
   const host = ensureInlinePopupHost();
+  host.classList.remove('nls-inline-host--dock-bottom');
   const viewport = nlsViewportSize();
+  let vh = Number(viewport.innerHeight) || 0;
+  if (vh < 200) vh = 640;
   const pad = 12;
   const panelW = Math.min(420, Math.max(280, viewport.innerWidth - pad * 2));
-  const maxH = Math.min(Math.round(viewport.innerHeight * 0.92), 900);
-  const iframeH = Math.min(580, Math.round(viewport.innerHeight * 0.78));
+  const maxH = Math.min(Math.round(vh * 0.92), 900);
+  const iframeH = Math.min(580, Math.round(vh * 0.78));
 
   if (host.parentNode !== document.body) {
     document.body.appendChild(host);
@@ -1391,6 +1410,58 @@ function renderInlinePanelFloatingHost() {
     iframe.style.width = `${panelW}px`;
     iframe.style.height = `${Math.min(iframeH, maxH - 12)}px`;
     iframe.style.maxHeight = `${Math.min(iframeH, maxH - 12)}px`;
+  }
+  host.style.pointerEvents = 'auto';
+  host.setAttribute('aria-hidden', 'false');
+  host.style.display = 'block';
+}
+
+/**
+ * 視聴ページ下部にビューポート固定で広げる（ポップアップ風より視認しやすい既定用）。
+ * プレイヤー DOM 非依存のため、ターゲット video の遅延があっても先に出せる。
+ */
+function renderInlinePanelDockBottomHost() {
+  const host = ensureInlinePopupHost();
+  clearInlineHostFloatingLayout(host);
+  host.classList.remove('nls-inline-host--floating');
+  host.classList.add('nls-inline-host--dock-bottom');
+  const viewport = nlsViewportSize();
+  let vh = Number(viewport.innerHeight) || 0;
+  if (vh < 280) vh = 720;
+  const maxDockH = watchDockPanelMaxHeightPx();
+  const iframeInnerH = Math.max(
+    200,
+    Math.min(maxDockH - 16, Math.round(vh * 0.5))
+  );
+
+  if (host.parentNode !== document.body) {
+    document.body.appendChild(host);
+  }
+  host.style.position = 'fixed';
+  host.style.left = '0';
+  host.style.right = '0';
+  host.style.bottom = 'env(safe-area-inset-bottom, 0px)';
+  host.style.top = '';
+  host.style.width = '100%';
+  host.style.maxWidth = '100%';
+  host.style.maxHeight = `${maxDockH}px`;
+  host.style.marginLeft = '0';
+  host.style.overflow = 'auto';
+  host.style.overflowX = 'hidden';
+  host.style.boxSizing = 'border-box';
+  host.style.zIndex = '2147483646';
+  host.style.boxShadow =
+    '0 -10px 36px rgba(15, 23, 42, 0.18), 0 0 0 1px rgba(15, 23, 42, 0.06)';
+  host.style.borderRadius = '14px 14px 0 0';
+  host.style.background = 'rgb(15 23 42 / 92%)';
+
+  const iframe = /** @type {HTMLIFrameElement|null} */ (
+    host.querySelector(`#${INLINE_POPUP_IFRAME_ID}`)
+  );
+  if (iframe) {
+    iframe.style.width = '100%';
+    iframe.style.height = `${iframeInnerH}px`;
+    iframe.style.maxHeight = `${iframeInnerH}px`;
   }
   host.style.pointerEvents = 'auto';
   host.setAttribute('aria-hidden', 'false');
@@ -1575,7 +1646,10 @@ function resolveInlinePanelInsertAnchor(domAnchor, placement) {
       hostParent: null
     };
   }
-  if (placement === INLINE_PANEL_PLACEMENT_FLOATING) {
+  if (
+    placement === INLINE_PANEL_PLACEMENT_FLOATING ||
+    placement === INLINE_PANEL_PLACEMENT_DOCK_BOTTOM
+  ) {
     return {
       insertAfter: domAnchor,
       hostParent: null
@@ -1657,6 +1731,14 @@ function findBesideFlexRowColumnInsertion(video) {
 function renderInlineHostAnchoredToVideo(video) {
   clearInlineHostFloatingLayout(ensureInlinePopupHost());
   const placement = getEffectiveInlinePanelPlacement();
+  if (placement === INLINE_PANEL_PLACEMENT_FLOATING) {
+    renderInlinePanelFloatingHost();
+    return;
+  }
+  if (placement === INLINE_PANEL_PLACEMENT_DOCK_BOTTOM) {
+    renderInlinePanelDockBottomHost();
+    return;
+  }
   const domAnchor = findFrameInsertAnchorFromVideo(video);
   const insertResolveAnchor =
     placement === INLINE_PANEL_PLACEMENT_BESIDE ? video : domAnchor;
@@ -1760,6 +1842,15 @@ function renderInlineHostAnchoredToVideo(video) {
 function renderInlinePopupHost(target) {
   if (!(target instanceof HTMLElement)) return;
   clearInlineHostFloatingLayout(ensureInlinePopupHost());
+  const effPlacement = getEffectiveInlinePanelPlacement();
+  if (effPlacement === INLINE_PANEL_PLACEMENT_FLOATING) {
+    renderInlinePanelFloatingHost();
+    return;
+  }
+  if (effPlacement === INLINE_PANEL_PLACEMENT_DOCK_BOTTOM) {
+    renderInlinePanelDockBottomHost();
+    return;
+  }
 
   /*
    * ラッパー div がターゲットでも内側 video の表示幅が 260 未満（レターボックス等）だと
@@ -1870,6 +1961,7 @@ function hidePageFrameOverlay() {
     host.setAttribute('aria-hidden', 'true');
   }
   stableFrameTarget = null;
+  syncWatchPageDockBodyReserve();
 }
 
 /** @param {string} frameId @param {{ headerStart: string, headerEnd: string, accent: string }} custom */
@@ -1901,6 +1993,32 @@ let stableFrameTarget = null;
 
 function nlsViewportSize() {
   return { innerWidth: window.innerWidth, innerHeight: window.innerHeight };
+}
+
+/** ドックパネルと同じ上限高さ（padding-bottom 予約と共有） */
+function watchDockPanelMaxHeightPx() {
+  let ih = Number(nlsViewportSize().innerHeight) || 0;
+  /*
+   * バックグラウンドタブ・描画直前など innerHeight が 0 に近いと maxDockH=0 になり
+   * パネルが完全に潰れることがある。
+   */
+  if (ih < 280) ih = 720;
+  const capped = Math.min(Math.round(ih * 0.58), 720);
+  return Math.max(260, capped);
+}
+
+/**
+ * 旧実装で html に付けていた padding-bottom は、ニコ生の高さ計算と干渉し
+ * 「画面の半分がまっしろ」のように見えることがあったため廃止。
+ * 残存スタイルがあればここで除去する。
+ */
+function syncWatchPageDockBodyReserve() {
+  if (!isWatchInlinePanelTopFrame()) return;
+  try {
+    document.documentElement.style.removeProperty('padding-bottom');
+  } catch {
+    // no-op
+  }
 }
 
 /** ストレージの配置に対し、狭いビューポートでは beside を下へ逃がす（保存値はそのまま） */
@@ -2047,16 +2165,23 @@ function renderPageFrameOverlay() {
   try {
     const overlay = ensurePageFrameOverlay();
     overlay.style.display = 'none';
-    if (getEffectiveInlinePanelPlacement() === INLINE_PANEL_PLACEMENT_FLOATING) {
+    const effPlacement = getEffectiveInlinePanelPlacement();
+    if (effPlacement === INLINE_PANEL_PLACEMENT_FLOATING) {
       renderInlinePanelFloatingHost();
+    } else if (effPlacement === INLINE_PANEL_PLACEMENT_DOCK_BOTTOM) {
+      renderInlinePanelDockBottomHost();
     } else {
       const target = findWatchFrameTargetElement();
       if (!target) {
-        hidePageFrameOverlay();
+        /*
+         * below / beside はプレイヤー未検出だと従来ゼロ表示だった。
+         * 視聴ページではドックに落とし、何も出ない状態を避ける。
+         */
+        renderInlinePanelDockBottomHost();
       } else {
         const rect = target.getBoundingClientRect();
         if (rect.width < 260 || rect.height < 140) {
-          hidePageFrameOverlay();
+          renderInlinePanelDockBottomHost();
         } else {
           renderInlinePopupHost(target);
         }
@@ -2064,6 +2189,8 @@ function renderPageFrameOverlay() {
     }
   } catch (e) {
     noteInlinePanelRenderError('renderPageFrameOverlay', e);
+  } finally {
+    syncWatchPageDockBodyReserve();
   }
   /*
    * プレイヤー遅延で初回だけ target が無いとき、ここでループを積まないと再描画が永遠に走らない。
@@ -3050,6 +3177,12 @@ function buildAiSharePageDiagnostics() {
     insertionPlan = {
       mode: 'floating',
       description: 'fixed top-right on viewport; not inserted into player DOM'
+    };
+  } else if (placementEffective === INLINE_PANEL_PLACEMENT_DOCK_BOTTOM) {
+    insertionPlan = {
+      mode: 'dock_bottom',
+      description:
+        'fixed full-width bottom of viewport; not inserted into player DOM'
     };
   } else if (target instanceof HTMLElement) {
     let video = null;
@@ -4085,10 +4218,12 @@ function ensureDeepHarvestLoadingUi() {
   );
   host.style.cssText = [
     'position:fixed',
-    'z-index:2147483646',
-    'right:max(16px,env(safe-area-inset-right))',
-    'bottom:max(16px,env(safe-area-inset-bottom))',
-    'left:auto',
+    /* ドック（画面下全幅）と重ならないよう左上付近。旧: 右下でドックと干渉し「消えたあとなにも」と誤認されやすい */
+    'z-index:2147483647',
+    'left:max(14px,env(safe-area-inset-left))',
+    'top:max(72px,calc(env(safe-area-inset-top) + 56px))',
+    'right:auto',
+    'bottom:auto',
     'max-width:min(320px,calc(100vw - 32px))',
     'box-sizing:border-box',
     'padding:12px 14px',
@@ -4156,6 +4291,10 @@ function scheduleDeepHarvest(reason) {
   deepHarvestTimer = setTimeout(() => {
     deepHarvestTimer = null;
     removeDeepHarvestLoadingUi();
+    /* トースト除去直後にインライン枠の padding / 表示を再同期（ドックと干渉解消後の見え方） */
+    if (isWatchInlinePanelTopFrame() && isNicoLiveWatchUrl(window.location.href)) {
+      renderPageFrameOverlay();
+    }
     runDeepHarvest().catch(() => {});
   }, delayMs);
 }
@@ -4427,6 +4566,10 @@ async function start() {
   await readDeepHarvestQuietUiFromStorage();
   if (isWatchInlinePanelTopFrame()) {
     ensurePageFrameStyle();
+    await migrateFloatingInlinePanelToDockOnce({
+      get: (keys) => chrome.storage.local.get(keys),
+      set: (obj) => chrome.storage.local.set(obj)
+    }).catch(() => ({ changed: false }));
     await loadPageFrameSettings().catch(() => {});
     if (isNicoLiveWatchUrl(window.location.href)) {
       startPageFrameLoop();

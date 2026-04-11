@@ -16,6 +16,7 @@ import {
   INLINE_PANEL_PLACEMENT_BELOW,
   INLINE_PANEL_PLACEMENT_BESIDE,
   INLINE_PANEL_PLACEMENT_FLOATING,
+  INLINE_PANEL_PLACEMENT_DOCK_BOTTOM,
   KEY_INLINE_FLOATING_ANCHOR,
   INLINE_FLOATING_ANCHOR_TOP_RIGHT,
   INLINE_FLOATING_ANCHOR_BOTTOM_LEFT,
@@ -5688,6 +5689,13 @@ async function refresh() {
   const radioPlacementFloating = /** @type {HTMLInputElement|null} */ (
     $('inlinePanelPlacementFloating')
   );
+  const radioPlacementDockBottom = /** @type {HTMLInputElement|null} */ (
+    $('inlinePanelPlacementDockBottom')
+  );
+  if (radioPlacementDockBottom) {
+    radioPlacementDockBottom.checked =
+      placementMode === INLINE_PANEL_PLACEMENT_DOCK_BOTTOM;
+  }
   if (radioPlacementBelow) {
     radioPlacementBelow.checked = placementMode === INLINE_PANEL_PLACEMENT_BELOW;
   }
@@ -7403,6 +7411,19 @@ function initPopup() {
     });
   ensureStoryGrowthColorSchemeListener();
   applyResponsivePopupLayout();
+  if (INLINE_EMBED_WATCH) {
+    const compose = document.querySelector('section.nl-comment-compose--primary');
+    if (compose instanceof HTMLElement) {
+      compose.setAttribute(
+        'aria-label',
+        '書き出しと再読み込み（コメント送信は watch の公式欄から）'
+      );
+    }
+    const supportVisualDetails = /** @type {HTMLDetailsElement|null} */ (
+      $('supportVisualDetails')
+    );
+    if (supportVisualDetails) supportVisualDetails.open = true;
+  }
   void applyUsageTermsGateState();
   if (INLINE_MODE) {
     const watchDetails = /** @type {HTMLDetailsElement|null} */ (
@@ -7781,7 +7802,9 @@ function initPopup() {
         ? INLINE_PANEL_PLACEMENT_BESIDE
         : value === INLINE_PANEL_PLACEMENT_FLOATING
           ? INLINE_PANEL_PLACEMENT_FLOATING
-          : INLINE_PANEL_PLACEMENT_BELOW;
+          : value === INLINE_PANEL_PLACEMENT_DOCK_BOTTOM
+            ? INLINE_PANEL_PLACEMENT_DOCK_BOTTOM
+            : INLINE_PANEL_PLACEMENT_BELOW;
     const ok = await storageSetSafe({ [KEY_INLINE_PANEL_PLACEMENT]: v });
     if (!ok) return;
     safeRefresh();
@@ -7815,6 +7838,8 @@ function initPopup() {
   });
 
   /** @type {HTMLInputElement|null} */
+  const radioPlacementDockBottomEl = $('inlinePanelPlacementDockBottom');
+  /** @type {HTMLInputElement|null} */
   const radioPlacementBelowEl = $('inlinePanelPlacementBelow');
   /** @type {HTMLInputElement|null} */
   const radioPlacementBesideEl = $('inlinePanelPlacementBeside');
@@ -7827,6 +7852,13 @@ function initPopup() {
     wrap.hidden = !show;
     wrap.setAttribute('aria-hidden', show ? 'false' : 'true');
   };
+  radioPlacementDockBottomEl?.addEventListener('change', (e) => {
+    const t = e.target;
+    if (t instanceof HTMLInputElement && t.checked) {
+      syncFloatingAnchorWrapFromPlacementRadios();
+      void saveInlinePanelPlacement(INLINE_PANEL_PLACEMENT_DOCK_BOTTOM);
+    }
+  });
   radioPlacementBelowEl?.addEventListener('change', (e) => {
     const t = e.target;
     if (t instanceof HTMLInputElement && t.checked) {
