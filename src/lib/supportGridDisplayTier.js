@@ -123,6 +123,7 @@ export function explainSupportGridDisplayTier(p) {
   const hasObservedAvatar = storedAvatarScore >= 1;
 
   const isNumericId = /^\d{5,14}$/.test(uid);
+  const isAnonymous = isNiconicoAnonymousUserId(uid);
 
   /** @type {ReadonlyArray<{tier: 'link'|'konta'|'tanu', match: (f: typeof flags) => boolean}>} */
   const TIER_RULES = [
@@ -130,11 +131,11 @@ export function explainSupportGridDisplayTier(p) {
     { tier: SUPPORT_GRID_TIER_LINK,  match: (f) => f.strongNick && f.hasThumb },
     { tier: SUPPORT_GRID_TIER_LINK,  match: (f) => f.strongNick && f.isNumericId },
     { tier: SUPPORT_GRID_TIER_KONTA, match: (f) => f.strongNick || f.hasThumb },
-    { tier: SUPPORT_GRID_TIER_KONTA, match: (f) => f.hasAnyAvatar },
+    { tier: SUPPORT_GRID_TIER_KONTA, match: (f) => f.hasAnyAvatar && !f.isAnonymous },
     { tier: SUPPORT_GRID_TIER_KONTA, match: (f) => f.isNumericId },
   ];
 
-  const flags = { observed, strongNick, hasThumb, hasAnyAvatar, hasObservedAvatar, isNumericId };
+  const flags = { observed, strongNick, hasThumb, hasAnyAvatar, hasObservedAvatar, isNumericId, isAnonymous };
 
   /** @type {'link'|'konta'|'tanu'} */
   const tier = !uid

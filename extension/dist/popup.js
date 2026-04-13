@@ -1125,15 +1125,16 @@
     const storedAvatarScore = uid ? commentEnrichmentAvatarScore(uid, rawAv) : 0;
     const hasObservedAvatar = storedAvatarScore >= 1;
     const isNumericId = /^\d{5,14}$/.test(uid);
+    const isAnonymous = isNiconicoAnonymousUserId(uid);
     const TIER_RULES = [
       { tier: SUPPORT_GRID_TIER_LINK, match: (f) => f.observed },
       { tier: SUPPORT_GRID_TIER_LINK, match: (f) => f.strongNick && f.hasThumb },
       { tier: SUPPORT_GRID_TIER_LINK, match: (f) => f.strongNick && f.isNumericId },
       { tier: SUPPORT_GRID_TIER_KONTA, match: (f) => f.strongNick || f.hasThumb },
-      { tier: SUPPORT_GRID_TIER_KONTA, match: (f) => f.hasAnyAvatar },
+      { tier: SUPPORT_GRID_TIER_KONTA, match: (f) => f.hasAnyAvatar && !f.isAnonymous },
       { tier: SUPPORT_GRID_TIER_KONTA, match: (f) => f.isNumericId }
     ];
-    const flags = { observed, strongNick, hasThumb, hasAnyAvatar, hasObservedAvatar, isNumericId };
+    const flags = { observed, strongNick, hasThumb, hasAnyAvatar, hasObservedAvatar, isNumericId, isAnonymous };
     const tier = !uid ? SUPPORT_GRID_TIER_TANU : TIER_RULES.find((r) => r.match(flags))?.tier ?? SUPPORT_GRID_TIER_TANU;
     const demotedAnonymousLinkToKonta = false;
     return {

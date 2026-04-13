@@ -254,7 +254,7 @@ describe('supportGridDisplayTier', () => {
     expect(ex.tier).toBe(SUPPORT_GRID_TIER_KONTA);
   });
 
-  it('弱いニック + 弱いアバター（defaults URL, score 1）でも konta に昇格', () => {
+  it('匿名ID + 弱いニック + 弱いアバター（defaults URL）は tanu（識別情報なし）', () => {
     const ex = explainSupportGridDisplayTier({
       userId: 'a:abcdefghij',
       nickname: '匿名',
@@ -264,7 +264,7 @@ describe('supportGridDisplayTier', () => {
     expect(ex.strongNick).toBe(false);
     expect(ex.hasPersonalThumb).toBe(false);
     expect(ex.hasAnyAvatar).toBe(true);
-    expect(ex.tier).toBe(SUPPORT_GRID_TIER_KONTA);
+    expect(ex.tier).toBe(SUPPORT_GRID_TIER_TANU);
   });
 
   it('a: ID + ニック匿名 + アバターなし = 識別情報なしなので tanu', () => {
