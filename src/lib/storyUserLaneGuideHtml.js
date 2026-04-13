@@ -19,7 +19,7 @@ export function buildStoryUserLaneGuideTopHtml(faceLink) {
   return storyUserLaneGuideLine(
     faceLink,
     escapeHtml(
-      'link: ニコ生のユーザー識別子（数値ID・匿名の a: 形式）が付いた応援だけがこの列に載るよ。並びでは、個人サムネが取れた人をいちばん手前に寄せるよ。表示名が弱い場合でも、サムネが確実なら link に残す設計だよ。'
+      'りんく: ニコ生のユーザー識別子（数値ID・匿名の a: 形式）が付いた応援だけがこの列に載るよ。並びでは、個人サムネが取れた人をいちばん手前に寄せるよ。表示名が弱い場合でも、サムネが確実なら りんく に残す設計だよ。'
     )
   );
 }
