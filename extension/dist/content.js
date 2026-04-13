@@ -592,13 +592,15 @@
         continue;
       }
       keyToIndex.set(key, next.length);
+      const rawAv = String(row.avatarUrl || "").trim();
+      const validAvatar = isHttpOrHttpsUrl(rawAv) ? rawAv : "";
       const entry = createCommentEntry({
         liveId: lid,
         commentNo,
         text,
         userId: row.userId ?? null,
         nickname: row.nickname || "",
-        avatarUrl: row.avatarUrl || void 0,
+        avatarUrl: validAvatar || void 0,
         avatarObserved: row.avatarObserved || false,
         vpos: row.vpos,
         accountStatus: row.accountStatus,

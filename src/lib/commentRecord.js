@@ -251,13 +251,15 @@ export function mergeNewComments(liveId, existing, incoming) {
       continue;
     }
     keyToIndex.set(key, next.length);
+    const rawAv = String(row.avatarUrl || '').trim();
+    const validAvatar = isHttpOrHttpsUrl(rawAv) ? rawAv : '';
     const entry = createCommentEntry({
       liveId: lid,
       commentNo,
       text,
       userId: row.userId ?? null,
       nickname: row.nickname || '',
-      avatarUrl: row.avatarUrl || undefined,
+      avatarUrl: validAvatar || undefined,
       avatarObserved: row.avatarObserved || false,
       vpos: row.vpos,
       accountStatus: row.accountStatus,
