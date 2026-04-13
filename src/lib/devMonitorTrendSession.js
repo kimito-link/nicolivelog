@@ -243,7 +243,7 @@ export function appendTrendPoint(win, liveId, sample) {
 }
 
 /**
- * @param {Storage} chromeObj
+ * @param {chrome.storage.StorageArea} chromeObj
  * @param {string} key
  * @returns {Promise<Record<string, unknown>>}
  */
@@ -252,7 +252,7 @@ async function readChromeStorageBag(chromeObj, key) {
     async () =>
       await new Promise((resolve, reject) => {
         try {
-          chromeObj.get(key, (r) => {
+          chromeObj.get(key, (/** @type {Record<string, unknown>} */ r) => {
             if (r && typeof r === 'object' && !Array.isArray(r)) {
               resolve(r);
               return;
