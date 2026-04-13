@@ -562,7 +562,9 @@ function getReactFiber(el) {
 const USERID_PROP_KEYS = [
   'userId', 'user_id', 'userid',
   'hashedUserId', 'hashed_user_id',
-  'senderUserId', 'accountId', 'uid'
+  'senderUserId', 'accountId', 'uid',
+  'rawUserId', 'raw_user_id',
+  'anonymousUserId', 'userIdHash'
 ];
 
 /**
@@ -590,6 +592,15 @@ function pickUserIdFromFiber(fiber) {
   return null;
 }
 
+/** @param {string} s @returns {boolean} */
+function looksLikeUserId(s) {
+  if (!s) return false;
+  if (/^\d{4,14}$/.test(s)) return true;
+  if (/^[a-zA-Z0-9_-]{8,64}$/.test(s)) return true;
+  if (/^[a-zA-Z0-9]{2}:[a-zA-Z0-9_-]{4,}$/.test(s)) return true;
+  return false;
+}
+
 /** @param {unknown} bag @returns {string|null} */
 function pickUserIdFromBag(bag) {
   if (!bag || typeof bag !== 'object') return null;
@@ -598,10 +609,9 @@ function pickUserIdFromBag(bag) {
     const v = obj[key];
     if (v == null) continue;
     const s = String(v).trim();
-    if (/^\d{5,14}$/.test(s)) return s;
-    if (/^[a-zA-Z0-9_-]{10,26}$/.test(s)) return s;
+    if (looksLikeUserId(s)) return s;
   }
-  for (const key of ['comment', 'data', 'item', 'chat', 'message']) {
+  for (const key of ['comment', 'data', 'item', 'chat', 'message', 'user', 'sender', 'commenter']) {
     const nested = obj[key];
     if (!nested || typeof nested !== 'object') continue;
     const nestedObj = /** @type {Record<string, unknown>} */ (nested);
@@ -609,9 +619,13 @@ function pickUserIdFromBag(bag) {
       const v = nestedObj[uid];
       if (v == null) continue;
       const s = String(v).trim();
-      if (/^\d{5,14}$/.test(s)) return s;
-      if (/^[a-zA-Z0-9_-]{10,26}$/.test(s)) return s;
+      if (looksLikeUserId(s)) return s;
     }
+  }
+  if (typeof obj.user === 'object' && obj.user) {
+    const u = /** @type {Record<string, unknown>} */ (obj.user);
+    if (typeof u.id === 'number' && u.id > 0) return String(u.id);
+    if (typeof u.id === 'string' && looksLikeUserId(String(u.id).trim())) return String(u.id).trim();
   }
   return null;
 }

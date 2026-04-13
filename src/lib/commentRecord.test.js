@@ -5,6 +5,7 @@ import {
   buildDedupeKey,
   createCommentEntry,
   mergeNewComments,
+  patchExistingComment,
   backfillNumericSyntheticAvatarsOnStoredComments
 } from './commentRecord.js';
 
@@ -623,6 +624,222 @@ describe('avatarObserved フラグ', () => {
     ]);
     expect(next[0].avatarObserved).toBe(true);
     expect(storageTouched).toBe(false);
+  });
+});
+
+describe('patchExistingComment', () => {
+  it('avatarUrl なしの既存行に incoming の avatarUrl を補完', () => {
+    const existing = createCommentEntry({
+      liveId: 'lv1', commentNo: '1', text: 'a', userId: null
+    });
+    const { entry, touched } = patchExistingComment(existing, {
+      avatarUrl: 'https://cdn.example/u/1.jpg'
+    });
+    expect(entry.avatarUrl).toBe('https://cdn.example/u/1.jpg');
+    expect(touched).toBe(true);
+  });
+
+  it('合成デフォルトアイコンを個別 usericon で上書き', () => {
+    const uid = '86255751';
+    const synthetic =
+      'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/8625/86255751.jpg';
+    const domLike =
+      'https://secure-dcdn.cdn.nimg.jp/nicovideo/images/usericon/square_96/86255751.jpg';
+    const existing = createCommentEntry({
+      liveId: 'lv1', commentNo: '1', text: 'hi', userId: uid, avatarUrl: synthetic
+    });
+    const { entry, touched } = patchExistingComment(existing, {
+      userId: uid, avatarUrl: domLike
+    });
+    expect(entry.avatarUrl).toBe(domLike);
+    expect(touched).toBe(true);
+  });
+
+  it('defaults プレースホルダを個別 usericon で上書き', () => {
+    const weak =
+      'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/defaults/blank.jpg';
+    const real =
+      'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/8625/86255751.jpg';
+    const existing = createCommentEntry({
+      liveId: 'lv1', commentNo: '1', text: 'hi', userId: '86255751', avatarUrl: weak
+    });
+    const { entry, touched } = patchExistingComment(existing, {
+      userId: '86255751', avatarUrl: real
+    });
+    expect(entry.avatarUrl).toBe(real);
+    expect(touched).toBe(true);
+  });
+
+  it('既に有効な非ニコ avatarUrl がある場合は上書きしない', () => {
+    const custom = 'https://cdn.example.com/users/avatar/xx.png';
+    const existing = createCommentEntry({
+      liveId: 'lv1', commentNo: '2', text: 'yo', userId: '12345678', avatarUrl: custom
+    });
+    const nicoOther =
+      'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/1234/12345678.jpg';
+    const { entry, touched } = patchExistingComment(existing, {
+      userId: '12345678', avatarUrl: nicoOther
+    });
+    expect(entry.avatarUrl).toBe(custom);
+    expect(touched).toBe(false);
+  });
+
+  it('無効な avatarUrl は無視（touched=false）', () => {
+    const existing = createCommentEntry({
+      liveId: 'lv1', commentNo: '1', text: 'a', userId: '100'
+    });
+    const { entry, touched } = patchExistingComment(existing, {
+      avatarUrl: '/relative.png'
+    });
+    expect(entry.avatarUrl).toBeUndefined();
+    expect(touched).toBe(false);
+  });
+
+  it('userId null → 数字 ID で補完', () => {
+    const existing = createCommentEntry({
+      liveId: 'lv1', commentNo: '77', text: 'hello', userId: null
+    });
+    const { entry, touched } = patchExistingComment(existing, {
+      userId: '12345'
+    });
+    expect(entry.userId).toBe('12345');
+    expect(touched).toBe(true);
+  });
+
+  it('a: ハッシュを数字 ID でアップグレード', () => {
+    const existing = createCommentEntry({
+      liveId: 'lv1', commentNo: '1', text: 'a', userId: 'a:xx'
+    });
+    const { entry, touched } = patchExistingComment(existing, {
+      userId: '86255751'
+    });
+    expect(entry.userId).toBe('86255751');
+    expect(touched).toBe(true);
+  });
+
+  it('数字 ID を a: ハッシュで上書きしない', () => {
+    const existing = createCommentEntry({
+      liveId: 'lv1', commentNo: '1', text: 'a', userId: '86255751'
+    });
+    const { entry, touched } = patchExistingComment(existing, {
+      userId: 'a:deadbeef'
+    });
+    expect(entry.userId).toBe('86255751');
+    expect(touched).toBe(false);
+  });
+
+  it('incoming userId が null なら既存 userId を維持', () => {
+    const existing = createCommentEntry({
+      liveId: 'lv1', commentNo: '1', text: 'a', userId: '111'
+    });
+    const { entry, touched } = patchExistingComment(existing, {
+      userId: null
+    });
+    expect(entry.userId).toBe('111');
+    expect(touched).toBe(false);
+  });
+
+  it('nickname を後追い補完', () => {
+    const existing = createCommentEntry({
+      liveId: 'lv1', commentNo: '2', text: 'b', userId: 'u1'
+    });
+    const { entry, touched } = patchExistingComment(existing, {
+      userId: 'u1', nickname: '表示名'
+    });
+    expect(entry.nickname).toBe('表示名');
+    expect(touched).toBe(true);
+  });
+
+  it('より長い nickname で上書き', () => {
+    const existing = {
+      id: 'test1', liveId: 'lv1', commentNo: '1', text: 'a',
+      userId: '100', nickname: 'AB', capturedAt: 1000
+    };
+    const { entry, touched } = patchExistingComment(existing, {
+      userId: '100', nickname: 'ABCD'
+    });
+    expect(entry.nickname).toBe('ABCD');
+    expect(touched).toBe(true);
+  });
+
+  it('より短い nickname では上書きしない', () => {
+    const existing = {
+      id: 'test2', liveId: 'lv1', commentNo: '1', text: 'a',
+      userId: '100', nickname: 'ABCDE', capturedAt: 1000
+    };
+    const { entry, touched } = patchExistingComment(existing, {
+      userId: '100', nickname: 'AB'
+    });
+    expect(entry.nickname).toBe('ABCDE');
+    expect(touched).toBe(false);
+  });
+
+  it('userId 欠損時に avatarUrl から userId を自己修復', () => {
+    const existing = {
+      id: 'legacy_row', liveId: 'lv1', commentNo: '9', text: 'yo',
+      userId: null,
+      avatarUrl: 'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/1/12345001.jpg',
+      capturedAt: 1
+    };
+    const { entry, touched } = patchExistingComment(existing, {
+      userId: null
+    });
+    expect(entry.userId).toBe('12345001');
+    expect(touched).toBe(true);
+  });
+
+  it('avatarObserved を後追いで true に設定', () => {
+    const existing = createCommentEntry({
+      liveId: 'lv1', commentNo: '1', text: 'a', userId: '88210441',
+      avatarUrl: 'https://example.com/u.jpg'
+    });
+    expect(existing).not.toHaveProperty('avatarObserved');
+    const { entry, touched } = patchExistingComment(existing, {
+      userId: '88210441', avatarObserved: true
+    });
+    expect(entry.avatarObserved).toBe(true);
+    expect(touched).toBe(true);
+  });
+
+  it('既存の avatarObserved=true は incoming で消えない', () => {
+    const existing = createCommentEntry({
+      liveId: 'lv1', commentNo: '1', text: 'a', userId: '88210441',
+      avatarUrl: 'https://example.com/u.jpg', avatarObserved: true
+    });
+    const { entry, touched } = patchExistingComment(existing, {
+      userId: '88210441', avatarObserved: false
+    });
+    expect(entry.avatarObserved).toBe(true);
+    expect(touched).toBe(false);
+  });
+
+  it('何も変更がなければ touched=false', () => {
+    const existing = createCommentEntry({
+      liveId: 'lv1', commentNo: '1', text: 'a', userId: '100',
+      avatarUrl: 'https://cdn.example/u.jpg', nickname: 'テスト'
+    });
+    const { entry, touched } = patchExistingComment(existing, {
+      userId: '100', avatarUrl: 'https://cdn.example/u.jpg', nickname: 'テ'
+    });
+    expect(touched).toBe(false);
+    expect(entry.userId).toBe('100');
+    expect(entry.avatarUrl).toBe('https://cdn.example/u.jpg');
+    expect(entry.nickname).toBe('テスト');
+  });
+
+  it('incoming に avatarUrl のみでも userId を推定して補完', () => {
+    const existing = createCommentEntry({
+      liveId: 'lv1', commentNo: '3', text: 'z', userId: null
+    });
+    const { entry, touched } = patchExistingComment(existing, {
+      userId: null,
+      avatarUrl: 'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/1/12345002.jpg'
+    });
+    expect(entry.userId).toBe('12345002');
+    expect(entry.avatarUrl).toBe(
+      'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/1/12345002.jpg'
+    );
+    expect(touched).toBe(true);
   });
 });
 

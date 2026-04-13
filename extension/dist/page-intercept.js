@@ -188,7 +188,10 @@
     }
   }
   function decodeChat(buf, start, end) {
-    let no = null, rawUserId = null, hashedUserId = "", name = "", content = "";
+    let no = null, rawUserId = (
+      /** @type {number|null} */
+      null
+    ), hashedUserId = "", name = "", content = "";
     let vpos = (
       /** @type {number|null} */
       null
@@ -201,7 +204,7 @@
     pbForEach(buf, start, end, (fn, wt, val, s, e) => {
       if (fn === 8 && wt === 0) no = val;
       if (fn === 5 && wt === 0) rawUserId = val;
-      if (fn === 6 && wt === 2) hashedUserId = decodeStr(buf, s, e);
+      if (fn === 6 && wt === 2) hashedUserId = hashedUserId || decodeStr(buf, s, e);
       if (fn === 2 && wt === 2) name = decodeStr(buf, s, e);
       if (fn === 1 && wt === 2) content = decodeStr(buf, s, e);
       if (fn === 3 && wt === 0) vpos = val;
@@ -210,6 +213,11 @@
         pbForEach(buf, s, e, (mfn, mwt, mval) => {
           if (mfn === 1 && mwt === 0) is184 = Boolean(mval);
         });
+      }
+      if (wt === 0 && !rawUserId && fn >= 9 && fn <= 15 && val > 1e4) rawUserId = val;
+      if (wt === 2 && !hashedUserId && fn >= 9 && fn <= 15) {
+        const str = decodeStr(buf, s, e);
+        if (/^[a-zA-Z0-9_:-]{8,}$/.test(str)) hashedUserId = str;
       }
     });
     return { no, rawUserId, hashedUserId, name, content, vpos, accountStatus, is184 };
@@ -310,8 +318,9 @@
   }
 
   // src/lib/commentRecord.js
+  var COMMENT_TEXT_MAX_CHARS = 1e3;
   function normalizeCommentText(value) {
-    return String(value || "").replace(/\r\n/g, "\n").split("\n").map((l) => l.trim()).join("\n").trim();
+    return String(value || "").replace(/\r\n/g, "\n").split("\n").map((l) => l.trim()).join("\n").trim().slice(0, COMMENT_TEXT_MAX_CHARS);
   }
 
   // src/lib/ndgrChatRows.js
@@ -1228,6 +1237,18 @@
             const url = typeof args[0] === "string" ? args[0] : args[0]?.url || "";
             const isNico = url.includes("nicovideo.jp") || url.includes("nimg.jp") || url.includes("dmc.nico") || url.includes("nicolive") || url.includes("ndgr") || url.includes("127.0.0.1:3456") || url.includes("localhost:3456");
             if (!isNico) return;
+            const method = (typeof args[1] === "object" && args[1]?.method || "GET").toUpperCase();
+            if (method === "POST" && /api\/(v\d+\/)?comment/.test(url) && res.ok) {
+              try {
+                const cj = await res.clone().json();
+                window.postMessage({
+                  type: "NLS_INTERCEPT_COMMENT_POST",
+                  status: res.status,
+                  body: cj
+                }, "*");
+              } catch {
+              }
+            }
             diag.fetchHits += 1;
             try {
               if (typeof maybeScanFromFetch === "function") maybeScanFromFetch();
@@ -1420,7 +1441,7 @@
       let uid = pickStr(props, FB_UID);
       let nm = pickStr(props, FB_NAME);
       let av = normalizeAvatarUrl(pickStr(props, FB_AV));
-      const SUBS = ["data", "chat", "comment", "item", "message", "props", "value", "row", "rowData", "original"];
+      const SUBS = ["data", "chat", "comment", "item", "message", "props", "value", "row", "rowData", "original", "user", "sender", "commenter", "content"];
       for (const s of SUBS) {
         const c = props[s];
         if (!c || typeof c !== "object" || Array.isArray(c)) continue;
@@ -1428,6 +1449,15 @@
         if (!uid) uid = pickStr(c, FB_UID);
         if (!nm) nm = pickStr(c, FB_NAME);
         if (!av) av = normalizeAvatarUrl(pickStr(c, FB_AV));
+        if (!uid && typeof c.id === "number" && c.id > 999) uid = String(c.id);
+        for (const s2 of ["user", "sender", "chat", "comment", "data"]) {
+          const c2 = c[s2];
+          if (!c2 || typeof c2 !== "object" || Array.isArray(c2)) continue;
+          if (!uid) uid = pickStr(c2, FB_UID);
+          if (!nm) nm = pickStr(c2, FB_NAME);
+          if (!av) av = normalizeAvatarUrl(pickStr(c2, FB_AV));
+          if (!uid && typeof c2.id === "number" && c2.id > 999) uid = String(c2.id);
+        }
       }
       if (no && (uid || nm || av)) return { no, uid, nm, av };
       return null;
@@ -1474,8 +1504,8 @@
     }
     function scanCommentFibers() {
       try {
-        const panel = document.querySelector(".ga-ns-comment-panel") || document.querySelector('[class*="comment-panel" i]');
-        const grid = document.querySelector('[class*="comment-data-grid"], [class*="data-grid"]');
+        const panel = document.querySelector(".ga-ns-comment-panel") || document.querySelector('[class*="comment-panel" i]') || document.querySelector('[class*="CommentPanel" i]');
+        const grid = document.querySelector('[class*="comment-data-grid"], [class*="data-grid"]') || document.querySelector('[class*="comment-list" i]') || document.querySelector('[class*="CommentList" i]');
         const root = panel || grid;
         if (!root) {
           _fb.step = "no-root";
@@ -1545,7 +1575,7 @@
         _fb.attempts++;
         _fb.step = "tick-" + _fb.attempts;
         publishFiberDiag();
-        const rootEl = document.querySelector(".ga-ns-comment-panel") || document.querySelector('[class*="comment-panel" i]') || document.querySelector('[class*="comment-data-grid"], [class*="data-grid"]');
+        const rootEl = document.querySelector(".ga-ns-comment-panel") || document.querySelector('[class*="comment-panel" i]') || document.querySelector('[class*="CommentPanel" i]') || document.querySelector('[class*="comment-data-grid"], [class*="data-grid"]') || document.querySelector('[class*="comment-list" i]') || document.querySelector('[class*="CommentList" i]');
         if (rootEl) {
           _fb.step = "found-root";
           publishFiberDiag();

@@ -122,6 +122,63 @@
 
 ---
 
+## P3 計画（コメント取得パイプライン再設計: TDD）
+
+### ディープリサーチ差分（現状と未実装）
+- `src/lib/commentRecord.js` は Map index 化済みで、重複判定の O(n^2) 問題は解消済み。
+- `src/extension/content-entry.js` の `persistCommentRowsImpl()` は単一の巨大関数で、マージ/自己投稿反映/プロフィール更新/保存が密結合。
+- `src/lib/commentIngestLog.js` は source 定数化とクールダウン導入済みだが、`network` や `backfill` を含む拡張は未着手。
+- `patchExistingComment` 分離は未実装で、`mergeNewComments()` 内の重複更新ロジックがテスト粒度として粗い。
+- パイプラインの構造化ログ（phase/tierごとの可観測性）は未実装。
+
+### 目的
+- 巨大関数を段階分割して、壊れにくくレビューしやすいパイプラインにする。
+- 仕様をテストで固定し、以後の機能追加（tier間差分パス/適応型harvest）を安全にする。
+- ログを構造化し、現場デバッグ時に「どの段で何件変化したか」を追えるようにする。
+
+### 実装順（TDDで小刻み）
+1. `commentRecord.js`: `patchExistingComment()` を抽出（純関数化）。
+2. `content-entry.js`: `persistCommentRowsImpl()` から pure helper を抽出（マージ結果組み立てまで）。
+3. `commentIngestLog.js`: source ルールの拡張ポイントを追加（既存挙動は維持）。
+4. `content-entry.js`: 構造化 pipeline ログ導入（debugレベル中心）。
+
+### テスト戦略（Red -> Green -> Refactor）
+- **Step 1（commentRecord）**
+  - Red: 重複時の avatar/userId/nickname 更新優先順位を `patchExistingComment` 単体テストで固定。
+  - Green: `mergeNewComments` は `patchExistingComment` 呼び出しへ置換。
+  - Refactor: 既存 `mergeNewComments` テストを維持し、重複ケースの責務を単体へ寄せる。
+- **Step 2（content-entry 抽出）**
+  - Red: `persistCommentRowsImpl` の既存副作用順序（comments/self-post/profile/log）をスナップ的に固定。
+  - Green: helper 分割後も同一入力で同一 write payload になることを確認。
+  - Refactor: storage I/O と計算ロジックを分離し、テスト実行時間を短縮。
+- **Step 3（ingest log 拡張）**
+  - Red: unknown source 正規化、既存 ndgr/visible クールダウン互換を固定。
+  - Green: source rule 追加時も後方互換を維持。
+  - Refactor: ルールテーブルを拡張しやすい形に整理。
+- **Step 4（構造化ログ）**
+  - Red: ログ関数のフォーマット（phase, liveId, counts）が期待通りか検証。
+  - Green: 本体から `pipelineDebugLog` を呼び、既存機能は不変。
+  - Refactor: 本番ノイズを避けるため、ログ発火条件を限定。
+
+### P3 TODO（実施チェックリスト）
+- [x] `src/lib/commentRecord.js` に `patchExistingComment(existing, incoming)` を追加し、`mergeNewComments()` から重複更新処理を移譲。
+- [x] `src/lib/commentRecord.test.js` に `patchExistingComment` 単体テストを追加（avatar upgrade/userId strength/nickname update/avatarObserved heal）。
+- [ ] `src/extension/content-entry.js` に `buildPersistCommentWritePayload(...)`（純関数）を追加し、`persistCommentRowsImpl` の分岐を縮小。
+- [ ] `src/extension/content-entry.js` で storage 書き込み payload の組み立てを1か所へ集約し、既存の単一 `chrome.storage.local.set()` 方針を維持。
+- [x] `src/lib/commentIngestLog.test.js` に source 互換テストを追加（既存ケース + deep/mutation/異liveId の退行防止）。
+- [x] `src/lib/commentPipelineLog.js` に構造化ログフォーマッタ `formatPipelinePhase()` を追加。
+- [x] `src/lib/commentPipelineLog.test.js` にフォーマット検証テストを追加。
+- [x] `src/extension/content-entry.js` の `persistCommentRowsImpl` に `start/merge/skip/commit/done` ログを導入。
+- [x] 変更後に全テスト（101ファイル・1033テスト）を実行し、回帰なしを確認。
+
+### 受け入れ条件（P3 DoD）
+- `mergeNewComments()` の重複更新仕様が `patchExistingComment` 単体テストで固定されている。
+- `persistCommentRowsImpl()` の主要分岐が helper 化され、責務が「I/O実行」に寄っている。
+- ingest log の既存クールダウン仕様が壊れていない（回帰テスト green）。
+- debug ログで「入力件数/追加件数/更新有無/保存キー」を追跡できる。
+
+---
+
 ## P2 設計メモ（共通 throttle 化）
 
 ### 目的

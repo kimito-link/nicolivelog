@@ -193,6 +193,66 @@ describe('commentIngestLog', () => {
     expect(cur.items[0].source).toBe(COMMENT_INGEST_SOURCE.UNKNOWN);
   });
 
+  it('COMMENT_INGEST_SOURCE は少なくとも NDGR/VISIBLE/MUTATION/DEEP/UNKNOWN を含む', () => {
+    expect(COMMENT_INGEST_SOURCE.NDGR).toBe('ndgr');
+    expect(COMMENT_INGEST_SOURCE.VISIBLE).toBe('visible');
+    expect(COMMENT_INGEST_SOURCE.MUTATION).toBe('mutation');
+    expect(COMMENT_INGEST_SOURCE.DEEP).toBe('deep');
+    expect(COMMENT_INGEST_SOURCE.UNKNOWN).toBe('unknown');
+  });
+
+  it('deep source はクールダウンなしで常に追記する', () => {
+    const t0 = 4_000_000;
+    const a = maybeAppendCommentIngestLog({ v: 1, items: [] }, {
+      t: t0,
+      liveId: 'lv1',
+      source: COMMENT_INGEST_SOURCE.DEEP,
+      batchIn: 1, added: 1, totalAfter: 1, official: null
+    });
+    expect(a?.items).toHaveLength(1);
+    const b = maybeAppendCommentIngestLog(a, {
+      t: t0 + 100,
+      liveId: 'lv1',
+      source: COMMENT_INGEST_SOURCE.DEEP,
+      batchIn: 1, added: 0, totalAfter: 1, official: null
+    });
+    expect(b?.items).toHaveLength(2);
+  });
+
+  it('mutation source もクールダウンなしで常に追記する', () => {
+    const t0 = 5_000_000;
+    const a = maybeAppendCommentIngestLog({ v: 1, items: [] }, {
+      t: t0,
+      liveId: 'lv1',
+      source: COMMENT_INGEST_SOURCE.MUTATION,
+      batchIn: 5, added: 0, totalAfter: 10, official: null
+    });
+    const b = maybeAppendCommentIngestLog(a, {
+      t: t0 + 50,
+      liveId: 'lv1',
+      source: COMMENT_INGEST_SOURCE.MUTATION,
+      batchIn: 5, added: 0, totalAfter: 10, official: null
+    });
+    expect(b?.items).toHaveLength(2);
+  });
+
+  it('異なる liveId の ndgr は独立してクールダウンする', () => {
+    const t0 = 6_000_000;
+    const a = maybeAppendCommentIngestLog({ v: 1, items: [] }, {
+      t: t0,
+      liveId: 'lv1',
+      source: COMMENT_INGEST_SOURCE.NDGR,
+      batchIn: 1, added: 1, totalAfter: 1, official: null
+    });
+    const b = maybeAppendCommentIngestLog(a, {
+      t: t0 + 100,
+      liveId: 'lv2',
+      source: COMMENT_INGEST_SOURCE.NDGR,
+      batchIn: 1, added: 1, totalAfter: 1, official: null
+    });
+    expect(b?.items).toHaveLength(2);
+  });
+
   it('ndgr は短間隔でも added が閾値以上なら記録する', () => {
     const t0 = 2_000_000;
     const a = maybeAppendCommentIngestLog({ v: 1, items: [] }, {

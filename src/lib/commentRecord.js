@@ -125,6 +125,93 @@ function storedCommentDedupeKey(lid, ex) {
 }
 
 /**
+ * 既存コメントに incoming の情報をパッチ適用（純関数）。
+ * avatarUrl / userId / nickname / avatarObserved を「強い方優先」で更新する。
+ *
+ * @param {StoredComment} existing
+ * @param {{ userId?: string|null, nickname?: string, avatarUrl?: string|null, avatarObserved?: boolean }} incoming
+ * @returns {{ entry: StoredComment, touched: boolean }}
+ */
+export function patchExistingComment(existing, incoming) {
+  const rawAv = String(incoming.avatarUrl || '').trim();
+  const validAvatar = isHttpOrHttpsUrl(rawAv) ? rawAv : '';
+  let incUid = incoming.userId ? String(incoming.userId).trim() : '';
+  if (!incUid && validAvatar) {
+    const fromAv = userIdFromNicoUserIconHttpUrl(validAvatar);
+    if (fromAv) incUid = fromAv;
+  }
+
+  let entry = /** @type {StoredComment} */ (existing);
+  let touched = false;
+
+  if (validAvatar) {
+    const exAv = String(entry.avatarUrl || '').trim();
+    const hasAv = Boolean(exAv && isHttpOrHttpsUrl(exAv));
+    let uidForSynthetic = String(entry.userId || incUid || '').trim();
+    if (!uidForSynthetic && exAv) {
+      uidForSynthetic = userIdFromNicoUserIconHttpUrl(exAv);
+    }
+    const canUpgradeSynthetic =
+      hasAv &&
+      looksLikeNiconicoUserIconHttpUrl(validAvatar) &&
+      validAvatar !== exAv &&
+      isNiconicoSyntheticDefaultUserIconUrl(exAv, uidForSynthetic);
+    const canUpgradeWeakPlaceholder =
+      hasAv &&
+      isWeakNiconicoUserIconHttpUrl(exAv) &&
+      looksLikeNiconicoUserIconHttpUrl(validAvatar) &&
+      !isWeakNiconicoUserIconHttpUrl(validAvatar) &&
+      validAvatar !== exAv;
+
+    if (!hasAv) {
+      entry = { ...entry, avatarUrl: validAvatar };
+      touched = true;
+    } else if (canUpgradeSynthetic) {
+      entry = { ...entry, avatarUrl: validAvatar };
+      touched = true;
+    } else if (canUpgradeWeakPlaceholder) {
+      entry = { ...entry, avatarUrl: validAvatar };
+      touched = true;
+    }
+  }
+
+  const exUid = String(entry.userId || '').trim();
+  const chosenUid = pickStrongerUserId(exUid, incUid);
+  if (incUid && chosenUid !== exUid) {
+    entry = { ...entry, userId: chosenUid ? chosenUid : null };
+    touched = true;
+  }
+
+  const incNickRaw = String(incoming.nickname || '').trim();
+  const incNick =
+    incNickRaw ||
+    anonymousNicknameFallback(String(entry.userId || incUid || ''), '');
+  const exNick = String(entry.nickname || '').trim();
+  if (incNick && (!exNick || incNick.length > exNick.length)) {
+    entry = { ...entry, nickname: incNick };
+    touched = true;
+  }
+
+  if (!String(entry.userId || '').trim()) {
+    const avHeal = String(entry.avatarUrl || '').trim();
+    if (isHttpOrHttpsUrl(avHeal)) {
+      const h = userIdFromNicoUserIconHttpUrl(avHeal);
+      if (h) {
+        entry = { ...entry, userId: h };
+        touched = true;
+      }
+    }
+  }
+
+  if (incoming.avatarObserved && !entry.avatarObserved) {
+    entry = { ...entry, avatarObserved: true };
+    touched = true;
+  }
+
+  return { entry, touched };
+}
+
+/**
  * @param {string} liveId
  * @param {StoredComment[]} existing
  * @param {{ commentNo?: string, text: string, userId?: string|null, nickname?: string, avatarUrl?: string|null, avatarObserved?: boolean, vpos?: number|null, accountStatus?: number|null, is184?: boolean }[]} incoming
@@ -153,90 +240,14 @@ export function mergeNewComments(liveId, existing, incoming) {
       text,
       capturedAt: now
     });
-    const rawAv = String(row.avatarUrl || '').trim();
-    const validAvatar = isHttpOrHttpsUrl(rawAv) ? rawAv : '';
-    let incUid = row.userId ? String(row.userId).trim() : '';
-    if (!incUid && validAvatar) {
-      const fromAv = userIdFromNicoUserIconHttpUrl(validAvatar);
-      if (fromAv) incUid = fromAv;
-    }
 
     const idx = keyToIndex.get(key);
     if (idx != null && idx >= 0 && idx < next.length) {
-        const ex = /** @type {StoredComment} */ (next[idx]);
-        let patched = ex;
-        let touched = false;
-
-        if (validAvatar) {
-          const exAv = String(ex.avatarUrl || '').trim();
-          const hasAv = Boolean(exAv && isHttpOrHttpsUrl(exAv));
-          let uidForSynthetic = String(ex.userId || incUid || '').trim();
-          if (!uidForSynthetic && exAv) {
-            uidForSynthetic = userIdFromNicoUserIconHttpUrl(exAv);
-          }
-          const canUpgradeSynthetic =
-            hasAv &&
-            looksLikeNiconicoUserIconHttpUrl(validAvatar) &&
-            validAvatar !== exAv &&
-            isNiconicoSyntheticDefaultUserIconUrl(exAv, uidForSynthetic);
-
-          const canUpgradeWeakPlaceholder =
-            hasAv &&
-            isWeakNiconicoUserIconHttpUrl(exAv) &&
-            looksLikeNiconicoUserIconHttpUrl(validAvatar) &&
-            !isWeakNiconicoUserIconHttpUrl(validAvatar) &&
-            validAvatar !== exAv;
-
-          if (!hasAv) {
-            patched = { ...patched, avatarUrl: validAvatar };
-            touched = true;
-          } else if (canUpgradeSynthetic) {
-            patched = { ...patched, avatarUrl: validAvatar };
-            touched = true;
-          } else if (canUpgradeWeakPlaceholder) {
-            patched = { ...patched, avatarUrl: validAvatar };
-            touched = true;
-          }
-        }
-
-        /** 再収集で強い／同強度修正の userId を反映（数字 ID を a: で潰さない） */
-        const exUid = String(patched.userId || '').trim();
-        const chosenUid = pickStrongerUserId(exUid, incUid);
-        if (incUid && chosenUid !== exUid) {
-          patched = { ...patched, userId: chosenUid ? chosenUid : null };
-          touched = true;
-        }
-
-        const incNickRaw = String(row.nickname || '').trim();
-        const incNick =
-          incNickRaw ||
-          anonymousNicknameFallback(String(patched.userId || incUid || ''), '');
-        const exNick = String(patched.nickname || '').trim();
-        if (incNick && (!exNick || incNick.length > exNick.length)) {
-          patched = { ...patched, nickname: incNick };
-          touched = true;
-        }
-
-        if (!String(patched.userId || '').trim()) {
-          const avHeal = String(patched.avatarUrl || '').trim();
-          if (isHttpOrHttpsUrl(avHeal)) {
-            const h = userIdFromNicoUserIconHttpUrl(avHeal);
-            if (h) {
-              patched = { ...patched, userId: h };
-              touched = true;
-            }
-          }
-        }
-
-        if (row.avatarObserved && !patched.avatarObserved) {
-          patched = { ...patched, avatarObserved: true };
-          touched = true;
-        }
-
-        if (touched) {
-          next[idx] = patched;
-          storageTouched = true;
-        }
+      const result = patchExistingComment(next[idx], row);
+      if (result.touched) {
+        next[idx] = result.entry;
+        storageTouched = true;
+      }
       continue;
     }
     keyToIndex.set(key, next.length);
@@ -246,7 +257,7 @@ export function mergeNewComments(liveId, existing, incoming) {
       text,
       userId: row.userId ?? null,
       nickname: row.nickname || '',
-      avatarUrl: validAvatar || undefined,
+      avatarUrl: row.avatarUrl || undefined,
       avatarObserved: row.avatarObserved || false,
       vpos: row.vpos,
       accountStatus: row.accountStatus,

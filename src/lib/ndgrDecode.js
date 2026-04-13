@@ -118,14 +118,14 @@ function decodeStr(buf, s, e) {
  * @returns {NdgrChat}
  */
 export function decodeChat(buf, start, end) {
-  let no = null, rawUserId = null, hashedUserId = '', name = '', content = '';
+  let no = null, rawUserId = /** @type {number|null} */ (null), hashedUserId = '', name = '', content = '';
   let vpos = /** @type {number|null} */ (null);
   let accountStatus = /** @type {number|null} */ (null);
   let is184 = false;
   pbForEach(buf, start, end, (fn, wt, val, s, e) => {
     if (fn === 8 && wt === 0) no = val;
     if (fn === 5 && wt === 0) rawUserId = val;
-    if (fn === 6 && wt === 2) hashedUserId = decodeStr(buf, s, e);
+    if (fn === 6 && wt === 2) hashedUserId = hashedUserId || decodeStr(buf, s, e);
     if (fn === 2 && wt === 2) name = decodeStr(buf, s, e);
     if (fn === 1 && wt === 2) content = decodeStr(buf, s, e);
     if (fn === 3 && wt === 0) vpos = val;
@@ -134,6 +134,11 @@ export function decodeChat(buf, start, end) {
       pbForEach(buf, s, e, (mfn, mwt, mval) => {
         if (mfn === 1 && mwt === 0) is184 = Boolean(mval);
       });
+    }
+    if (wt === 0 && !rawUserId && fn >= 9 && fn <= 15 && val > 10000) rawUserId = val;
+    if (wt === 2 && !hashedUserId && fn >= 9 && fn <= 15) {
+      const str = decodeStr(buf, s, e);
+      if (/^[a-zA-Z0-9_:-]{8,}$/.test(str)) hashedUserId = str;
     }
   });
   return { no, rawUserId, hashedUserId, name, content, vpos, accountStatus, is184 };
