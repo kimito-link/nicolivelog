@@ -1653,9 +1653,23 @@ function applyStoryAvatarTvFallbackClass(img) {
   }
 }
 
+/** @param {HTMLImageElement} img */
+function removeStoryAvatarTvFallbackClass(img) {
+  if (!(img instanceof HTMLImageElement)) return;
+  img.classList.remove(
+    'nl-story-growth-icon--tv-fallback',
+    'nl-story-detail-img--tv-fallback',
+    'nl-avatar--tv-fallback'
+  );
+  if (isHttpOrHttpsUrl(img.src)) {
+    img.referrerPolicy = 'no-referrer';
+  }
+}
+
 const storyAvatarLoadGuard = createSupportAvatarLoadGuard({
   fallbackSrc: STORY_REMOTE_FAILED_PLACEHOLDER_IMG,
-  onFallbackApplied: applyStoryAvatarTvFallbackClass
+  onFallbackApplied: applyStoryAvatarTvFallbackClass,
+  onRemoteSuccess: removeStoryAvatarTvFallbackClass
 });
 
 /** @type {boolean} */

@@ -1,7 +1,9 @@
 /**
- * 応援グリッド等のリモート avatar img が 404 / 失敗したときだけ fallbackSrc へ差し替え、
- * 同一 URL の再試行を避ける。
- * 「URLが無い」コメント用の既定画像は呼び出し側で別途与える（ゆっくりタイル等）。
+ * 応援グリッド等のリモート avatar img の読み込みガード。
+ *
+ * 星野ロミ Avatar.tsx パターン:
+ *   fallback を先に表示 → バックグラウンドでプローブ → 成功時だけ差し替え
+ *   → 404 フリッカーを完全に防止。
  */
 
 import { isHttpOrHttpsUrl } from './supportGrowthTileSrc.js';
@@ -26,6 +28,7 @@ function defaultUrlKey(url) {
  *   fallbackSrc: string,
  *   urlKey?: (s: string) => string,
  *   onFallbackApplied?: (img: HTMLImageElement) => void,
+ *   onRemoteSuccess?: (img: HTMLImageElement) => void,
  *   timeoutMs?: number
  * }} options
  */
@@ -37,13 +40,22 @@ export function createSupportAvatarLoadGuard(options) {
     typeof options?.onFallbackApplied === 'function'
       ? options.onFallbackApplied
       : null;
+  const onRemoteSuccess =
+    typeof options?.onRemoteSuccess === 'function'
+      ? options.onRemoteSuccess
+      : null;
   const timeoutRaw = Number(options?.timeoutMs);
   const timeoutMs = Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? timeoutRaw : 3000;
 
   /** @type {Set<string>} */
   const failedKeys = new Set();
+  /** @type {Set<string>} */
+  const succeededKeys = new Set();
+  /** @type {WeakMap<HTMLImageElement, () => void>} */
+  const activeProbes = new WeakMap();
 
   /**
+   * 未確認の HTTP URL にはフォールバックを返す（フリッカー防止）。
    * @param {string} requestedSrc
    * @returns {string}
    */
@@ -51,59 +63,90 @@ export function createSupportAvatarLoadGuard(options) {
     const req = String(requestedSrc || '').trim();
     if (!req) return fallbackSrc;
     if (!isHttpOrHttpsUrl(req)) return req;
+    if (req === fallbackSrc) return req;
     const key = urlKeyFn(req);
     if (key && failedKeys.has(key)) return fallbackSrc;
-    return req;
+    if (key && succeededKeys.has(key)) return req;
+    return fallbackSrc;
   }
 
   /**
+   * バックグラウンドプローブ: 隠し Image で読み込みテストし、成功時のみ可視 img.src を差し替え。
    * @param {HTMLImageElement} img
-   * @param {string} requestedSrc storyGrowthTileSrcForEntry 等の「意図した」URL（http のみ意味あり）
+   * @param {string} requestedSrc
+   * @returns {HTMLImageElement|null} プローブ Image（テスト用）。プローブ不要なら null。
    */
   function noteRemoteAttempt(img, requestedSrc) {
-    if (!(img instanceof HTMLImageElement)) return;
+    if (!(img instanceof HTMLImageElement)) return null;
     const req = String(requestedSrc || '').trim();
-    if (!isHttpOrHttpsUrl(req)) return;
-    if (pickDisplaySrc(req) !== req) return;
+    if (!isHttpOrHttpsUrl(req)) return null;
+    if (req === fallbackSrc) return null;
     const key = urlKeyFn(req);
-    if (!key) return;
+    if (!key) return null;
+    if (failedKeys.has(key)) return null;
+
+    const cancelPrev = activeProbes.get(img);
+    if (cancelPrev) {
+      cancelPrev();
+      activeProbes.delete(img);
+    }
+
+    if (succeededKeys.has(key)) {
+      if (img.getAttribute('src') !== req) {
+        img.src = req;
+        onRemoteSuccess?.(img);
+      }
+      return null;
+    }
 
     let settled = false;
     /** @type {ReturnType<typeof setTimeout>|null} */
     let timer = null;
+    const probe = document.createElement('img');
+
     const cleanup = () => {
       if (timer != null) {
         clearTimeout(timer);
         timer = null;
       }
-      img.removeEventListener('load', onLoad);
-      img.removeEventListener('error', onError);
+      activeProbes.delete(img);
     };
-    const applyFallback = () => {
+
+    const applyFailed = () => {
       if (settled) return;
       settled = true;
       failedKeys.add(key);
-      img.src = fallbackSrc;
       onFallbackApplied?.(img);
       cleanup();
     };
-    const onLoad = () => {
+
+    const applySuccess = () => {
       if (settled) return;
       settled = true;
+      succeededKeys.add(key);
+      img.src = req;
+      onRemoteSuccess?.(img);
       cleanup();
     };
-    const onError = () => {
-      applyFallback();
-    };
-    img.addEventListener('load', onLoad, { once: true });
-    img.addEventListener('error', onError, { once: true });
-    timer = setTimeout(() => {
-      applyFallback();
-    }, timeoutMs);
+
+    probe.addEventListener('load', applySuccess, { once: true });
+    probe.addEventListener('error', applyFailed, { once: true });
+    timer = setTimeout(applyFailed, timeoutMs);
+
+    activeProbes.set(img, () => {
+      if (!settled) {
+        settled = true;
+        cleanup();
+      }
+    });
+
+    probe.src = req;
+    return probe;
   }
 
   function clearFailedUrls() {
     failedKeys.clear();
+    succeededKeys.clear();
   }
 
   /** @param {string} url Vitest 用（失敗セットへの直接投入） */
@@ -112,10 +155,17 @@ export function createSupportAvatarLoadGuard(options) {
     if (k) failedKeys.add(k);
   }
 
+  /** @param {string} url Vitest 用（成功セットへの直接投入） */
+  function markSucceededForTests(url) {
+    const k = urlKeyFn(String(url || ''));
+    if (k) succeededKeys.add(k);
+  }
+
   return {
     pickDisplaySrc,
     noteRemoteAttempt,
     clearFailedUrls,
-    markFailedForTests
+    markFailedForTests,
+    markSucceededForTests
   };
 }

@@ -1706,68 +1706,97 @@
     const fallbackSrc = String(options?.fallbackSrc || "");
     const urlKeyFn = typeof options?.urlKey === "function" ? options.urlKey : defaultUrlKey;
     const onFallbackApplied = typeof options?.onFallbackApplied === "function" ? options.onFallbackApplied : null;
+    const onRemoteSuccess = typeof options?.onRemoteSuccess === "function" ? options.onRemoteSuccess : null;
     const timeoutRaw = Number(options?.timeoutMs);
     const timeoutMs = Number.isFinite(timeoutRaw) && timeoutRaw > 0 ? timeoutRaw : 3e3;
     const failedKeys = /* @__PURE__ */ new Set();
+    const succeededKeys = /* @__PURE__ */ new Set();
+    const activeProbes = /* @__PURE__ */ new WeakMap();
     function pickDisplaySrc(requestedSrc) {
       const req = String(requestedSrc || "").trim();
       if (!req) return fallbackSrc;
       if (!isHttpOrHttpsUrl(req)) return req;
+      if (req === fallbackSrc) return req;
       const key = urlKeyFn(req);
       if (key && failedKeys.has(key)) return fallbackSrc;
-      return req;
+      if (key && succeededKeys.has(key)) return req;
+      return fallbackSrc;
     }
     function noteRemoteAttempt(img, requestedSrc) {
-      if (!(img instanceof HTMLImageElement)) return;
+      if (!(img instanceof HTMLImageElement)) return null;
       const req = String(requestedSrc || "").trim();
-      if (!isHttpOrHttpsUrl(req)) return;
-      if (pickDisplaySrc(req) !== req) return;
+      if (!isHttpOrHttpsUrl(req)) return null;
+      if (req === fallbackSrc) return null;
       const key = urlKeyFn(req);
-      if (!key) return;
+      if (!key) return null;
+      if (failedKeys.has(key)) return null;
+      const cancelPrev = activeProbes.get(img);
+      if (cancelPrev) {
+        cancelPrev();
+        activeProbes.delete(img);
+      }
+      if (succeededKeys.has(key)) {
+        if (img.getAttribute("src") !== req) {
+          img.src = req;
+          onRemoteSuccess?.(img);
+        }
+        return null;
+      }
       let settled = false;
       let timer = null;
+      const probe = document.createElement("img");
       const cleanup = () => {
         if (timer != null) {
           clearTimeout(timer);
           timer = null;
         }
-        img.removeEventListener("load", onLoad);
-        img.removeEventListener("error", onError);
+        activeProbes.delete(img);
       };
-      const applyFallback = () => {
+      const applyFailed = () => {
         if (settled) return;
         settled = true;
         failedKeys.add(key);
-        img.src = fallbackSrc;
         onFallbackApplied?.(img);
         cleanup();
       };
-      const onLoad = () => {
+      const applySuccess = () => {
         if (settled) return;
         settled = true;
+        succeededKeys.add(key);
+        img.src = req;
+        onRemoteSuccess?.(img);
         cleanup();
       };
-      const onError = () => {
-        applyFallback();
-      };
-      img.addEventListener("load", onLoad, { once: true });
-      img.addEventListener("error", onError, { once: true });
-      timer = setTimeout(() => {
-        applyFallback();
-      }, timeoutMs);
+      probe.addEventListener("load", applySuccess, { once: true });
+      probe.addEventListener("error", applyFailed, { once: true });
+      timer = setTimeout(applyFailed, timeoutMs);
+      activeProbes.set(img, () => {
+        if (!settled) {
+          settled = true;
+          cleanup();
+        }
+      });
+      probe.src = req;
+      return probe;
     }
     function clearFailedUrls() {
       failedKeys.clear();
+      succeededKeys.clear();
     }
     function markFailedForTests(url) {
       const k = urlKeyFn(String(url || ""));
       if (k) failedKeys.add(k);
     }
+    function markSucceededForTests(url) {
+      const k = urlKeyFn(String(url || ""));
+      if (k) succeededKeys.add(k);
+    }
     return {
       pickDisplaySrc,
       noteRemoteAttempt,
       clearFailedUrls,
-      markFailedForTests
+      markFailedForTests,
+      markSucceededForTests
     };
   }
 
@@ -5282,9 +5311,21 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       img.classList.add("nl-story-detail-img--tv-fallback");
     }
   }
+  function removeStoryAvatarTvFallbackClass(img) {
+    if (!(img instanceof HTMLImageElement)) return;
+    img.classList.remove(
+      "nl-story-growth-icon--tv-fallback",
+      "nl-story-detail-img--tv-fallback",
+      "nl-avatar--tv-fallback"
+    );
+    if (isHttpOrHttpsUrl(img.src)) {
+      img.referrerPolicy = "no-referrer";
+    }
+  }
   var storyAvatarLoadGuard = createSupportAvatarLoadGuard({
     fallbackSrc: STORY_REMOTE_FAILED_PLACEHOLDER_IMG,
-    onFallbackApplied: applyStoryAvatarTvFallbackClass
+    onFallbackApplied: applyStoryAvatarTvFallbackClass,
+    onRemoteSuccess: removeStoryAvatarTvFallbackClass
   });
   var anonymousIdenticonRuntimeEnabled = true;
   var anonymousIdenticonDataUrlCache = /* @__PURE__ */ new Map();
