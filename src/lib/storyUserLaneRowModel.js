@@ -39,12 +39,10 @@ export function userLaneProfileCompletenessTier(entry, httpAvatarCandidate) {
   /** レーンは supportGrid より厳格にし、混入を抑える */
   let t = 'tanu';
   if (ex.hasPersonalThumb) {
-    /**
-     * 匿名 a: は、個人サムネが見えていても weak nick のままなら link に上げない。
-     * （自動画像/誤結合の混入を抑える）
-     */
     const anon = isAnonymousStyleNicoUserId(uid);
     t = anon && !ex.strongNick ? SUPPORT_GRID_TIER_KONTA : SUPPORT_GRID_TIER_LINK;
+  } else if (ex.strongNick && !isAnonymousStyleNicoUserId(uid)) {
+    t = SUPPORT_GRID_TIER_LINK;
   } else if (ex.strongNick) {
     t = SUPPORT_GRID_TIER_KONTA;
   }

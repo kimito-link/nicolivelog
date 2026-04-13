@@ -128,7 +128,7 @@ export function explainSupportGridDisplayTier(p) {
   const TIER_RULES = [
     { tier: SUPPORT_GRID_TIER_LINK,  match: (f) => f.observed },
     { tier: SUPPORT_GRID_TIER_LINK,  match: (f) => f.strongNick && f.hasThumb },
-    { tier: SUPPORT_GRID_TIER_LINK,  match: (f) => f.strongNick && f.isNumericId && f.hasObservedAvatar },
+    { tier: SUPPORT_GRID_TIER_LINK,  match: (f) => f.strongNick && f.isNumericId },
     { tier: SUPPORT_GRID_TIER_KONTA, match: (f) => f.strongNick || f.hasThumb },
     { tier: SUPPORT_GRID_TIER_KONTA, match: (f) => f.hasAnyAvatar },
     { tier: SUPPORT_GRID_TIER_KONTA, match: (f) => f.isNumericId },

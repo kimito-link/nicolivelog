@@ -33,7 +33,7 @@ describe('userLaneProfileCompletenessTier', () => {
     ).toBe(2);
   });
 
-  it('avatarObserved=true でも個人サムネなしは tier 2（konta）', () => {
+  it('数値ID + 強ニック + avatarObserved=true で個人サムネなしは tier 3（link）', () => {
     expect(
       userLaneProfileCompletenessTier(
         {
@@ -44,15 +44,15 @@ describe('userLaneProfileCompletenessTier', () => {
         },
         ''
       )
-    ).toBe(2);
+    ).toBe(3);
   });
 
-  it('数値ID + 強ニック + avatarObserved=true でも個人サムネなしは tier 2（konta）', () => {
+  it('匿名ID + 強ニック + avatarObserved=true で個人サムネなしは tier 2（konta）', () => {
     expect(
       userLaneProfileCompletenessTier(
         {
-          userId: '25221924',
-          nickname: 'レコ',
+          userId: 'a:AbCdEfGhIjKlMnOp',
+          nickname: 'のら',
           avatarUrl: '',
           avatarObserved: true
         },
@@ -88,7 +88,7 @@ describe('userLaneProfileCompletenessTier', () => {
     ).toBe(1);
   });
 
-  it('avatarObserved なしの数値ID＋強ニックは tier 2（konta）', () => {
+  it('avatarObserved なしの数値ID＋強ニックは tier 3（link）', () => {
     expect(
       userLaneProfileCompletenessTier(
         {
@@ -98,7 +98,7 @@ describe('userLaneProfileCompletenessTier', () => {
         },
         ''
       )
-    ).toBe(2);
+    ).toBe(3);
   });
 });
 
