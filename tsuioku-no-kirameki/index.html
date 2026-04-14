@@ -4821,6 +4821,61 @@
       }
       .lp-inapp-hint a{color:#e9d5ff;text-decoration:underline;font-weight:700}
       .lp-inapp-hint a:hover{color:#fff}
+
+      /* ── "キミのいいねが僕の希望になるよ" ── */
+      .lp-hope-phrase{
+        text-align:center;padding:clamp(32px,6vw,56px) 0 clamp(18px,3vw,28px);
+        position:relative;overflow:hidden
+      }
+      .lp-hope-phrase__line{
+        font-size:clamp(1.25rem,3.6vw,2rem);font-weight:800;
+        line-height:var(--lh-tight);letter-spacing:.04em;
+        color:rgba(255,248,238,.96);
+        text-shadow:0 0 28px rgba(255,210,140,.5),0 0 56px rgba(255,180,90,.25);
+        margin:0
+      }
+      .lp-hope-phrase__sub{
+        margin:.7em 0 0;font-size:clamp(.82rem,2vw,1rem);
+        color:rgba(255,248,238,.58);line-height:var(--lh-body);
+        letter-spacing:.02em
+      }
+      .lp-hope-phrase__glow{
+        position:absolute;top:50%;left:50%;width:260px;height:260px;
+        transform:translate(-50%,-50%);border-radius:50%;pointer-events:none;
+        background:radial-gradient(circle,rgba(255,210,140,.22),transparent 68%);
+        animation:lp-hope-pulse 4s ease-in-out infinite alternate
+      }
+      @keyframes lp-hope-pulse{0%{opacity:.5;transform:translate(-50%,-50%) scale(.9)}100%{opacity:1;transform:translate(-50%,-50%) scale(1.15)}}
+
+      /* ── 忘却曲線 ── */
+      .lp-forgetting{
+        text-align:center;padding:clamp(24px,5vw,48px) 0;
+        position:relative
+      }
+      .lp-forgetting__heading{
+        font-size:clamp(1.05rem,2.6vw,1.4rem);font-weight:700;
+        color:rgba(255,248,238,.88);line-height:var(--lh-tight);
+        margin:0 0 clamp(16px,3vw,28px);letter-spacing:.03em
+      }
+      .lp-forgetting__chart{
+        display:block;margin:0 auto;
+        width:min(100%,560px);height:auto
+      }
+      .lp-forgetting__caption{
+        margin:clamp(12px,2vw,20px) auto 0;
+        max-width:min(100%,28rem);
+        font-size:clamp(.78rem,1.8vw,.92rem);
+        color:rgba(255,248,238,.52);line-height:var(--lh-body)
+      }
+      .lp-fc-fade{animation:lp-fc-draw 2.5s ease-out both}
+      .lp-fc-save{animation:lp-fc-draw 2.5s ease-out .6s both}
+      @keyframes lp-fc-draw{
+        from{stroke-dashoffset:600}to{stroke-dashoffset:0}
+      }
+      @media (prefers-reduced-motion:reduce){
+        .lp-hope-phrase__glow{animation:none;opacity:.7}
+        .lp-fc-fade,.lp-fc-save{animation:none;stroke-dashoffset:0}
+      }
     </style>
   </head>
   <body>
@@ -5240,6 +5295,58 @@
                   </div>
                 </div>
               </section>
+
+              <div class="lp-hope-phrase" role="note" aria-label="希望のフレーズ">
+                <span class="lp-hope-phrase__glow" aria-hidden="true"></span>
+                <p class="lp-hope-phrase__line">キミのいいねが、僕の希望になるよ。</p>
+                <p class="lp-hope-phrase__sub">たったひとつの「いいね」が、次の一歩を灯す力になる。</p>
+              </div>
+
+              <div class="lp-forgetting" role="figure" aria-label="エビングハウスの忘却曲線と、記録による記憶の保持">
+                <p class="lp-forgetting__heading">みんなの応援が、忘却の彼方に沈まぬように。</p>
+                <svg class="lp-forgetting__chart" viewBox="0 0 560 280" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                  <defs>
+                    <linearGradient id="fc-fade-grad" x1="0" y1="0" x2="560" y2="0" gradientUnits="userSpaceOnUse">
+                      <stop offset="0%" stop-color="rgba(255,180,140,.8)"/>
+                      <stop offset="100%" stop-color="rgba(255,120,80,.3)"/>
+                    </linearGradient>
+                    <linearGradient id="fc-save-grad" x1="0" y1="0" x2="560" y2="0" gradientUnits="userSpaceOnUse">
+                      <stop offset="0%" stop-color="rgba(140,210,255,.9)"/>
+                      <stop offset="100%" stop-color="rgba(100,180,255,.7)"/>
+                    </linearGradient>
+                    <linearGradient id="fc-fade-fill" x1="0" y1="40" x2="0" y2="240" gradientUnits="userSpaceOnUse">
+                      <stop offset="0%" stop-color="rgba(255,160,120,.18)"/>
+                      <stop offset="100%" stop-color="rgba(255,120,80,0)"/>
+                    </linearGradient>
+                    <linearGradient id="fc-save-fill" x1="0" y1="40" x2="0" y2="240" gradientUnits="userSpaceOnUse">
+                      <stop offset="0%" stop-color="rgba(140,210,255,.14)"/>
+                      <stop offset="100%" stop-color="rgba(100,180,255,0)"/>
+                    </linearGradient>
+                  </defs>
+                  <line x1="60" y1="240" x2="530" y2="240" stroke="rgba(255,248,238,.15)" stroke-width="1"/>
+                  <line x1="60" y1="40" x2="60" y2="240" stroke="rgba(255,248,238,.15)" stroke-width="1"/>
+                  <text x="30" y="48" fill="rgba(255,248,238,.4)" font-size="11" text-anchor="middle">100%</text>
+                  <text x="30" y="144" fill="rgba(255,248,238,.4)" font-size="11" text-anchor="middle">50%</text>
+                  <text x="30" y="244" fill="rgba(255,248,238,.4)" font-size="11" text-anchor="middle">0%</text>
+                  <text x="60" y="262" fill="rgba(255,248,238,.35)" font-size="10" text-anchor="middle">今</text>
+                  <text x="177" y="262" fill="rgba(255,248,238,.35)" font-size="10" text-anchor="middle">20分後</text>
+                  <text x="295" y="262" fill="rgba(255,248,238,.35)" font-size="10" text-anchor="middle">1時間後</text>
+                  <text x="413" y="262" fill="rgba(255,248,238,.35)" font-size="10" text-anchor="middle">1日後</text>
+                  <text x="530" y="262" fill="rgba(255,248,238,.35)" font-size="10" text-anchor="middle">1週間後</text>
+                  <path d="M60,40 C120,42 150,120 200,155 C260,192 340,215 440,228 C480,232 510,234 530,236" fill="url(#fc-fade-fill)" stroke="none" opacity=".6"/>
+                  <path d="M60,40 C120,42 150,120 200,155 C260,192 340,215 440,228 C480,232 510,234 530,236" fill="none" stroke="url(#fc-fade-grad)" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="600" class="lp-fc-fade"/>
+                  <path d="M60,40 C120,44 150,55 200,62 C260,70 340,78 440,84 C480,87 510,89 530,90" fill="url(#fc-save-fill)" stroke="none" opacity=".5"/>
+                  <path d="M60,40 C120,44 150,55 200,62 C260,70 340,78 440,84 C480,87 510,89 530,90" fill="none" stroke="url(#fc-save-grad)" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="600" class="lp-fc-save"/>
+                  <circle cx="530" cy="236" r="4" fill="rgba(255,140,100,.7)"/>
+                  <circle cx="530" cy="90" r="4" fill="rgba(140,210,255,.8)"/>
+                  <text x="516" y="252" fill="rgba(255,180,140,.65)" font-size="10" text-anchor="end">記録なし</text>
+                  <text x="516" y="82" fill="rgba(140,210,255,.7)" font-size="10" text-anchor="end">追憶の煌めきで記録</text>
+                </svg>
+                <p class="lp-forgetting__caption">
+                  エビングハウスの忘却曲線──人の記憶は20分で42%、1日で74%失われる。<br>
+                  でも、記録として残せば、応援の痕跡は消えない。
+                </p>
+              </div>
 
               <p class="lp-worldview__event">いよいよ、ニコニコ超会議。</p>
               <p>この想いを、カタチにして届けるよ。</p>
