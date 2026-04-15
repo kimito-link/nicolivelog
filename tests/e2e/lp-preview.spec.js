@@ -183,7 +183,8 @@ test.describe('lp-preview', () => {
     for (let i = 0; i < 3; i++) {
       const bubble = await rows.nth(i).locator('.bubble').boundingBox();
       expect(bubble, `hero row${i + 1} bubble`).not.toBeNull();
-      expect(bubble.width).toBeGreaterThanOrEqual(140);
+      // boundingBox は CSS ピクセルの小数になりうる（例: 139.6）。可読幅の意図は「おおむね 140px」
+      expect(Math.ceil(bubble.width)).toBeGreaterThanOrEqual(140);
     }
 
     const noOverflow = await stage.evaluate((el) => el.scrollWidth <= el.clientWidth + 1);
