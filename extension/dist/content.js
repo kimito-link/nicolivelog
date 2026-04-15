@@ -5515,10 +5515,11 @@
     const broadcasterNameFromMeta = clean(
       metaGet(metaMap, ["author", "twitter:creator", "profile:username"])
     );
-    const broadcasterNameFromDom = clean(streamLink?.textContent || "") || clean(
+    const broadcasterNameFromStreamLink = clean(streamLink?.textContent || "");
+    const broadcasterNameFromDomFallback = clean(
       document.querySelector('[class*="userName"], [class*="streamerName"]')?.textContent || ""
     );
-    const broadcasterName = broadcasterNameFromDom || broadcasterNameFromMeta;
+    const broadcasterName = broadcasterNameFromStreamLink || broadcasterNameFromMeta || broadcasterNameFromDomFallback;
     const broadcasterUserId = (() => {
       const href = String(streamLink?.getAttribute("href") || "");
       const m = href.match(/\/user\/(\d+)/);

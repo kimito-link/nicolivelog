@@ -3323,13 +3323,20 @@ function collectWatchPageSnapshot() {
   const broadcasterNameFromMeta = clean(
     metaGet(metaMap, ['author', 'twitter:creator', 'profile:username'])
   );
-  const broadcasterNameFromDom =
-    clean(streamLink?.textContent || '') ||
-    clean(
-      document.querySelector('[class*="userName"], [class*="streamerName"]')
-        ?.textContent || ''
-    );
-  const broadcasterName = broadcasterNameFromDom || broadcasterNameFromMeta;
+  const broadcasterNameFromStreamLink = clean(streamLink?.textContent || '');
+  const broadcasterNameFromDomFallback = clean(
+    document.querySelector('[class*="userName"], [class*="streamerName"]')
+      ?.textContent || ''
+  );
+  /*
+   * streamLink（user の live_programs へのリンク）が取れないとき、[class*="userName"] は
+   * コメント欄・サポーター・「好きなもの」タグ等の先頭にマッチしやすい。
+   * メタ author 等を先に使い、広い DOM クエリは最後の手段にする。
+   */
+  const broadcasterName =
+    broadcasterNameFromStreamLink ||
+    broadcasterNameFromMeta ||
+    broadcasterNameFromDomFallback;
 
   const broadcasterUserId = (() => {
     const href = String(streamLink?.getAttribute('href') || '');

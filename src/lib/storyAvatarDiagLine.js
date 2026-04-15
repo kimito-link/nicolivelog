@@ -114,21 +114,13 @@ export function formatStoryAvatarDiagLine(s) {
 }
 
 /**
- * ユーザー向け HTML（内訳は details で折りたたみ）。
+ * 件数の細かい内訳（ポーリングで数字が変わりやすい）—「詳しい状況」内に出す HTML。
  * @param {StoryAvatarDiagSnapshot} s
- * @returns {string|null}
+ * @returns {string} 表示なしのときは空文字
  */
-export function buildStoryAvatarDiagHtml(s) {
+export function buildStoryAvatarDiagVerboseHtml(s) {
   const total = typeof s.total === 'number' && s.total > 0 ? s.total : 0;
-  if (total <= 0) {
-    return (
-      '<div class="nl-story-diag nl-story-diag--empty">' +
-      '<p class="nl-story-diag__lead">' +
-      'まだ応援コメントが記録されていません。' +
-      'ニコ生の配信ページを開いた状態でしばらくお待ちください。コメントが届くと自動的に反映されます。' +
-      '</p></div>'
-    );
-  }
+  if (total <= 0) return '';
 
   const leadParts = [];
   leadParts.push(
@@ -187,6 +179,30 @@ export function buildStoryAvatarDiagHtml(s) {
     leadParts.push(extra.join(' '));
   }
 
+  return (
+    `<div class="nl-story-diag nl-story-diag--verbose">` +
+    `<p class="nl-story-diag__lead">${leadParts.join(' ')}</p>` +
+    `</div>`
+  );
+}
+
+/**
+ * ユーザー向け HTML（グリッド直上は短い文のみ。細かい内訳は buildStoryAvatarDiagVerboseHtml）。
+ * @param {StoryAvatarDiagSnapshot} s
+ * @returns {string|null}
+ */
+export function buildStoryAvatarDiagHtml(s) {
+  const total = typeof s.total === 'number' && s.total > 0 ? s.total : 0;
+  if (total <= 0) {
+    return (
+      '<div class="nl-story-diag nl-story-diag--empty">' +
+      '<p class="nl-story-diag__lead">' +
+      'まだ応援コメントが記録されていません。' +
+      'ニコ生の配信ページを開いた状態でしばらくお待ちください。コメントが届くと自動的に反映されます。' +
+      '</p></div>'
+    );
+  }
+
   const technical = formatStoryAvatarDiagLine(s);
   const glossary =
     '<ul class="nl-story-diag__list">' +
@@ -197,9 +213,13 @@ export function buildStoryAvatarDiagHtml(s) {
     '<li><strong>ユーザーレーンの段</strong>：記録コメントの表示名・サムネURL・成長タイル用の解決結果から「強い名前」「個人サムネ」を判定しています。公式の仮名のままだとこん太・たぬ姉に寄りやすいです。</li>' +
     '</ul>';
 
+  const compactLead =
+    `記録している応援コメント <strong>${total}</strong> 件です。` +
+    `件数の内訳（アイコン・ユーザーID・レーン・取り込みなど）は、下の「詳しい状況（開発・切り分け用）」を開くと読めます。`;
+
   return (
-    `<div class="nl-story-diag">` +
-    `<p class="nl-story-diag__lead">${leadParts.join(' ')}</p>` +
+    `<div class="nl-story-diag nl-story-diag--compact">` +
+    `<p class="nl-story-diag__lead">${compactLead}</p>` +
     `<details class="nl-story-diag__more">` +
     `<summary class="nl-story-diag__summary">内訳・用語（詳しく見る）</summary>` +
     `<div class="nl-story-diag__body">` +

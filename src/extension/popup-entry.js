@@ -171,7 +171,10 @@ import {
   profileGapBarSeries,
   wsStalenessState
 } from '../lib/devMonitorViz.js';
-import { buildStoryAvatarDiagHtml } from '../lib/storyAvatarDiagLine.js';
+import {
+  buildStoryAvatarDiagHtml,
+  buildStoryAvatarDiagVerboseHtml
+} from '../lib/storyAvatarDiagLine.js';
 import { pickStrongerUserId } from '../lib/userIdPreference.js';
 import {
   countCommentsInWindowMs,
@@ -3056,19 +3059,35 @@ function renderStoryUserLane() {
 
 function renderStoryAvatarDiag() {
   const el = /** @type {HTMLElement|null} */ ($('storyAvatarDiag'));
+  const elDev = /** @type {HTMLElement|null} */ ($('storyAvatarDiagDevMonitor'));
   if (!el) return;
   const html = buildStoryAvatarDiagHtml(STORY_AVATAR_DIAG_STATE);
+  const verboseHtml = buildStoryAvatarDiagVerboseHtml(STORY_AVATAR_DIAG_STATE);
+  const combinedSig = `${html ?? ''}|${verboseHtml}`;
   if (html == null) {
     if (storyAvatarDiagLastRenderSig === '__hidden__') return;
     el.hidden = true;
     el.innerHTML = '';
     storyAvatarDiagLastRenderSig = '__hidden__';
+    if (elDev) {
+      elDev.innerHTML = '';
+      elDev.hidden = true;
+    }
     return;
   }
-  if (storyAvatarDiagLastRenderSig === html && !el.hidden) return;
+  if (combinedSig === storyAvatarDiagLastRenderSig && !el.hidden) return;
   el.innerHTML = html;
   el.hidden = false;
-  storyAvatarDiagLastRenderSig = html;
+  if (elDev) {
+    if (verboseHtml) {
+      elDev.innerHTML = verboseHtml;
+      elDev.hidden = false;
+    } else {
+      elDev.innerHTML = '';
+      elDev.hidden = true;
+    }
+  }
+  storyAvatarDiagLastRenderSig = combinedSig;
 }
 
 function resetStoryAvatarDiagState() {
@@ -4977,11 +4996,16 @@ function afterNextLayout(cb) {
 
 /** @type {ResizeObserver|null} */
 let supportVisualScrollObserver = null;
+/** @type {number} */
+let supportVisualScrollRaf = 0;
+/** @type {ReturnType<typeof globalThis.setTimeout>|null} */
+let supportVisualResizeDebounceTimer = null;
 
 /**
  * details 展開後、コンテンツ body の高さ変化に追従してスクロール補正する。
  * 応援ビジュアル展開時の body 高さ変化（アイコングリッドの一括再描画など）にも追従できるよう
  * ResizeObserver で監視し、一定時間後に自動 disconnect する。
+ * （毎フレーム runScroll すると scrollTop 変更 → 再レイアウト → ResizeObserver のループになりやすいのでデバウンスする）
  * @param {HTMLDetailsElement|null} details
  */
 function scheduleScrollOpenSupportVisualDetails(details) {
@@ -4997,7 +5021,21 @@ function scheduleScrollOpenSupportVisualDetails(details) {
     scrollNlMainToRevealElement(target);
   };
 
-  supportVisualScrollObserver = new ResizeObserver(() => runScroll());
+  const scheduleScrollFromResize = () => {
+    if (supportVisualResizeDebounceTimer != null) {
+      globalThis.clearTimeout(supportVisualResizeDebounceTimer);
+    }
+    supportVisualResizeDebounceTimer = globalThis.setTimeout(() => {
+      supportVisualResizeDebounceTimer = null;
+      if (supportVisualScrollRaf) return;
+      supportVisualScrollRaf = globalThis.requestAnimationFrame(() => {
+        supportVisualScrollRaf = 0;
+        runScroll();
+      });
+    }, 120);
+  };
+
+  supportVisualScrollObserver = new ResizeObserver(() => scheduleScrollFromResize());
   supportVisualScrollObserver.observe(target);
 
   afterNextLayout(runScroll);
@@ -5008,6 +5046,14 @@ function scheduleScrollOpenSupportVisualDetails(details) {
 }
 
 function cleanupSupportVisualScrollObserver() {
+  if (supportVisualResizeDebounceTimer != null) {
+    globalThis.clearTimeout(supportVisualResizeDebounceTimer);
+    supportVisualResizeDebounceTimer = null;
+  }
+  if (supportVisualScrollRaf) {
+    globalThis.cancelAnimationFrame(supportVisualScrollRaf);
+    supportVisualScrollRaf = 0;
+  }
   if (supportVisualScrollObserver) {
     supportVisualScrollObserver.disconnect();
     supportVisualScrollObserver = null;

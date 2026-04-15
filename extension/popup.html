@@ -85,6 +85,8 @@
         min-height: 0;
         overflow-x: hidden;
         overflow-y: auto;
+        /* 縦バー出し入れで本文幅が変わり、グリッド列数が振れるのを抑える */
+        scrollbar-gutter: stable;
         box-sizing: border-box;
         font-size: var(--nl-base-font, 15px);
         border: none;
@@ -863,11 +865,15 @@
        * （html.nl-inline より詳細度が高い open 単体セレクは使わない — 埋め込みの全表示を壊す）
        */
       html:not(.nl-inline) .nl-support-visual-details[open] .nl-story-growth {
+        /* max-height のみだと内容に合わせて箱の高さが伸び縮みし、auto と相まってバーが点滅しやすい */
+        height: min(52vh, 420px);
         max-height: min(52vh, 420px);
+        min-height: 0;
         overflow-x: hidden;
-        overflow-y: auto;
+        overflow-y: scroll;
         -webkit-overflow-scrolling: touch;
         scrollbar-width: thin;
+        scrollbar-gutter: stable;
       }
 
       .nl-story-growth-cell {
@@ -1124,7 +1130,9 @@
         min-height: 0;
         padding: 5px 9px 4px;
         overflow-x: hidden;
-        overflow-y: auto;
+        /* auto だと閾値付近でバー有無が切り替わり、auto-fill グリッドの列幅が振れる */
+        overflow-y: scroll;
+        scrollbar-gutter: stable;
       }
 
       /* 初回のみ: メイン UI をハイドレート完了まで隠し、段階描画のちらつきを抑える（#usageTermsGate は外に出す） */
@@ -2320,9 +2328,11 @@
         position: relative;
         isolation: isolate;
         overflow-x: auto;
-        overflow-y: visible;
+        overflow-y: hidden;
         -webkit-overflow-scrolling: touch;
         scrollbar-width: thin;
+        /* 横スクロールの出し入れで行の高さが変わり、.nl-main の縦スクロールが揺れるのを抑える */
+        scrollbar-gutter: stable;
       }
 
       .nl-stats-bar .nl-count-hero {
@@ -3274,6 +3284,22 @@
         width: 100%;
         height: auto;
         max-height: 42px;
+      }
+
+      /* 応援アイコン診断の「長いリード」はここへ移し、メインのスクロール高さの揺れを抑える */
+      .nl-story-diag-dev {
+        margin: 0 0 10px;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid color-mix(in srgb, var(--nl-border) 75%, transparent);
+        background: color-mix(in srgb, var(--nl-surface) 94%, var(--nl-bg-soft) 6%);
+      }
+
+      .nl-story-diag-dev .nl-story-diag__lead {
+        margin: 0;
+        font-size: clamp(10px, calc(var(--nl-base-font) * 0.78), 12px);
+        line-height: 1.42;
+        color: var(--nl-text);
       }
 
       .nl-dev-monitor__hint {
@@ -6368,6 +6394,12 @@
       <details class="nl-dev-monitor-details" id="devMonitorDetails">
         <summary>詳しい状況（開発・切り分け用・折りたたみ）</summary>
         <div class="nl-dev-monitor-details__body">
+          <div
+            id="storyAvatarDiagDevMonitor"
+            class="nl-story-diag-dev"
+            aria-live="polite"
+            hidden
+          ></div>
           <p class="nl-dev-monitor__hint">
             普段は開かなくて大丈夫です。記録と公式表示の差や、アイコン・名前がどれだけ取れているかを、グラフと表で見る欄です（上から順に
             取得率チャート → 件数の比較・種類の内訳 → 表 → 技術用JSON）。コメント本文は出しません。

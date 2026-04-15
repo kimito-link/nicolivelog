@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildStoryAvatarDiagHtml,
+  buildStoryAvatarDiagVerboseHtml,
   formatStoryAvatarDiagLine,
   interceptExportCodeUserLabel
 } from './storyAvatarDiagLine.js';
@@ -93,16 +94,24 @@ describe('buildStoryAvatarDiagHtml', () => {
     expect(html).toContain('まだ応援コメントが記録されていません');
   });
 
-  it('平易なリードと折りたたみを含む', () => {
+  it('コンパクトなリードと折りたたみを含む（長い内訳は verbose 側）', () => {
     const h = buildStoryAvatarDiagHtml(base);
     expect(h).toContain('nl-story-diag__lead');
+    expect(h).toContain('nl-story-diag--compact');
     expect(h).toContain('記録している応援コメント');
+    expect(h).toContain('詳しい状況（開発・切り分け用）');
     expect(h).toContain('内訳・用語（詳しく見る）');
-    expect(h).toContain('視聴ページの通信から拾った利用者情報');
+    expect(h).not.toContain('視聴ページの通信から拾った利用者情報');
   });
 
-  it('ユーザーレーンの段の説明をリードに含められる', () => {
-    const h = buildStoryAvatarDiagHtml({
+  it('verbose に長い内訳を含む', () => {
+    const v = buildStoryAvatarDiagVerboseHtml(base);
+    expect(v).toContain('視聴ページの通信から拾った利用者情報');
+    expect(v).toContain('記録している応援コメント');
+  });
+
+  it('ユーザーレーンの段の説明は verbose 側', () => {
+    const lane = {
       ...base,
       userLaneDeduped: 6,
       userLaneTier3: 0,
@@ -110,9 +119,12 @@ describe('buildStoryAvatarDiagHtml', () => {
       userLaneTier1: 5,
       userLaneStrongNick: 2,
       userLanePersonalThumb: 2
-    });
-    expect(h).toContain('ユーザーレーンの候補');
-    expect(h).toContain('りんく列相当 <strong>0</strong>');
+    };
+    const h = buildStoryAvatarDiagHtml(lane);
+    expect(h).not.toContain('ユーザーレーンの候補');
     expect(h).toContain('ユーザーレーンの段');
+    const v = buildStoryAvatarDiagVerboseHtml(lane);
+    expect(v).toContain('ユーザーレーンの候補');
+    expect(v).toContain('りんく列相当 <strong>0</strong>');
   });
 });

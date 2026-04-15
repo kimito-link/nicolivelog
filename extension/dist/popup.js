@@ -3856,11 +3856,9 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     }
     return line;
   }
-  function buildStoryAvatarDiagHtml(s) {
+  function buildStoryAvatarDiagVerboseHtml(s) {
     const total = typeof s.total === "number" && s.total > 0 ? s.total : 0;
-    if (total <= 0) {
-      return '<div class="nl-story-diag nl-story-diag--empty"><p class="nl-story-diag__lead">\u307E\u3060\u5FDC\u63F4\u30B3\u30E1\u30F3\u30C8\u304C\u8A18\u9332\u3055\u308C\u3066\u3044\u307E\u305B\u3093\u3002\u30CB\u30B3\u751F\u306E\u914D\u4FE1\u30DA\u30FC\u30B8\u3092\u958B\u3044\u305F\u72B6\u614B\u3067\u3057\u3070\u3089\u304F\u304A\u5F85\u3061\u304F\u3060\u3055\u3044\u3002\u30B3\u30E1\u30F3\u30C8\u304C\u5C4A\u304F\u3068\u81EA\u52D5\u7684\u306B\u53CD\u6620\u3055\u308C\u307E\u3059\u3002</p></div>';
-    }
+    if (total <= 0) return "";
     const leadParts = [];
     leadParts.push(
       `\u8A18\u9332\u3057\u3066\u3044\u308B\u5FDC\u63F4\u30B3\u30E1\u30F3\u30C8 <strong>${total}</strong> \u4EF6\u306E\u3046\u3061\u3001\u4E00\u89A7\u3067\u30A2\u30A4\u30B3\u30F3\u307E\u3067\u8868\u793A\u3067\u304D\u3066\u3044\u308B\u306E\u306F <strong>${s.resolvedAvatar}</strong> \u4EF6\u3001\u30E6\u30FC\u30B6\u30FCID\u304C\u4ED8\u3044\u3066\u3044\u308B\u306E\u306F <strong>${s.withUid}</strong> \u4EF6\u3067\u3059\u3002`
@@ -3912,9 +3910,17 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       }
       leadParts.push(extra.join(" "));
     }
+    return `<div class="nl-story-diag nl-story-diag--verbose"><p class="nl-story-diag__lead">${leadParts.join(" ")}</p></div>`;
+  }
+  function buildStoryAvatarDiagHtml(s) {
+    const total = typeof s.total === "number" && s.total > 0 ? s.total : 0;
+    if (total <= 0) {
+      return '<div class="nl-story-diag nl-story-diag--empty"><p class="nl-story-diag__lead">\u307E\u3060\u5FDC\u63F4\u30B3\u30E1\u30F3\u30C8\u304C\u8A18\u9332\u3055\u308C\u3066\u3044\u307E\u305B\u3093\u3002\u30CB\u30B3\u751F\u306E\u914D\u4FE1\u30DA\u30FC\u30B8\u3092\u958B\u3044\u305F\u72B6\u614B\u3067\u3057\u3070\u3089\u304F\u304A\u5F85\u3061\u304F\u3060\u3055\u3044\u3002\u30B3\u30E1\u30F3\u30C8\u304C\u5C4A\u304F\u3068\u81EA\u52D5\u7684\u306B\u53CD\u6620\u3055\u308C\u307E\u3059\u3002</p></div>';
+    }
     const technical = formatStoryAvatarDiagLine(s);
     const glossary = '<ul class="nl-story-diag__list"><li><strong>\u4FDD\u5B58\u30A2\u30A4\u30B3\u30F3</strong>\uFF1A\u3053\u306EPC\u306E\u8A18\u9332\u306B\u3001\u30A2\u30A4\u30B3\u30F3\u306EURL\u3068\u3057\u3066\u6B8B\u3063\u3066\u3044\u308B\u4EF6\u6570\u3067\u3059\u3002</li><li><strong>\u8868\u793A\u30A2\u30A4\u30B3\u30F3</strong>\uFF1A\u30B0\u30EA\u30C3\u30C9\u306A\u3069\u3067\u5B9F\u969B\u306B\u753B\u50CF\u3068\u3057\u3066\u4F7F\u3048\u3066\u3044\u308B\u4EF6\u6570\u3067\u3059\u3002</li><li><strong>\u30DA\u30FC\u30B8\u304B\u3089\u62FE\u3063\u305F\u88DC\u52A9</strong>\uFF1A\u30CB\u30B3\u751F\u306E\u30DA\u30FC\u30B8\u304C\u8AAD\u307F\u53D6\u308B\u901A\u4FE1\u304B\u3089\u3001\u62E1\u5F35\u304C\u5229\u7528\u8005\u8868\u793A\u3092\u88DC\u3046\u305F\u3081\u306B\u4F7F\u3046\u60C5\u5831\u3067\u3059\uFF08\u672C\u6587\u306F\u4FDD\u5B58\u3057\u307E\u305B\u3093\uFF09\u3002</li><li><strong>\u4E00\u6642\u5BFE\u5FDC\u8868</strong>\uFF1A\u958B\u3044\u3066\u3044\u308B watch \u30BF\u30D6\u306E\u30E1\u30E2\u30EA\u4E0A\u3060\u3051\u306B\u3042\u308B\u5BFE\u5FDC\u8868\u3067\u3001\u30AD\u30E3\u30C3\u30B7\u30E5\u3068\u306F\u5225\u3067\u3059\u3002</li><li><strong>\u30E6\u30FC\u30B6\u30FC\u30EC\u30FC\u30F3\u306E\u6BB5</strong>\uFF1A\u8A18\u9332\u30B3\u30E1\u30F3\u30C8\u306E\u8868\u793A\u540D\u30FB\u30B5\u30E0\u30CDURL\u30FB\u6210\u9577\u30BF\u30A4\u30EB\u7528\u306E\u89E3\u6C7A\u7D50\u679C\u304B\u3089\u300C\u5F37\u3044\u540D\u524D\u300D\u300C\u500B\u4EBA\u30B5\u30E0\u30CD\u300D\u3092\u5224\u5B9A\u3057\u3066\u3044\u307E\u3059\u3002\u516C\u5F0F\u306E\u4EEE\u540D\u306E\u307E\u307E\u3060\u3068\u3053\u3093\u592A\u30FB\u305F\u306C\u59C9\u306B\u5BC4\u308A\u3084\u3059\u3044\u3067\u3059\u3002</li></ul>';
-    return `<div class="nl-story-diag"><p class="nl-story-diag__lead">${leadParts.join(" ")}</p><details class="nl-story-diag__more"><summary class="nl-story-diag__summary">\u5185\u8A33\u30FB\u7528\u8A9E\uFF08\u8A73\u3057\u304F\u898B\u308B\uFF09</summary><div class="nl-story-diag__body">` + glossary + (technical ? `<p class="nl-story-diag__technical">${escapeHtml(technical)}</p>` : "") + `</div></details></div>`;
+    const compactLead = `\u8A18\u9332\u3057\u3066\u3044\u308B\u5FDC\u63F4\u30B3\u30E1\u30F3\u30C8 <strong>${total}</strong> \u4EF6\u3067\u3059\u3002\u4EF6\u6570\u306E\u5185\u8A33\uFF08\u30A2\u30A4\u30B3\u30F3\u30FB\u30E6\u30FC\u30B6\u30FCID\u30FB\u30EC\u30FC\u30F3\u30FB\u53D6\u308A\u8FBC\u307F\u306A\u3069\uFF09\u306F\u3001\u4E0B\u306E\u300C\u8A73\u3057\u3044\u72B6\u6CC1\uFF08\u958B\u767A\u30FB\u5207\u308A\u5206\u3051\u7528\uFF09\u300D\u3092\u958B\u304F\u3068\u8AAD\u3081\u307E\u3059\u3002`;
+    return `<div class="nl-story-diag nl-story-diag--compact"><p class="nl-story-diag__lead">${compactLead}</p><details class="nl-story-diag__more"><summary class="nl-story-diag__summary">\u5185\u8A33\u30FB\u7528\u8A9E\uFF08\u8A73\u3057\u304F\u898B\u308B\uFF09</summary><div class="nl-story-diag__body">` + glossary + (technical ? `<p class="nl-story-diag__technical">${escapeHtml(technical)}</p>` : "") + `</div></details></div>`;
   }
 
   // src/lib/commentVelocityWindow.js
@@ -6461,19 +6467,38 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       /** @type {HTMLElement|null} */
       $("storyAvatarDiag")
     );
+    const elDev = (
+      /** @type {HTMLElement|null} */
+      $("storyAvatarDiagDevMonitor")
+    );
     if (!el) return;
     const html = buildStoryAvatarDiagHtml(STORY_AVATAR_DIAG_STATE);
+    const verboseHtml = buildStoryAvatarDiagVerboseHtml(STORY_AVATAR_DIAG_STATE);
+    const combinedSig = `${html ?? ""}|${verboseHtml}`;
     if (html == null) {
       if (storyAvatarDiagLastRenderSig === "__hidden__") return;
       el.hidden = true;
       el.innerHTML = "";
       storyAvatarDiagLastRenderSig = "__hidden__";
+      if (elDev) {
+        elDev.innerHTML = "";
+        elDev.hidden = true;
+      }
       return;
     }
-    if (storyAvatarDiagLastRenderSig === html && !el.hidden) return;
+    if (combinedSig === storyAvatarDiagLastRenderSig && !el.hidden) return;
     el.innerHTML = html;
     el.hidden = false;
-    storyAvatarDiagLastRenderSig = html;
+    if (elDev) {
+      if (verboseHtml) {
+        elDev.innerHTML = verboseHtml;
+        elDev.hidden = false;
+      } else {
+        elDev.innerHTML = "";
+        elDev.hidden = true;
+      }
+    }
+    storyAvatarDiagLastRenderSig = combinedSig;
   }
   function resetStoryAvatarDiagState() {
     STORY_AVATAR_DIAG_STATE.total = 0;
@@ -8026,6 +8051,8 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     });
   }
   var supportVisualScrollObserver = null;
+  var supportVisualScrollRaf = 0;
+  var supportVisualResizeDebounceTimer = null;
   function scheduleScrollOpenSupportVisualDetails(details) {
     if (!details) return;
     cleanupSupportVisualScrollObserver();
@@ -8043,7 +8070,20 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       scrollNlMainToRevealElement(detailsEl);
       scrollNlMainToRevealElement(target);
     };
-    supportVisualScrollObserver = new ResizeObserver(() => runScroll());
+    const scheduleScrollFromResize = () => {
+      if (supportVisualResizeDebounceTimer != null) {
+        globalThis.clearTimeout(supportVisualResizeDebounceTimer);
+      }
+      supportVisualResizeDebounceTimer = globalThis.setTimeout(() => {
+        supportVisualResizeDebounceTimer = null;
+        if (supportVisualScrollRaf) return;
+        supportVisualScrollRaf = globalThis.requestAnimationFrame(() => {
+          supportVisualScrollRaf = 0;
+          runScroll();
+        });
+      }, 120);
+    };
+    supportVisualScrollObserver = new ResizeObserver(() => scheduleScrollFromResize());
     supportVisualScrollObserver.observe(target);
     afterNextLayout(runScroll);
     globalThis.setTimeout(() => {
@@ -8051,6 +8091,14 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     }, 800);
   }
   function cleanupSupportVisualScrollObserver() {
+    if (supportVisualResizeDebounceTimer != null) {
+      globalThis.clearTimeout(supportVisualResizeDebounceTimer);
+      supportVisualResizeDebounceTimer = null;
+    }
+    if (supportVisualScrollRaf) {
+      globalThis.cancelAnimationFrame(supportVisualScrollRaf);
+      supportVisualScrollRaf = 0;
+    }
     if (supportVisualScrollObserver) {
       supportVisualScrollObserver.disconnect();
       supportVisualScrollObserver = null;
