@@ -2010,6 +2010,16 @@
         word-break: break-word;
       }
 
+      .nl-live-stat-sub--ingest {
+        color: var(--nl-accent, #0f8fd8);
+        font-weight: 700;
+      }
+
+      .nl-live-stat-sub--ingest.is-stale {
+        color: var(--nl-muted);
+        font-weight: 600;
+      }
+
       /* 応援ランキング専用ゾーン（記録カード内のゆっくりアイコン本体には触れない） */
       .nl-top-support-rank {
         width: 100%;
@@ -5754,6 +5764,12 @@
             class="nl-live-stat-sub nl-live-stat-sub--official"
             id="liveStatCommentsOfficial"
             hidden
+          ></div>
+          <div
+            class="nl-live-stat-sub nl-live-stat-sub--ingest"
+            id="liveStatCommentsIngest"
+            hidden
+            aria-live="polite"
           ></div>
         </div>
         <div

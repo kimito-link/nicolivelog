@@ -478,6 +478,72 @@ function setCountDisplay(value, watchSnapshot = null) {
 }
 
 /**
+ * 「取り込みが生きている」ことを小さなサブ行で見せる（サイレント故障の体感防止）。
+ * 15秒以内 = 強調色、5分以内 = 通常、それ以上 = 「しばらく取り込みがありません」表示。
+ * @param {string} liveId
+ */
+async function updateIngestHeartbeatDisplay(liveId) {
+  const el = /** @type {HTMLElement|null} */ ($('liveStatCommentsIngest'));
+  if (!el) return;
+  const lid = String(liveId || '').trim().toLowerCase();
+  if (!lid) {
+    el.hidden = true;
+    el.textContent = '';
+    el.classList.remove('is-stale');
+    return;
+  }
+  try {
+    const bag = await chrome.storage.local.get(KEY_COMMENT_INGEST_LOG);
+    const parsed = parseCommentIngestLog(bag[KEY_COMMENT_INGEST_LOG]);
+    /** @type {import('../lib/commentIngestLog.js').CommentIngestLogItem|null} */
+    let latest = null;
+    for (let i = parsed.items.length - 1; i >= 0; i--) {
+      const it = parsed.items[i];
+      if (it.liveId === lid) {
+        latest = it;
+        break;
+      }
+    }
+    if (!latest) {
+      el.hidden = true;
+      el.textContent = '';
+      el.classList.remove('is-stale');
+      return;
+    }
+    const ageSec = Math.max(0, Math.round((Date.now() - latest.t) / 1000));
+    const stale = ageSec > 5 * 60;
+    el.hidden = false;
+    el.classList.toggle('is-stale', stale);
+    const ageLabel =
+      ageSec < 60
+        ? `${ageSec}秒前`
+        : ageSec < 3600
+          ? `${Math.floor(ageSec / 60)}分前`
+          : `${Math.floor(ageSec / 3600)}時間前`;
+    const sourceLabel =
+      latest.source === 'ndgr'
+        ? 'NDGR'
+        : latest.source === 'visible'
+          ? '画面'
+          : latest.source === 'mutation'
+            ? '画面'
+            : latest.source === 'deep'
+              ? '一括'
+              : '取り込み';
+    el.textContent = stale
+      ? `最終取り込み ${ageLabel}（しばらく更新がありません）`
+      : `✓ 最終取り込み ${ageLabel}・${sourceLabel}`;
+    el.title = stale
+      ? '直近5分で新しい取り込みがありません。watch タブを前面にする・再読み込みで回復することがあります。'
+      : '拡張が直近取り込んだ経路と経過時間。ここが動いていれば取り込みは生きています。';
+  } catch {
+    el.hidden = true;
+    el.textContent = '';
+    el.classList.remove('is-stale');
+  }
+}
+
+/**
  * 最新コメント帯は ID より見た目の名前を優先する。
  * @param {PopupCommentEntry|null|undefined} entry
  * @param {string} liveId
@@ -5566,7 +5632,19 @@ function renderDevMonitorPanel(p) {
       ]);
     }
   }
-  rows.push(['公式との差（公式−一覧）', gap != null ? String(gap) : '—']);
+  {
+    let gapLabel;
+    if (gap == null) {
+      gapLabel = '—';
+    } else if (gap > 0) {
+      gapLabel = `${gap}（公式がこれだけ多い＝取り込めていない可能性）`;
+    } else if (gap < 0) {
+      gapLabel = `${Math.abs(gap)}（記録が先行・公式表示の更新待ちのことがあります）`;
+    } else {
+      gapLabel = '0（一致）';
+    }
+    rows.push(['公式との差（公式−一覧）', gapLabel]);
+  }
   rows.push([
     '差が出る主な理由（参考）',
     '画面に載っていないコメントは取り込めません。種類の扱いの違い・通信の切れ・サイトの作り変わりなどが重なり得ます（下の「種類の内訳」も参照）。'
@@ -5907,6 +5985,7 @@ async function refresh() {
       profileGaps: null
     });
     hideCommentVelocityLine();
+    void updateIngestHeartbeatDisplay('');
     void renderSessionSummaryComparePanel('');
     void renderGiftQuickStatsPanel('');
     markPopupRefreshContentPainted();
@@ -5955,6 +6034,7 @@ async function refresh() {
       profileGaps: null
     });
     hideCommentVelocityLine();
+    void updateIngestHeartbeatDisplay('');
     void renderSessionSummaryComparePanel('');
     void renderGiftQuickStatsPanel('');
     markPopupRefreshContentPainted();
@@ -6077,6 +6157,7 @@ async function refresh() {
     const displayEntries = buildDisplayCommentEntries(arr, lv);
     STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(displayEntries, lv);
     setCountDisplay(String(displayEntries.length), watchSnapshot);
+    void updateIngestHeartbeatDisplay(lv);
     renderCommentTicker(/** @type {PopupCommentEntry[]} */ (displayEntries));
     exportBtn.disabled = false;
     exportBtn.dataset.liveId = lv;

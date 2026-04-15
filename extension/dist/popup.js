@@ -4386,6 +4386,50 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     }
     if (!Number.isNaN(num)) _prevSupportCount = num;
   }
+  async function updateIngestHeartbeatDisplay(liveId) {
+    const el = (
+      /** @type {HTMLElement|null} */
+      $("liveStatCommentsIngest")
+    );
+    if (!el) return;
+    const lid = String(liveId || "").trim().toLowerCase();
+    if (!lid) {
+      el.hidden = true;
+      el.textContent = "";
+      el.classList.remove("is-stale");
+      return;
+    }
+    try {
+      const bag = await chrome.storage.local.get(KEY_COMMENT_INGEST_LOG);
+      const parsed = parseCommentIngestLog(bag[KEY_COMMENT_INGEST_LOG]);
+      let latest = null;
+      for (let i = parsed.items.length - 1; i >= 0; i--) {
+        const it = parsed.items[i];
+        if (it.liveId === lid) {
+          latest = it;
+          break;
+        }
+      }
+      if (!latest) {
+        el.hidden = true;
+        el.textContent = "";
+        el.classList.remove("is-stale");
+        return;
+      }
+      const ageSec = Math.max(0, Math.round((Date.now() - latest.t) / 1e3));
+      const stale = ageSec > 5 * 60;
+      el.hidden = false;
+      el.classList.toggle("is-stale", stale);
+      const ageLabel = ageSec < 60 ? `${ageSec}\u79D2\u524D` : ageSec < 3600 ? `${Math.floor(ageSec / 60)}\u5206\u524D` : `${Math.floor(ageSec / 3600)}\u6642\u9593\u524D`;
+      const sourceLabel = latest.source === "ndgr" ? "NDGR" : latest.source === "visible" ? "\u753B\u9762" : latest.source === "mutation" ? "\u753B\u9762" : latest.source === "deep" ? "\u4E00\u62EC" : "\u53D6\u308A\u8FBC\u307F";
+      el.textContent = stale ? `\u6700\u7D42\u53D6\u308A\u8FBC\u307F ${ageLabel}\uFF08\u3057\u3070\u3089\u304F\u66F4\u65B0\u304C\u3042\u308A\u307E\u305B\u3093\uFF09` : `\u2713 \u6700\u7D42\u53D6\u308A\u8FBC\u307F ${ageLabel}\u30FB${sourceLabel}`;
+      el.title = stale ? "\u76F4\u8FD15\u5206\u3067\u65B0\u3057\u3044\u53D6\u308A\u8FBC\u307F\u304C\u3042\u308A\u307E\u305B\u3093\u3002watch \u30BF\u30D6\u3092\u524D\u9762\u306B\u3059\u308B\u30FB\u518D\u8AAD\u307F\u8FBC\u307F\u3067\u56DE\u5FA9\u3059\u308B\u3053\u3068\u304C\u3042\u308A\u307E\u3059\u3002" : "\u62E1\u5F35\u304C\u76F4\u8FD1\u53D6\u308A\u8FBC\u3093\u3060\u7D4C\u8DEF\u3068\u7D4C\u904E\u6642\u9593\u3002\u3053\u3053\u304C\u52D5\u3044\u3066\u3044\u308C\u3070\u53D6\u308A\u8FBC\u307F\u306F\u751F\u304D\u3066\u3044\u307E\u3059\u3002";
+    } catch {
+      el.hidden = true;
+      el.textContent = "";
+      el.classList.remove("is-stale");
+    }
+  }
   function commentTickerDisplayLabel(entry, liveId, entries) {
     if (!entry) return "";
     const nickname = String(entry.nickname || "").trim();
@@ -8456,7 +8500,19 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         ]);
       }
     }
-    rows.push(["\u516C\u5F0F\u3068\u306E\u5DEE\uFF08\u516C\u5F0F\u2212\u4E00\u89A7\uFF09", gap != null ? String(gap) : "\u2014"]);
+    {
+      let gapLabel;
+      if (gap == null) {
+        gapLabel = "\u2014";
+      } else if (gap > 0) {
+        gapLabel = `${gap}\uFF08\u516C\u5F0F\u304C\u3053\u308C\u3060\u3051\u591A\u3044\uFF1D\u53D6\u308A\u8FBC\u3081\u3066\u3044\u306A\u3044\u53EF\u80FD\u6027\uFF09`;
+      } else if (gap < 0) {
+        gapLabel = `${Math.abs(gap)}\uFF08\u8A18\u9332\u304C\u5148\u884C\u30FB\u516C\u5F0F\u8868\u793A\u306E\u66F4\u65B0\u5F85\u3061\u306E\u3053\u3068\u304C\u3042\u308A\u307E\u3059\uFF09`;
+      } else {
+        gapLabel = "0\uFF08\u4E00\u81F4\uFF09";
+      }
+      rows.push(["\u516C\u5F0F\u3068\u306E\u5DEE\uFF08\u516C\u5F0F\u2212\u4E00\u89A7\uFF09", gapLabel]);
+    }
     rows.push([
       "\u5DEE\u304C\u51FA\u308B\u4E3B\u306A\u7406\u7531\uFF08\u53C2\u8003\uFF09",
       "\u753B\u9762\u306B\u8F09\u3063\u3066\u3044\u306A\u3044\u30B3\u30E1\u30F3\u30C8\u306F\u53D6\u308A\u8FBC\u3081\u307E\u305B\u3093\u3002\u7A2E\u985E\u306E\u6271\u3044\u306E\u9055\u3044\u30FB\u901A\u4FE1\u306E\u5207\u308C\u30FB\u30B5\u30A4\u30C8\u306E\u4F5C\u308A\u5909\u308F\u308A\u306A\u3069\u304C\u91CD\u306A\u308A\u5F97\u307E\u3059\uFF08\u4E0B\u306E\u300C\u7A2E\u985E\u306E\u5185\u8A33\u300D\u3082\u53C2\u7167\uFF09\u3002"
@@ -8623,6 +8679,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         const displayEntries = buildDisplayCommentEntries(arr, lv);
         STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(displayEntries, lv);
         setCountDisplay(String(displayEntries.length), watchSnapshot);
+        void updateIngestHeartbeatDisplay(lv);
         renderCommentTicker(
           /** @type {PopupCommentEntry[]} */
           displayEntries
@@ -8851,6 +8908,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
           profileGaps: null
         });
         hideCommentVelocityLine();
+        void updateIngestHeartbeatDisplay("");
         void renderSessionSummaryComparePanel("");
         void renderGiftQuickStatsPanel("");
         markPopupRefreshContentPainted();
@@ -8897,6 +8955,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
           profileGaps: null
         });
         hideCommentVelocityLine();
+        void updateIngestHeartbeatDisplay("");
         void renderSessionSummaryComparePanel("");
         void renderGiftQuickStatsPanel("");
         markPopupRefreshContentPainted();
