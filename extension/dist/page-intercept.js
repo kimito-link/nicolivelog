@@ -798,7 +798,7 @@
     const MSG_VIEWER_JOIN = "NLS_INTERCEPT_VIEWER_JOIN";
     let ndgrChatRowsBatch = [];
     let ndgrChatRowsTimer = null;
-    const NDGR_CHAT_ROWS_BATCH_MS = 120;
+    const NDGR_CHAT_ROWS_BATCH_MS = 80;
     const NDGR_CHAT_ROWS_POST_CHUNK = 220;
     function postNdgrChatRowsChunks(all) {
       if (!all.length) return;

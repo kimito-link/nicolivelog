@@ -4371,12 +4371,13 @@ function pruneAutoBackupLives(state) {
 let persistCommentRowsChain = Promise.resolve();
 
 const MIN_PERSIST_INTERVAL_MS = INGEST_TIMING.coalescerMinMs;
+const PERSIST_BURST_THRESHOLD = INGEST_TIMING.coalescerBurstThreshold;
 
 const persistCoalescer = createPersistCoalescer(async (/** @type {ParsedCommentRow[]} */ batch) => {
   const job = persistCommentRowsChain.then(() => persistCommentRowsImpl(batch));
   persistCommentRowsChain = job.catch((err) => reportSilentErrorToStorage('persist', err));
   await job;
-}, MIN_PERSIST_INTERVAL_MS);
+}, MIN_PERSIST_INTERVAL_MS, PERSIST_BURST_THRESHOLD);
 
 /**
  * @param {ParsedCommentRow[]|null|undefined} rows

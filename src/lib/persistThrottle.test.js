@@ -84,4 +84,54 @@ describe('createPersistCoalescer', () => {
     expect(flushFn).toHaveBeenCalledTimes(1);
     expect(c.pending()).toBe(0);
   });
+
+  it('burstThreshold を超えると minIntervalMs を待たず flush される', async () => {
+    const flushFn = vi.fn().mockResolvedValue(undefined);
+    const c = createPersistCoalescer(flushFn, 300, 5);
+    // 初回 flush を消化し、lastFlushTime をセット
+    c.enqueue([{ id: 'first' }]);
+    vi.advanceTimersByTime(0);
+    await vi.runAllTimersAsync();
+    expect(flushFn).toHaveBeenCalledTimes(1);
+
+    // クールダウン中（300ms 以内）でもバースト閾値到達で即 flush
+    vi.advanceTimersByTime(50);
+    c.enqueue([{ id: '1' }, { id: '2' }, { id: '3' }, { id: '4' }, { id: '5' }]);
+    await vi.runAllTimersAsync();
+    expect(flushFn).toHaveBeenCalledTimes(2);
+    expect(flushFn.mock.calls[1][0]).toHaveLength(5);
+    expect(c.pending()).toBe(0);
+  });
+
+  it('burstThreshold 未満のときは通常の throttle 挙動', async () => {
+    const flushFn = vi.fn().mockResolvedValue(undefined);
+    const c = createPersistCoalescer(flushFn, 300, 100);
+    c.enqueue([{ id: 'first' }]);
+    vi.advanceTimersByTime(0);
+    await vi.runAllTimersAsync();
+    expect(flushFn).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(50);
+    c.enqueue([{ id: '1' }, { id: '2' }]);
+    vi.advanceTimersByTime(100);
+    expect(flushFn).toHaveBeenCalledTimes(1);
+    expect(c.pending()).toBe(2);
+  });
+
+  it('burstThreshold=0 は無効（既定 throttle のまま）', async () => {
+    const flushFn = vi.fn().mockResolvedValue(undefined);
+    const c = createPersistCoalescer(flushFn, 300, 0);
+    c.enqueue([{ id: 'first' }]);
+    vi.advanceTimersByTime(0);
+    await vi.runAllTimersAsync();
+    expect(flushFn).toHaveBeenCalledTimes(1);
+
+    vi.advanceTimersByTime(50);
+    // 大量 enqueue しても 0 は「無効」扱い
+    const rows = Array.from({ length: 500 }, (_, i) => ({ id: String(i) }));
+    c.enqueue(rows);
+    vi.advanceTimersByTime(100);
+    expect(flushFn).toHaveBeenCalledTimes(1);
+    expect(c.pending()).toBe(500);
+  });
 });

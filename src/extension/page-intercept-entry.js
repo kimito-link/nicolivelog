@@ -73,7 +73,12 @@ import {
   let ndgrChatRowsBatch = [];
   /** @type {ReturnType<typeof setTimeout>|null} */
   let ndgrChatRowsTimer = null;
-  const NDGR_CHAT_ROWS_BATCH_MS = 120;
+  /**
+   * MAIN world での NDGR chat 行バッチ間隔。
+   * 短すぎると postMessage / structured clone のオーバーヘッドが増える。
+   * 長すぎると体感の「流れてこない」に繋がる。80ms はロミ式の折衷値。
+   */
+  const NDGR_CHAT_ROWS_BATCH_MS = 80;
   /** 1 メッセージが巨大になりすぎないよう分割（高流量・structured clone 負荷対策） */
   const NDGR_CHAT_ROWS_POST_CHUNK = 220;
 

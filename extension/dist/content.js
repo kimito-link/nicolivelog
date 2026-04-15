@@ -2675,12 +2675,16 @@
   }
 
   // src/lib/persistThrottle.js
-  function createPersistCoalescer(flushFn, minIntervalMs = 300) {
+  function createPersistCoalescer(flushFn, minIntervalMs = 300, burstThreshold = 0) {
     let buffer = [];
     let timer = null;
     let lastFlushTime = 0;
     function enqueue(rows) {
       buffer.push(...rows);
+      if (burstThreshold > 0 && buffer.length >= burstThreshold) {
+        void flush();
+        return;
+      }
       if (timer) return;
       const delay2 = lastFlushTime ? Math.max(0, minIntervalMs - (Date.now() - lastFlushTime)) : 0;
       timer = setTimeout(flush, delay2);
@@ -2822,6 +2826,9 @@
       interceptReconcileMs: 320,
       endedHarvestCheckMs: 4e3,
       coalescerMinMs: 300,
+      // 高流量時は 300ms 待たずに早期 flush（体感レイテンシ短縮）。
+      // NDGR_CHAT_ROWS_POST_CHUNK=220 より少し上に置き、1チャンク=即flushを避ける。
+      coalescerBurstThreshold: 260,
       visibleScanDelayMs: 380,
       pageFrameLoopMs: 360
     }
@@ -6379,11 +6386,12 @@
   }
   var persistCommentRowsChain = Promise.resolve();
   var MIN_PERSIST_INTERVAL_MS = INGEST_TIMING.coalescerMinMs;
+  var PERSIST_BURST_THRESHOLD = INGEST_TIMING.coalescerBurstThreshold;
   var persistCoalescer = createPersistCoalescer(async (batch) => {
     const job = persistCommentRowsChain.then(() => persistCommentRowsImpl(batch));
     persistCommentRowsChain = job.catch((err) => reportSilentErrorToStorage("persist", err));
     await job;
-  }, MIN_PERSIST_INTERVAL_MS);
+  }, MIN_PERSIST_INTERVAL_MS, PERSIST_BURST_THRESHOLD);
   function persistCommentRows(rows, _opts = {}) {
     const gate = diagnosePersistGate({
       hasRows: !!rows?.length,

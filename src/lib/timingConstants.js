@@ -14,6 +14,9 @@ export const INGEST_TIMING = /** @type {const} */ ({
   interceptReconcileMs: 320,
   endedHarvestCheckMs: 4000,
   coalescerMinMs: 300,
+  // 高流量時は 300ms 待たずに早期 flush（体感レイテンシ短縮）。
+  // NDGR_CHAT_ROWS_POST_CHUNK=220 より少し上に置き、1チャンク=即flushを避ける。
+  coalescerBurstThreshold: 260,
   visibleScanDelayMs: 380,
   pageFrameLoopMs: 360
 });
