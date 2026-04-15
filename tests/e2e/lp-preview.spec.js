@@ -634,21 +634,15 @@ test.describe('lp-preview', () => {
     expect(noOverflow).toBe(true);
   });
 
-  test('クロージング: 390幅で夜空の文と水面演出が見え、音ボタンが切り替わる', async ({ page }) => {
+  test('クロージング: 390幅で夜空の文が見え、音ボタンが切り替わる', async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(lpHref, { waitUntil: 'domcontentloaded' });
 
     const section = page.locator('.lp-coda');
     await section.scrollIntoViewIfNeeded();
     await expect(section).toHaveClass(/lp-coda--active/);
-    await expect(section.locator('.lp-coda__pool')).toBeVisible();
-    await expect(section.locator('.lp-coda__pool-event')).toHaveCount(4);
-    await expect(section.locator('.lp-coda__pool-ripple')).toHaveCount(4);
     await expect(section.locator('.lp-coda__nagi')).toContainText(/風がやみ、星だけが瞬く夜空に/);
     await expect(page.locator('#lp-bgm')).toHaveAttribute('src', /yozora-small-yell\.mp3/);
-    await expect(page.locator('#lp-water-drop')).toHaveAttribute('src', /Water_Drop01-5\(Low-Dry\)\.mp3/);
-    await expect(page.locator('.footer-note')).toContainText(/OtoLogic/);
-    await expect(page.locator('.footer-note')).toContainText(/CC BY 4.0/);
 
     const noOverflow = await section.evaluate((el) => el.scrollWidth <= el.clientWidth + 2);
     expect(noOverflow).toBe(true);

@@ -4513,20 +4513,7 @@
       .lp-coda{
         position:relative;overflow:hidden;
         padding:clamp(64px,12vw,120px) 0 clamp(104px,18vw,168px);
-        background:
-          linear-gradient(180deg,
-            var(--bg2) 0%,
-            #c9beb0 6%,
-            #9a9aa8 14%,
-            #6d7a98 24%,
-            #4a6288 36%,
-            #324a72 48%,
-            #243a62 60%,
-            #1a2d52 72%,
-            #122040 84%,
-            #0c1630 92%,
-            #080f22 100%
-          );
+        background:linear-gradient(180deg,#3a2f28 0%,#2a221c 22%,#1a1410 52%,#0f0c0a 78%,#080706 100%);
         text-align:center;color:#fff7ef
       }
       .lp-coda__glow{
@@ -4579,7 +4566,7 @@
         font-size:clamp(.95rem,2.45vw,1.08rem);
         line-height:1.9;
         letter-spacing:.06em;
-        color:rgba(218,232,242,.84)
+        color:rgba(240,232,220,.88)
       }
       .lp-coda__dots{
         margin:clamp(22px,4vw,34px) 0 0;
@@ -4812,7 +4799,7 @@
       .lp-coda__verse-ripple:nth-child(2){animation-delay:1.3s}
       .lp-coda__verse-ripple:nth-child(3){animation-delay:2.6s}
       @media (prefers-reduced-motion:reduce){
-        .lp-coda__glow,.lp-coda__drops,.lp-coda__verse-ripples,.lp-coda__pool-event{display:none}
+        .lp-coda__glow{display:none}
       }
 
       /* ── In-app browser hint ── */
@@ -4891,9 +4878,6 @@
     <div id="page-top" aria-hidden="true"></div>
     <audio id="lp-bgm" loop preload="none" playsinline style="display:none"
            src="../src/sound/yozora-small-yell.mp3"></audio>
-    <audio id="lp-water-drop" preload="auto" playsinline style="display:none"
-           src="../src/sound/Water_Drop01/Water_Drop01-5(Low-Dry).mp3"></audio>
-
     <header class="topbar" id="site-header">
       <div class="shell topbar-inner">
         <a class="topbar__logo" href="#worldview" aria-label="君斗りんくの追憶の煌めき（はじめにへ）">
@@ -8400,39 +8384,15 @@
       </section>
 
       <section class="lp-coda" aria-label="クロージングメッセージ">
-        <div class="lp-coda__glow" aria-hidden="true"></div>
-        <div class="lp-coda__drops" aria-hidden="true">
-          <span class="lp-coda__drop"></span>
-          <span class="lp-coda__drop"></span>
-          <span class="lp-coda__drop"></span>
-          <span class="lp-coda__drop"></span>
-          <span class="lp-coda__drop"></span>
-          <span class="lp-coda__drop"></span>
-          <span class="lp-coda__drop"></span>
-        </div>
-        <div class="lp-coda__waterscape" aria-hidden="true">
-          <div class="lp-coda__pool">
-            <span class="lp-coda__pool-event"><span class="lp-coda__pool-fall"></span><span class="lp-coda__pool-impact"></span><span class="lp-coda__pool-ripple"></span></span>
-            <span class="lp-coda__pool-event"><span class="lp-coda__pool-fall"></span><span class="lp-coda__pool-impact"></span><span class="lp-coda__pool-ripple"></span></span>
-            <span class="lp-coda__pool-event"><span class="lp-coda__pool-fall"></span><span class="lp-coda__pool-impact"></span><span class="lp-coda__pool-ripple"></span></span>
-            <span class="lp-coda__pool-event"><span class="lp-coda__pool-fall"></span><span class="lp-coda__pool-impact"></span><span class="lp-coda__pool-ripple"></span></span>
-          </div>
-        </div>
         <div class="shell lp-coda__inner">
           <p class="lp-coda__line lp-coda__line--first">キミの想いはもう受け取ったよ</p>
           <p class="lp-coda__line lp-coda__line--main">キミとボクの物語は<br>いつまでも色褪せない</p>
           <div class="lp-coda__verse">
             <p class="lp-coda__verse-drop">ずっと待っていた返事が、ようやく胸に届いたように</p>
-            <span class="lp-coda__verse-ripples" aria-hidden="true">
-              <span class="lp-coda__verse-ripple"></span>
-              <span class="lp-coda__verse-ripple"></span>
-              <span class="lp-coda__verse-ripple"></span>
-            </span>
             <p>恋人とのメッセージの返信を心待ちにするような気持ちで</p>
             <p class="lp-coda__verse-last">いつでも君の言葉（コメント）を待ち望んでいるよ</p>
           </div>
           <p class="lp-coda__nagi">風がやみ、星だけが瞬く夜空に、キミの想いが静かに光を拾っていく。</p>
-          <p class="lp-coda__dots" aria-hidden="true">・<br>・<br>・<br>・</p>
           <p class="lp-coda__line lp-coda__line--resolve">届いてる　届いてる</p>
           <p class="lp-coda__line lp-coda__line--resolve">もう大丈夫</p>
           <p class="lp-coda__line lp-coda__line--resolve lp-coda__line--resolve-last">キミの言葉　確かに受け取ったよ</p>
@@ -8445,7 +8405,6 @@
     <footer class="footer-note">
       <div class="shell">
         <div>追憶の煌めき v0.1.0 ― Kimito-Link Project</div>
-        <div class="footer-note__credit">効果音: OtoLogic「Water Drop 01 Low-Dry」使用 / CC BY 4.0</div>
       </div>
     </footer>
 
@@ -8702,147 +8661,24 @@
       (function () {
         'use strict';
         var host = document.querySelector('.lp-coda');
-        var sample = document.getElementById('lp-water-drop');
-        if (!host || !sample) return;
-
-        var events = host.querySelectorAll('.lp-coda__pool-event');
-        var audioEnabled = false;
-        var inView = false;
-        var dripTimer = 0;
-        var echoTimers = [];
-        var pool = [];
-        var POOL_SIZE = 4;
-        var DROP_VOLUME = 0.58;
-        var DROP_ECHO_VOLUME = 0.16;
-        var DROP_ECHO_DELAY = 180;
-        var visualIndex = 0;
-
-        function clearTimers() {
-          clearTimeout(dripTimer);
-          dripTimer = 0;
-          for (var i = 0; i < echoTimers.length; i++) {
-            clearTimeout(echoTimers[i]);
-          }
-          echoTimers = [];
-        }
-
-        function shouldRun() {
-          return audioEnabled && inView && !document.hidden;
-        }
-
-        function ensurePool() {
-          if (pool.length) return;
-          for (var i = 0; i < POOL_SIZE; i++) {
-            var player = /** @type {HTMLAudioElement} */ (sample.cloneNode());
-            player.removeAttribute('id');
-            player.preload = 'auto';
-            player.volume = DROP_VOLUME;
-            pool.push(player);
-          }
-        }
-
-        function stopPlayers() {
-          for (var i = 0; i < pool.length; i++) {
-            try {
-              pool[i].pause();
-              pool[i].currentTime = 0;
-              pool[i].playbackRate = 1;
-            } catch (e) {}
-          }
-        }
-
-        function pickPlayer() {
-          ensurePool();
-          for (var i = 0; i < pool.length; i++) {
-            if (pool[i].paused || pool[i].ended) return pool[i];
-          }
-          return pool[0];
-        }
-
-        function playClip(volume, rate) {
-          var player = pickPlayer();
-          try {
-            player.pause();
-            player.currentTime = 0;
-            player.playbackRate = rate || 1;
-            player.volume = volume;
-            var p = player.play();
-            if (p && typeof p.catch === 'function') p.catch(function () {});
-          } catch (e) {}
-        }
-
-        function scheduleEcho() {
-          var tid = window.setTimeout(function () {
-            echoTimers = echoTimers.filter(function (id) { return id !== tid; });
-            if (!shouldRun()) return;
-            playClip(DROP_ECHO_VOLUME, 0.965);
-          }, DROP_ECHO_DELAY);
-          echoTimers.push(tid);
-        }
-
-        function triggerPoolImpact() {
-          if (!events.length) return;
-          var ev = events[visualIndex % events.length];
-          visualIndex++;
-          ev.style.left = (24 + Math.random() * 52) + '%';
-          ev.style.top = (38 + Math.random() * 16) + '%';
-          ev.style.setProperty('--fall-start', '-' + (78 + Math.random() * 30) + 'px');
-          ev.classList.remove('is-active');
-          void ev.offsetWidth;
-          ev.classList.add('is-active');
-        }
-
-        function playDrip() {
-          triggerPoolImpact();
-          playClip(DROP_VOLUME, 1);
-          scheduleEcho();
-        }
-
-        function queueDrips() {
-          clearTimeout(dripTimer);
-          if (!shouldRun()) return;
-          dripTimer = window.setTimeout(function () {
-            if (!shouldRun()) return;
-            playDrip();
-            queueDrips();
-          }, 2600 + Math.random() * 2200);
-        }
-
-        function refresh() {
-          var running = shouldRun();
+        if (!host) return;
+        function refresh(inView) {
           host.classList.toggle('lp-coda--active', inView);
-          document.dispatchEvent(new CustomEvent('lp-coda-sound', { detail: { enabled: inView } }));
-          if (!running) {
-            clearTimers();
-            stopPlayers();
-            return;
-          }
-          ensurePool();
-          playDrip();
-          queueDrips();
+          document.dispatchEvent(new CustomEvent('lp-coda-sound', { detail: { enabled: false } }));
         }
-
-        document.addEventListener('lp-audio-state', function (ev) {
-          audioEnabled = Boolean(ev.detail && ev.detail.enabled);
-          refresh();
-        });
-        document.addEventListener('visibilitychange', refresh);
-
         if (!('IntersectionObserver' in window)) {
-          inView = true;
-          refresh();
+          refresh(true);
           return;
         }
-
         var io = new IntersectionObserver(function (entries) {
+          var inView = false;
           for (var i = 0; i < entries.length; i++) {
             if (entries[i].target === host) {
               inView = entries[i].isIntersecting && entries[i].intersectionRatio > 0.22;
             }
           }
-          refresh();
+          refresh(inView);
         }, { threshold: [0, 0.22, 0.45] });
-
         io.observe(host);
       })();
     </script>
