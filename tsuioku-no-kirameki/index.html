@@ -19,6 +19,11 @@
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="apple-mobile-web-app-title" content="追憶の煌めき">
     <link rel="canonical" href="https://tsuioku-no-kirameki.com/">
+    <link rel="preload" as="image" href="../extension/images/logo/kimito-link-color.png" fetchpriority="high">
+
+    <script type="application/ld+json">
+      {"@context":"https://schema.org","@type":"WebSite","name":"君斗りんくの追憶の煌めき","url":"https://tsuioku-no-kirameki.com/","description":"記録安定を重視した、ファイル保存も含む保存基盤の強化と、保存済みデータへの後補完、配信終了後回収まで視野に入れた Chrome 拡張。","inLanguage":"ja-JP","publisher":{"@type":"Organization","name":"Kimito-Link Project","url":"https://kimito-link.com/"}}
+    </script>
 
     <meta property="og:type" content="website">
     <meta property="og:url" content="https://tsuioku-no-kirameki.com/">
@@ -91,6 +96,20 @@
       .visually-hidden{
         position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);
         white-space:nowrap;border:0
+      }
+      .skip-link{
+        position:absolute;left:-9999px;top:0;width:1px;height:1px;overflow:hidden;
+        clip:rect(0,0,0,0);white-space:nowrap;border:0;z-index:1000
+      }
+      .skip-link:focus{
+        left:max(12px, env(safe-area-inset-left, 12px));
+        top:max(12px, env(safe-area-inset-top, 12px));
+        width:auto;height:auto;overflow:visible;clip:auto;
+        padding:10px 16px;border-radius:12px;
+        background:rgba(255,251,245,.96);color:var(--ink);font-weight:700;font-size:.95rem;
+        text-decoration:none;line-height:var(--lh-tight);
+        box-shadow:0 8px 28px rgba(45,36,28,.18);
+        outline:2px solid var(--gold);outline-offset:2px
       }
       .topbar{
         position:sticky;top:0;z-index:50;
@@ -4825,9 +4844,16 @@
         .lp-hope-phrase__glow{animation:none;opacity:.7}
         .lp-fc-fade,.lp-fc-save{animation:none;stroke-dashoffset:0}
       }
+      @media (prefers-reduced-motion: no-preference){
+        main .lp-dawn-arc > section:nth-of-type(n+5):not(.lp-coda):not(.footer-wrap){
+          content-visibility:auto;
+          contain-intrinsic-size:500px 900px
+        }
+      }
     </style>
   </head>
   <body>
+    <a class="skip-link" href="#main-content">メインコンテンツへ</a>
     <div id="page-top" aria-hidden="true"></div>
     <audio id="lp-bgm" loop preload="none" playsinline style="display:none"
            src="sound/yozora-small-yell.mp3"></audio>
@@ -4877,7 +4903,7 @@
       </p>
     </div>
 
-    <main>
+    <main id="main-content">
       <div class="lp-dawn-arc">
         <div class="lp-dawn-arc__milky-river" aria-hidden="true"></div>
         <div class="lp-dawn-arc__milky-river lp-dawn-arc__milky-river--soft" aria-hidden="true"></div>
@@ -8448,6 +8474,7 @@
         var unlocked = false;
         var soundEnabled = false;
         var codaSoundOnly = false;
+        var pausedByVisibility = false;
 
         function setSoundEnabled(next) {
           next = Boolean(next);
@@ -8457,6 +8484,7 @@
         }
 
         function applySoundEnabled(next) {
+          if (!next) pausedByVisibility = false;
           setSoundEnabled(next);
           sync();
         }
@@ -8594,6 +8622,7 @@
             return;
           }
           if (codaSoundOnly) {
+            pausedByVisibility = false;
             if (!el.paused || el.volume > 0) {
               fadeOut(function () { sync(); });
             }
@@ -8608,6 +8637,22 @@
           clearTimeout(scrollTimer);
           scrollTimer = setTimeout(function () { btn.style.opacity = ''; }, 700);
         }, { passive: true });
+
+        document.addEventListener('visibilitychange', function () {
+          if (document.hidden) {
+            if (!soundEnabled || codaSoundOnly) return;
+            try {
+              if (el.paused && (Number(el.volume) || 0) < 0.01) return;
+            } catch (e) {}
+            pausedByVisibility = true;
+            fadeOut(function () { sync(); });
+            return;
+          }
+          if (!pausedByVisibility) return;
+          pausedByVisibility = false;
+          if (!soundEnabled || codaSoundOnly) return;
+          playWithFade();
+        });
 
         el.preload = 'auto';
         sync();

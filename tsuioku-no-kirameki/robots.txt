@@ -1,0 +1,5 @@
+# https://tsuioku-no-kirameki.com/
+User-agent: *
+Allow: /
+
+Sitemap: https://tsuioku-no-kirameki.com/sitemap.xml
