@@ -975,6 +975,66 @@
     return `https://www.nicovideo.jp/user/${encodeURIComponent(s)}`;
   }
 
+  // src/lib/popupBooleanSettingController.js
+  function createBooleanSettingController(spec) {
+    if (!spec || typeof spec.key !== "string" || spec.key === "") {
+      throw new Error("createBooleanSettingController: spec.key is required");
+    }
+    const key = spec.key;
+    const normalize = typeof spec.normalize === "function" ? spec.normalize : (raw) => raw !== false;
+    const getCheckbox = typeof spec.getCheckbox === "function" ? spec.getCheckbox : () => null;
+    const applyRuntime = typeof spec.applyRuntime === "function" ? spec.applyRuntime : null;
+    function applyRaw(raw) {
+      const value = normalize(raw);
+      if (applyRuntime) applyRuntime(value);
+      const cb = getCheckbox();
+      if (cb) cb.checked = value;
+      return value;
+    }
+    return {
+      key,
+      applyRaw,
+      applyFromBag(bag) {
+        return applyRaw(bag ? bag[key] : void 0);
+      },
+      handleStorageChange(changes) {
+        if (!changes || !Object.prototype.hasOwnProperty.call(changes, key)) return false;
+        applyRaw(changes[key].newValue);
+        return true;
+      }
+    };
+  }
+
+  // src/lib/popupBooleanSettingsRegistry.js
+  function createBooleanSettingsRegistry() {
+    const controllers = [];
+    return {
+      register(controller) {
+        if (!controller || typeof controller.key !== "string" || controller.key === "") {
+          throw new Error("createBooleanSettingsRegistry#register: invalid controller");
+        }
+        controllers.push(controller);
+        return controller;
+      },
+      keys() {
+        return controllers.map((c) => c.key);
+      },
+      applyFromBag(bag) {
+        for (const c of controllers) c.applyFromBag(bag);
+      },
+      dispatchStorageChanges(changes) {
+        const hits = [];
+        for (const c of controllers) {
+          if (c.handleStorageChange(changes)) hits.push(c.key);
+        }
+        return hits;
+      },
+      size() {
+        return controllers.length;
+      }
+    };
+  }
+
   // src/lib/watchConcurrentEstimateUiCopy.js
   var SPARSE_CONCURRENT_ESTIMATE_NOTE = "\u6765\u5834\u8005\u30FB\u7D71\u8A08\u304C\u672A\u53D6\u5F97\u306E\u305F\u3081\u63A8\u5B9A\u306F\u53C2\u8003\u5024";
   function concurrentResolutionMethodTitlePart(method) {
@@ -5512,15 +5572,23 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     }
     anonymousIdenticonRuntimeEnabled = on;
   }
-  function applyFoldAnonymousInRankStripRuntimeFromBag(bag) {
-    const on = normalizeFoldAnonymousInRankStrip(
-      bag?.[KEY_FOLD_ANONYMOUS_IN_RANK_STRIP]
-    );
-    if (on !== foldAnonymousInRankStripRuntimeEnabled) {
-      _lastTopSupportRankStripStableKey = null;
-    }
-    foldAnonymousInRankStripRuntimeEnabled = on;
-  }
+  var popupBooleanSettingsRegistry = createBooleanSettingsRegistry();
+  var foldAnonymousInRankStripSettingController = popupBooleanSettingsRegistry.register(
+    createBooleanSettingController({
+      key: KEY_FOLD_ANONYMOUS_IN_RANK_STRIP,
+      normalize: normalizeFoldAnonymousInRankStrip,
+      getCheckbox: () => (
+        /** @type {HTMLInputElement|null} */
+        $("foldAnonymousInRankStrip")
+      ),
+      applyRuntime: (value) => {
+        if (value !== foldAnonymousInRankStripRuntimeEnabled) {
+          _lastTopSupportRankStripStableKey = null;
+        }
+        foldAnonymousInRankStripRuntimeEnabled = value;
+      }
+    })
+  );
   function getCachedAnonymousIdenticonDataUrl(userId) {
     if (!anonymousIdenticonRuntimeEnabled) return "";
     const u = String(userId || "").trim();
@@ -8225,19 +8293,6 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       );
     }
   }
-  async function applyFoldAnonymousInRankStripFromStorage() {
-    const cb = (
-      /** @type {HTMLInputElement|null} */
-      $("foldAnonymousInRankStrip")
-    );
-    const bag = await chrome.storage.local.get(KEY_FOLD_ANONYMOUS_IN_RANK_STRIP);
-    applyFoldAnonymousInRankStripRuntimeFromBag(bag);
-    if (cb) {
-      cb.checked = normalizeFoldAnonymousInRankStrip(
-        bag[KEY_FOLD_ANONYMOUS_IN_RANK_STRIP]
-      );
-    }
-  }
   var suppressSupportVisualTogglePersist = false;
   var ownSupportVisualPersistInFlight = false;
   var supportVisualUiWired = false;
@@ -8946,16 +9001,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         );
       }
       applyAnonymousIdenticonRuntimeFromBag(openBag);
-      const foldAnonHydrate = (
-        /** @type {HTMLInputElement|null} */
-        $("foldAnonymousInRankStrip")
-      );
-      if (foldAnonHydrate) {
-        foldAnonHydrate.checked = normalizeFoldAnonymousInRankStrip(
-          openBag[KEY_FOLD_ANONYMOUS_IN_RANK_STRIP]
-        );
-      }
-      applyFoldAnonymousInRankStripRuntimeFromBag(openBag);
+      foldAnonymousInRankStripSettingController.applyFromBag(openBag);
       const { url, fromActiveTab } = resolveWatchUrlFromTabAndStash(
         tabs[0],
         openBag[KEY_LAST_WATCH_URL]
@@ -10474,7 +10520,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     try {
       const manifest = chrome.runtime.getManifest();
       const version = String(manifest?.version || "").trim() || "?";
-      const buildId = "0417-0500" ? String("0417-0500") : "dev";
+      const buildId = "0417-0511" ? String("0417-0511") : "dev";
       valueEl.textContent = `v${version}\u30FBb${buildId}`;
     } catch {
       valueEl.textContent = "\u2014";
@@ -11440,13 +11486,12 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       safeRefresh();
     });
     foldAnonymousInRankStrip?.addEventListener("change", async () => {
+      const next = !!foldAnonymousInRankStrip.checked;
       try {
-        await storageSetSafe({
-          [KEY_FOLD_ANONYMOUS_IN_RANK_STRIP]: foldAnonymousInRankStrip.checked
-        });
+        await storageSetSafe({ [KEY_FOLD_ANONYMOUS_IN_RANK_STRIP]: next });
       } catch {
       }
-      await applyFoldAnonymousInRankStripFromStorage();
+      foldAnonymousInRankStripSettingController.applyRaw(next);
       safeRefresh();
     });
     const storyGrowthCollapseBtn = $("storyGrowthCollapseBtn");
@@ -11778,6 +11823,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       if (stCh && typeof stCh.addListener === "function") {
         stCh.addListener((changes, area) => {
           if (area !== "local") return;
+          popupBooleanSettingsRegistry.dispatchStorageChanges(changes);
           if (changes[KEY_POPUP_FRAME] || changes[KEY_POPUP_FRAME_CUSTOM]) {
             loadPopupFrameSettings().catch(() => {
             });
@@ -11796,10 +11842,6 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
           }
           if (changes[KEY_ANONYMOUS_IDENTICON_ENABLED]) {
             applyAnonymousIdenticonFromStorage().catch(() => {
-            });
-          }
-          if (changes[KEY_FOLD_ANONYMOUS_IN_RANK_STRIP]) {
-            applyFoldAnonymousInRankStripFromStorage().catch(() => {
             });
           }
           if (changes[KEY_STORY_GROWTH_COLLAPSED]) {

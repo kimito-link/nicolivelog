@@ -79,6 +79,8 @@ import { resolveConcurrentViewers } from '../lib/concurrentEstimate.js';
 import { watchMetaConcurrentGateFromSnapshot } from '../lib/popupWatchMetaConcurrentGate.js';
 import { retrySnapshotRequestUntilReady } from '../lib/popupWatchSnapshotRetry.js';
 import { buildCommentTickerNameHref } from '../lib/commentTickerNameLink.js';
+import { createBooleanSettingController } from '../lib/popupBooleanSettingController.js';
+import { createBooleanSettingsRegistry } from '../lib/popupBooleanSettingsRegistry.js';
 import {
   concurrentResolutionMethodTitlePart,
   SPARSE_CONCURRENT_ESTIMATE_NOTE
@@ -1798,18 +1800,34 @@ function applyAnonymousIdenticonRuntimeFromBag(bag) {
 }
 
 /**
- * @param {Record<string, unknown>|null|undefined} bag
+ * popup のブール設定をまとめて管理するレジストリ。
+ * 各設定は `createBooleanSettingController` で定義し、
+ *   - openBag ハイドレート: `registry.applyFromBag(openBag)`
+ *   - onChanged: `registry.dispatchStorageChanges(changes)`
+ * で一括適用する。write（change イベント内の storage.set）は副作用が設定毎に
+ * 異なる（safeRefresh 等）ためコールサイトに残す。
  */
-function applyFoldAnonymousInRankStripRuntimeFromBag(bag) {
-  const on = normalizeFoldAnonymousInRankStrip(
-    bag?.[KEY_FOLD_ANONYMOUS_IN_RANK_STRIP]
-  );
-  if (on !== foldAnonymousInRankStripRuntimeEnabled) {
-    // 並び順が切り替わるので、ストリップ差分検知をリセットして強制再描画
-    _lastTopSupportRankStripStableKey = null;
-  }
-  foldAnonymousInRankStripRuntimeEnabled = on;
-}
+const popupBooleanSettingsRegistry = createBooleanSettingsRegistry();
+
+/**
+ * 応援ランクストリップの匿名折り畳みトグル。
+ * 値が変わったら rank strip の差分検知キーをリセットして強制再描画する。
+ */
+const foldAnonymousInRankStripSettingController = popupBooleanSettingsRegistry.register(
+  createBooleanSettingController({
+    key: KEY_FOLD_ANONYMOUS_IN_RANK_STRIP,
+    normalize: normalizeFoldAnonymousInRankStrip,
+    getCheckbox: () =>
+      /** @type {HTMLInputElement|null} */ ($('foldAnonymousInRankStrip')),
+    applyRuntime: (value) => {
+      if (value !== foldAnonymousInRankStripRuntimeEnabled) {
+        // 並び順が切り替わるので、ストリップ差分検知をリセットして強制再描画
+        _lastTopSupportRankStripStableKey = null;
+      }
+      foldAnonymousInRankStripRuntimeEnabled = value;
+    }
+  })
+);
 
 /**
  * @param {unknown} userId
@@ -5113,19 +5131,6 @@ async function applyAnonymousIdenticonFromStorage() {
   }
 }
 
-async function applyFoldAnonymousInRankStripFromStorage() {
-  const cb = /** @type {HTMLInputElement|null} */ (
-    $('foldAnonymousInRankStrip')
-  );
-  const bag = await chrome.storage.local.get(KEY_FOLD_ANONYMOUS_IN_RANK_STRIP);
-  applyFoldAnonymousInRankStripRuntimeFromBag(bag);
-  if (cb) {
-    cb.checked = normalizeFoldAnonymousInRankStrip(
-      bag[KEY_FOLD_ANONYMOUS_IN_RANK_STRIP]
-    );
-  }
-}
-
 /** storage 反映中は details の toggle で永続化しない */
 let suppressSupportVisualTogglePersist = false;
 
@@ -5956,15 +5961,9 @@ async function refresh() {
     );
   }
   applyAnonymousIdenticonRuntimeFromBag(openBag);
-  const foldAnonHydrate = /** @type {HTMLInputElement|null} */ (
-    $('foldAnonymousInRankStrip')
-  );
-  if (foldAnonHydrate) {
-    foldAnonHydrate.checked = normalizeFoldAnonymousInRankStrip(
-      openBag[KEY_FOLD_ANONYMOUS_IN_RANK_STRIP]
-    );
-  }
-  applyFoldAnonymousInRankStripRuntimeFromBag(openBag);
+  // 応援ランクの匿名折り畳み：controller 経由で checkbox.checked + runtime 変数 +
+  // rank strip 再描画キーのリセットを一括反映（registry 管理下）
+  foldAnonymousInRankStripSettingController.applyFromBag(openBag);
   const { url, fromActiveTab } = resolveWatchUrlFromTabAndStash(
     tabs[0],
     openBag[KEY_LAST_WATCH_URL]
@@ -8778,14 +8777,14 @@ function initPopup() {
   });
 
   foldAnonymousInRankStrip?.addEventListener('change', async () => {
+    const next = !!foldAnonymousInRankStrip.checked;
     try {
-      await storageSetSafe({
-        [KEY_FOLD_ANONYMOUS_IN_RANK_STRIP]: foldAnonymousInRankStrip.checked
-      });
+      await storageSetSafe({ [KEY_FOLD_ANONYMOUS_IN_RANK_STRIP]: next });
     } catch {
       //
     }
-    await applyFoldAnonymousInRankStripFromStorage();
+    // 書き込み後は DOM が意図した値そのもの。controller に流して runtime に反映。
+    foldAnonymousInRankStripSettingController.applyRaw(next);
     safeRefresh();
   });
 
@@ -9139,6 +9138,8 @@ function initPopup() {
     if (stCh && typeof stCh.addListener === 'function') {
       stCh.addListener((changes, area) => {
         if (area !== 'local') return;
+        // レジストリ経由のブール設定を一括反映（未登録 key は何もしない）
+        popupBooleanSettingsRegistry.dispatchStorageChanges(changes);
         if (changes[KEY_POPUP_FRAME] || changes[KEY_POPUP_FRAME_CUSTOM]) {
           loadPopupFrameSettings().catch(() => {});
         }
@@ -9153,9 +9154,6 @@ function initPopup() {
         }
         if (changes[KEY_ANONYMOUS_IDENTICON_ENABLED]) {
           applyAnonymousIdenticonFromStorage().catch(() => {});
-        }
-        if (changes[KEY_FOLD_ANONYMOUS_IN_RANK_STRIP]) {
-          applyFoldAnonymousInRankStripFromStorage().catch(() => {});
         }
         if (changes[KEY_STORY_GROWTH_COLLAPSED]) {
           applyStoryGrowthCollapsedFromStorage().catch(() => {});
