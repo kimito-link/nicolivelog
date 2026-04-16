@@ -963,6 +963,18 @@
     return last;
   }
 
+  // src/lib/commentTickerNameLink.js
+  function canLinkCommentTickerName(userId) {
+    const s = String(userId || "").trim();
+    if (!s) return false;
+    return !isAnonymousStyleNicoUserId(s);
+  }
+  function buildCommentTickerNameHref(userId) {
+    if (!canLinkCommentTickerName(userId)) return "";
+    const s = String(userId || "").trim();
+    return `https://www.nicovideo.jp/user/${encodeURIComponent(s)}`;
+  }
+
   // src/lib/watchConcurrentEstimateUiCopy.js
   var SPARSE_CONCURRENT_ESTIMATE_NOTE = "\u6765\u5834\u8005\u30FB\u7D71\u8A08\u304C\u672A\u53D6\u5F97\u306E\u305F\u3081\u63A8\u5B9A\u306F\u53C2\u8003\u5024";
   function concurrentResolutionMethodTitlePart(method) {
@@ -4581,7 +4593,11 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     const textFallback = rawText || (noStr ? `\uFF08\u672C\u6587\u306A\u3057\u30FB${noPrefix.trim()}\uFF09` : "\uFF08\u672C\u6587\u306A\u3057\uFF09");
     const textShown = truncateText(rawText || textFallback, 72);
     const tip = label ? `${noPrefix}${label}\uFF1A${rawText || "\uFF08\u30B3\u30E1\u30F3\u30C8\u672C\u6587\u306A\u3057\uFF09"}` : `${noPrefix}${rawText || "\uFF08\u30B3\u30E1\u30F3\u30C8\u672C\u6587\u306A\u3057\uFF09"}`;
-    const labelHtml = label ? `<span class="nl-ticker-latest__name">${escapeHtml(label)}</span><span class="nl-ticker-latest__colon">\uFF1A</span>` : "";
+    const canLinkName = canLinkCommentTickerName(latest.userId);
+    const nameHref = canLinkName ? buildCommentTickerNameHref(latest.userId) : "";
+    const nameSpanHtml = `<span class="nl-ticker-latest__name">${escapeHtml(label)}</span>`;
+    const nameHtml = nameHref ? `<a class="nl-ticker-latest__name-link" href="${escapeAttr(nameHref)}" target="_blank" rel="noopener noreferrer" title="\u30CB\u30B3\u30CB\u30B3\u306E\u30E6\u30FC\u30B6\u30FC\u30DA\u30FC\u30B8\u3092\u958B\u304F">${nameSpanHtml}</a>` : nameSpanHtml;
+    const labelHtml = label ? `${nameHtml}<span class="nl-ticker-latest__colon">\uFF1A</span>` : "";
     segA.innerHTML = `<span class="nl-ticker-item nl-ticker-latest" aria-live="polite"><span class="nl-ticker-latest__row"><img class="nl-ticker-latest__avatar" alt="" src="${escapeHtml(avatarSrc)}">` + labelHtml + `<span class="nl-ticker-latest__text">${escapeHtml(textShown)}</span></span></span>`;
     const line = (
       /** @type {HTMLSpanElement|null} */
@@ -10460,7 +10476,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     try {
       const manifest = chrome.runtime.getManifest();
       const version = String(manifest?.version || "").trim() || "?";
-      const buildId = "0417-0435" ? String("0417-0435") : "dev";
+      const buildId = "0417-0449" ? String("0417-0449") : "dev";
       valueEl.textContent = `v${version}\u30FBb${buildId}`;
     } catch {
       valueEl.textContent = "\u2014";

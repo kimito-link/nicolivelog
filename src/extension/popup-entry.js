@@ -79,6 +79,10 @@ import { resolveConcurrentViewers } from '../lib/concurrentEstimate.js';
 import { watchMetaConcurrentGateFromSnapshot } from '../lib/popupWatchMetaConcurrentGate.js';
 import { retrySnapshotRequestUntilReady } from '../lib/popupWatchSnapshotRetry.js';
 import {
+  buildCommentTickerNameHref,
+  canLinkCommentTickerName
+} from '../lib/commentTickerNameLink.js';
+import {
   concurrentResolutionMethodTitlePart,
   SPARSE_CONCURRENT_ESTIMATE_NOTE
 } from '../lib/watchConcurrentEstimateUiCopy.js';
@@ -617,8 +621,15 @@ function renderCommentTicker(comments) {
   const tip = label
     ? `${noPrefix}${label}：${rawText || '（コメント本文なし）'}`
     : `${noPrefix}${rawText || '（コメント本文なし）'}`;
+  // 数値 ID を持つユーザー名は niconico のユーザーページにリンクする（匿名・ハッシュ系は通常の span のまま）
+  const canLinkName = canLinkCommentTickerName(latest.userId);
+  const nameHref = canLinkName ? buildCommentTickerNameHref(latest.userId) : '';
+  const nameSpanHtml = `<span class="nl-ticker-latest__name">${escapeHtml(label)}</span>`;
+  const nameHtml = nameHref
+    ? `<a class="nl-ticker-latest__name-link" href="${escapeAttr(nameHref)}" target="_blank" rel="noopener noreferrer" title="ニコニコのユーザーページを開く">${nameSpanHtml}</a>`
+    : nameSpanHtml;
   const labelHtml = label
-    ? `<span class="nl-ticker-latest__name">${escapeHtml(label)}</span><span class="nl-ticker-latest__colon">：</span>`
+    ? `${nameHtml}<span class="nl-ticker-latest__colon">：</span>`
     : '';
 
   segA.innerHTML =

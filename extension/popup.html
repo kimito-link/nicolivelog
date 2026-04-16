@@ -2521,6 +2521,29 @@
         white-space: nowrap;
       }
 
+      /* 数値 ID ユーザーの名前を niconico ユーザーページへのリンクに。
+         ティッカー内の視覚ノイズを避けるため、既定は下線なし・色は継承。 */
+      .nl-ticker-latest__name-link {
+        display: inline-flex;
+        min-width: 0;
+        max-width: 100%;
+        color: inherit;
+        text-decoration: none;
+        border-radius: 3px;
+      }
+
+      .nl-ticker-latest__name-link:hover .nl-ticker-latest__name,
+      .nl-ticker-latest__name-link:focus-visible .nl-ticker-latest__name {
+        text-decoration: underline;
+        text-decoration-thickness: 1px;
+        text-underline-offset: 2px;
+      }
+
+      .nl-ticker-latest__name-link:focus-visible {
+        outline: 2px solid rgb(59 130 246 / 75%);
+        outline-offset: 1px;
+      }
+
       .nl-ticker-latest__colon {
         flex: 0 0 auto;
       }
