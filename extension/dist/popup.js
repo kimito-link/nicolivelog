@@ -8634,9 +8634,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     document.documentElement.classList.toggle("nl-calm-motion", Boolean(enabled));
   }
   function applyRecordHeroRecordingDataset(toggle) {
-    const hero = document.querySelector(".nl-record-hero");
-    if (!(hero instanceof HTMLElement)) return;
-    hero.dataset.nlRecording = toggle.checked ? "on" : "off";
+    document.documentElement.dataset.nlRecording = toggle.checked ? "on" : "off";
   }
   async function refresh() {
     if (!hasExtensionContext()) {
@@ -10275,7 +10273,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     try {
       const manifest = chrome.runtime.getManifest();
       const version = String(manifest?.version || "").trim() || "?";
-      const buildId = "0416-0519" ? String("0416-0519") : "dev";
+      const buildId = "0416-0555" ? String("0416-0555") : "dev";
       valueEl.textContent = `v${version}\u30FBb${buildId}`;
     } catch {
       valueEl.textContent = "\u2014";

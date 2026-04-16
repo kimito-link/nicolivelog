@@ -5782,14 +5782,13 @@ function applyCalmPanelMotionClass(enabled) {
 }
 
 /**
- * H1（SA 知覚）: 記録 ON/OFF を `.nl-record-hero` に data 属性で同期（E2E・スタイル用）。
- * 真実の状態は `#recordToggle` の checked に合わせる。
+ * 記録 ON/OFF を `<html data-nl-recording>` に同期（E2E・将来のスタイル用フック）。
+ * 真実の状態は `#recordToggle` の checked。recordToggle が 詳細設定 内に移ったため、
+ * SA 用の hero ではなく html ルートに付ける（どこからでも CSS / E2E が拾える）。
  * @param {HTMLInputElement} toggle
  */
 function applyRecordHeroRecordingDataset(toggle) {
-  const hero = document.querySelector('.nl-record-hero');
-  if (!(hero instanceof HTMLElement)) return;
-  hero.dataset.nlRecording = toggle.checked ? 'on' : 'off';
+  document.documentElement.dataset.nlRecording = toggle.checked ? 'on' : 'off';
 }
 
 async function refresh() {

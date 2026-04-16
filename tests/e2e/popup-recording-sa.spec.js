@@ -1,5 +1,7 @@
 /**
- * H1-Perception / H1-a11y / H2-Consistency
+ * H1-Perception（旧）→ H1-Retired: 記録 ON/OFF をファーストビュー hero に出す方針は撤回。
+ * 現方針: recordToggle は <details id="nlPopupSettings"> 内に格納し、
+ * ON/OFF の機械可読状態は `<html data-nl-recording>` で公開する（CSS / E2E 用フック）。
  * @see docs/ux-tdd-hypothesis-matrix.md
  */
 import { test, expect, dismissExtensionUsageTermsGate } from './fixtures.js';
@@ -41,8 +43,8 @@ async function setRecordingStorage(context, enabled) {
   );
 }
 
-test.describe('popup 記録状態 SA（data-nl-recording / H1）', () => {
-  test('記録トグル・data-nl-recording・checked が一致する（既定ON）', async ({
+test.describe('popup 記録状態（html[data-nl-recording] / 詳細設定の中）', () => {
+  test('既定 ON: html[data-nl-recording=on] と recordToggle.checked が一致', async ({
     context
   }) => {
     await setRecordingStorage(context, null);
@@ -54,15 +56,17 @@ test.describe('popup 記録状態 SA（data-nl-recording / H1）', () => {
     });
     await dismissExtensionUsageTermsGate(popup);
 
+    const html = popup.locator('html');
+    await expect(html).toHaveAttribute('data-nl-recording', 'on');
+
+    // recordToggle は詳細設定の中にあるので、開いてから checked を確認
+    await popup.locator('#nlPopupSettings > summary').click();
     const toggle = popup.locator('#recordToggle');
-    const hero = popup.locator('.nl-record-hero');
     await expect(toggle).toBeVisible();
-    await expect(hero).toBeVisible();
     await expect(toggle).toBeChecked();
-    await expect(hero).toHaveAttribute('data-nl-recording', 'on');
   });
 
-  test('ストレージ false のとき OFF で data-nl-recording は off', async ({
+  test('ストレージ false: html[data-nl-recording=off] になる', async ({
     context
   }) => {
     await setRecordingStorage(context, false);
@@ -74,13 +78,15 @@ test.describe('popup 記録状態 SA（data-nl-recording / H1）', () => {
     });
     await dismissExtensionUsageTermsGate(popup);
 
+    const html = popup.locator('html');
+    await expect(html).toHaveAttribute('data-nl-recording', 'off');
+
+    await popup.locator('#nlPopupSettings > summary').click();
     const toggle = popup.locator('#recordToggle');
-    const hero = popup.locator('.nl-record-hero');
     await expect(toggle).not.toBeChecked();
-    await expect(hero).toHaveAttribute('data-nl-recording', 'off');
   });
 
-  test('記録トグルに名前（aria-label）が残る（H1-a11y）', async ({ context }) => {
+  test('recordToggle に名前（aria-label）が残る（a11y）', async ({ context }) => {
     const extensionId = await extensionIdFromContext(context);
     const popup = await context.newPage();
     await popup.goto(`chrome-extension://${extensionId}/popup.html`, {
@@ -89,13 +95,14 @@ test.describe('popup 記録状態 SA（data-nl-recording / H1）', () => {
     });
     await dismissExtensionUsageTermsGate(popup);
 
+    await popup.locator('#nlPopupSettings > summary').click();
     const toggle = popup.locator('#recordToggle');
     await expect(toggle).toHaveAttribute('aria-label', /.+/);
   });
 });
 
 test.describe('popup と inline=1 の記録表示一貫性（H2）', () => {
-  test('同一ストレージで data-nl-recording が popup と inline=1 で一致', async ({
+  test('同一ストレージで html[data-nl-recording] が popup と inline=1 で一致', async ({
     context
   }) => {
     await setRecordingStorage(context, false);
@@ -107,7 +114,7 @@ test.describe('popup と inline=1 の記録表示一貫性（H2）', () => {
       timeout: 60_000
     });
     await dismissExtensionUsageTermsGate(popup);
-    await expect(popup.locator('.nl-record-hero')).toHaveAttribute(
+    await expect(popup.locator('html')).toHaveAttribute(
       'data-nl-recording',
       'off'
     );
@@ -118,7 +125,7 @@ test.describe('popup と inline=1 の記録表示一貫性（H2）', () => {
       timeout: 60_000
     });
     await dismissExtensionUsageTermsGate(inline);
-    await expect(inline.locator('.nl-record-hero')).toHaveAttribute(
+    await expect(inline.locator('html')).toHaveAttribute(
       'data-nl-recording',
       'off'
     );
@@ -129,11 +136,11 @@ test.describe('popup と inline=1 の記録表示一貫性（H2）', () => {
     await inline.reload({ waitUntil: 'domcontentloaded', timeout: 60_000 });
     await dismissExtensionUsageTermsGate(inline);
 
-    await expect(popup.locator('.nl-record-hero')).toHaveAttribute(
+    await expect(popup.locator('html')).toHaveAttribute(
       'data-nl-recording',
       'on'
     );
-    await expect(inline.locator('.nl-record-hero')).toHaveAttribute(
+    await expect(inline.locator('html')).toHaveAttribute(
       'data-nl-recording',
       'on'
     );
