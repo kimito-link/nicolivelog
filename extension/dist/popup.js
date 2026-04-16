@@ -4349,6 +4349,14 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     null
   );
   var _lastTopSupportRankStripStableKey = null;
+  function resetPerBroadcastPopupCachesIfLiveIdChanged(nextLiveId) {
+    const norm = String(nextLiveId || "").trim().toLowerCase();
+    if (norm === watchPopupLastPaintedLiveId) return;
+    watchPopupLastPaintedLiveId = norm;
+    _lastTopSupportRankStripStableKey = null;
+    _prevSupportCount = null;
+    _prevViewerCount = null;
+  }
   function setCountDisplay(value, watchSnapshot = null) {
     const countEl = $("count");
     if (countEl) {
@@ -4767,6 +4775,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     snapshot: null
   };
   var watchPopupRefreshGeneration = 0;
+  var watchPopupLastPaintedLiveId = "";
   function markPopupRefreshContentPainted() {
     try {
       document.documentElement.setAttribute("data-nl-popup-content-painted", "1");
@@ -8676,6 +8685,8 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     }
     renderExtensionContextBanner(false);
     setTimeout(revealPopupPrimaryOnce, 1200);
+    const refreshGen = ++watchPopupRefreshGeneration;
+    const isFreshRefresh = () => refreshGen === watchPopupRefreshGeneration;
     const liveEl = $("liveId");
     const toggle = (
       /** @type {HTMLInputElement} */
@@ -8902,6 +8913,8 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       }
       syncVoiceCommentButton();
       if (!isNicoLiveWatchUrl(url)) {
+        if (!isFreshRefresh()) return;
+        resetPerBroadcastPopupCachesIfLiveIdChanged("");
         if (liveEl) liveEl.textContent = "\uFF08\u30CB\u30B3\u751Fwatch\u3092\u958B\u3044\u3066\u304F\u3060\u3055\u3044\uFF09";
         setCountDisplay("-");
         renderCommentTicker([]);
@@ -8950,6 +8963,8 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         liveEl.textContent = lv && !fromActiveTab ? `${lv}\uFF08\u76F4\u8FD1\u306E\u8996\u8074\u30DA\u30FC\u30B8\uFF09` : lv || "-";
       }
       if (!lv) {
+        if (!isFreshRefresh()) return;
+        resetPerBroadcastPopupCachesIfLiveIdChanged("");
         setCountDisplay("-");
         renderCommentTicker([]);
         exportBtn.disabled = true;
@@ -9077,11 +9092,15 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         0
       );
       const shouldDeep = !INTERCEPT_BACKFILL_STATE.deepTried && arr.length >= 30 && missingIdCount >= Math.ceil(arr.length * 0.4);
+      resetPerBroadcastPopupCachesIfLiveIdChanged(lv);
       if (!snapshotCacheHit) {
-        paintWatchPopupUi();
-        markPopupRefreshContentPainted();
-        revealPopupPrimaryOnce();
+        if (isFreshRefresh()) {
+          paintWatchPopupUi();
+          markPopupRefreshContentPainted();
+          revealPopupPrimaryOnce();
+        }
         const snapResult = await requestWatchPageSnapshotFromOpenTab(url);
+        if (!isFreshRefresh()) return;
         watchMetaCache.snapshot = snapResult.snapshot;
         watchSnapshot = watchMetaCache.snapshot;
         const strippedAfterSnap = stripViewerAvatarContamination(
@@ -9092,10 +9111,11 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         if (strippedAfterSnap.patched > 0) {
           arr = strippedAfterSnap.next;
           await storageSetSafe({ [key]: arr });
+          if (!isFreshRefresh()) return;
         }
         STORY_AVATAR_DIAG_STATE.stripped += strippedAfterSnap.patched;
       }
-      const refreshGen = ++watchPopupRefreshGeneration;
+      if (!isFreshRefresh()) return;
       if (thumbCountEl) thumbCountEl.textContent = "\u2026";
       paintWatchPopupUi();
       markPopupRefreshContentPainted();
@@ -10305,7 +10325,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     try {
       const manifest = chrome.runtime.getManifest();
       const version = String(manifest?.version || "").trim() || "?";
-      const buildId = "0416-1029" ? String("0416-1029") : "dev";
+      const buildId = "0416-1648" ? String("0416-1648") : "dev";
       valueEl.textContent = `v${version}\u30FBb${buildId}`;
     } catch {
       valueEl.textContent = "\u2014";

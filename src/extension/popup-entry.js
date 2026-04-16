@@ -428,6 +428,22 @@ let _prevSupportCount = /** @type {number|null} */ (null);
 let _lastTopSupportRankStripStableKey = null;
 
 /**
+ * 放送切替（liveId 変化）を検知して、直前放送の UI キャッシュ（rank strip キー・差分リアクション用の
+ * 直近値）を全て強制リセットする。複数 refresh が並走したときに古い描画が新しい描画を上書きしても
+ * 放送間のデータが混ざらないようにする防御策（2026-04 追加: 同一ポップアップで配信切替時に上位ユーザー
+ * が前配信のものと同じに見える不具合対応）。
+ * @param {string} nextLiveId
+ */
+function resetPerBroadcastPopupCachesIfLiveIdChanged(nextLiveId) {
+  const norm = String(nextLiveId || '').trim().toLowerCase();
+  if (norm === watchPopupLastPaintedLiveId) return;
+  watchPopupLastPaintedLiveId = norm;
+  _lastTopSupportRankStripStableKey = null;
+  _prevSupportCount = null;
+  _prevViewerCount = null;
+}
+
+/**
  * @param {string} value
  * @param {WatchPageSnapshot|null} [watchSnapshot] 公式コメント数の併記用
  */
@@ -961,6 +977,12 @@ const watchMetaCache = {
 
 /** 遅延フェーズの描画が直近の refresh に属するか判定する */
 let watchPopupRefreshGeneration = 0;
+
+/**
+ * 直近の paintWatchPopupUi が対象とした liveId。放送切替時にクロス配信データ汚染を検知して
+ * 関連キャッシュを強制リセットするための追跡変数。値は空文字列=まだ描画なし。
+ */
+let watchPopupLastPaintedLiveId = '';
 
 /** E2E / 体感計測用: メインコンテンツの初回ペイントが終わった印 */
 function markPopupRefreshContentPainted() {
@@ -5832,6 +5854,12 @@ async function refresh() {
   renderExtensionContextBanner(false);
   setTimeout(revealPopupPrimaryOnce, 1200);
 
+  // 世代番号は refresh の最初に確保する。放送切替で新しい refresh が走った後、古い refresh の
+  // await から戻ってきた paintWatchPopupUi が新しい放送の描画を上書きしないよう、以降の paint は
+  // すべて isFreshRefresh() で守る。
+  const refreshGen = ++watchPopupRefreshGeneration;
+  const isFreshRefresh = () => refreshGen === watchPopupRefreshGeneration;
+
   const liveEl = $('liveId');
   const toggle = /** @type {HTMLInputElement} */ ($('recordToggle'));
   const exportBtn = /** @type {HTMLButtonElement} */ ($('exportJson'));
@@ -5980,6 +6008,8 @@ async function refresh() {
   syncVoiceCommentButton();
 
   if (!isNicoLiveWatchUrl(url)) {
+    if (!isFreshRefresh()) return;
+    resetPerBroadcastPopupCachesIfLiveIdChanged('');
     if (liveEl) liveEl.textContent = '（ニコ生watchを開いてください）';
     setCountDisplay('-');
     renderCommentTicker([]);
@@ -6030,6 +6060,8 @@ async function refresh() {
   }
 
   if (!lv) {
+    if (!isFreshRefresh()) return;
+    resetPerBroadcastPopupCachesIfLiveIdChanged('');
     setCountDisplay('-');
     renderCommentTicker([]);
     exportBtn.disabled = true;
@@ -6231,11 +6263,19 @@ async function refresh() {
     );
   }
 
+  // 放送切替を検知して、直前放送に紐付くキャッシュ（rank strip の再描画抑止キー、
+  // 直近コメント数・視聴者数の差分比較用値）を強制リセットする。paintWatchPopupUi より前で
+  // 呼ぶことで、最初の描画から新しい放送のデータのみが画面に乗るようにする。
+  resetPerBroadcastPopupCachesIfLiveIdChanged(lv);
+
   if (!snapshotCacheHit) {
-    paintWatchPopupUi();
-    markPopupRefreshContentPainted();
-    revealPopupPrimaryOnce();
+    if (isFreshRefresh()) {
+      paintWatchPopupUi();
+      markPopupRefreshContentPainted();
+      revealPopupPrimaryOnce();
+    }
     const snapResult = await requestWatchPageSnapshotFromOpenTab(url);
+    if (!isFreshRefresh()) return;
     watchMetaCache.snapshot = snapResult.snapshot;
     watchSnapshot = watchMetaCache.snapshot;
     const strippedAfterSnap = stripViewerAvatarContamination(
@@ -6246,11 +6286,12 @@ async function refresh() {
     if (strippedAfterSnap.patched > 0) {
       arr = strippedAfterSnap.next;
       await storageSetSafe({ [key]: arr });
+      if (!isFreshRefresh()) return;
     }
     STORY_AVATAR_DIAG_STATE.stripped += strippedAfterSnap.patched;
   }
 
-  const refreshGen = ++watchPopupRefreshGeneration;
+  if (!isFreshRefresh()) return;
 
   if (thumbCountEl) thumbCountEl.textContent = '…';
   paintWatchPopupUi();
