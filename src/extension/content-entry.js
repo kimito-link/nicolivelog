@@ -3320,6 +3320,23 @@ function collectWatchPageSnapshot() {
       !/^https?:\/\//i.test(text)
     );
   });
+  /*
+   * 配信者名の優先順位:
+   *   1. embedded-data の program.supplier.name  — ニコ生が表示する「配信表示名」そのもの
+   *   2. streamLink テキスト                     — /user/{id}/live_programs リンクのアンカーテキスト
+   *   3. meta author / twitter:creator           — ページレベルのメタ情報
+   *   4. DOM [class*="userName"] フォールバック   — コメント欄等の汚染リスクあり（最終手段）
+   *
+   * ユーザーが配信上のニックネームを変えている場合（例: アカウント名 きラリ → 配信表示名 太ももちゃん）、
+   * streamLink は「きラリ」を返すが、embedded-data supplier.name は「太ももちゃん」を返す。
+   * 視聴者が画面で見る名前に合わせるため embedded-data を最優先にする。
+   */
+  const embeddedProps = (() => {
+    try { return extractEmbeddedDataProps(document); } catch { return null; }
+  })();
+  const broadcasterNameFromEmbedded = clean(
+    embeddedProps?.program?.supplier?.name ?? ''
+  );
   const broadcasterNameFromMeta = clean(
     metaGet(metaMap, ['author', 'twitter:creator', 'profile:username'])
   );
@@ -3328,20 +3345,26 @@ function collectWatchPageSnapshot() {
     document.querySelector('[class*="userName"], [class*="streamerName"]')
       ?.textContent || ''
   );
-  /*
-   * streamLink（user の live_programs へのリンク）が取れないとき、[class*="userName"] は
-   * コメント欄・サポーター・「好きなもの」タグ等の先頭にマッチしやすい。
-   * メタ author 等を先に使い、広い DOM クエリは最後の手段にする。
-   */
   const broadcasterName =
+    broadcasterNameFromEmbedded ||
     broadcasterNameFromStreamLink ||
     broadcasterNameFromMeta ||
     broadcasterNameFromDomFallback;
 
   const broadcasterUserId = (() => {
+    // 1. streamLink href から
     const href = String(streamLink?.getAttribute('href') || '');
     const m = href.match(/\/user\/(\d+)/);
-    return m ? m[1] : '';
+    if (m) return m[1];
+    // 2. embedded-data の supplier.programProviderId / pageUrl から
+    const supplierId = String(
+      embeddedProps?.program?.supplier?.programProviderId ??
+      embeddedProps?.program?.supplier?.id ?? ''
+    ).trim();
+    if (/^\d+$/.test(supplierId)) return supplierId;
+    const pageUrl = String(embeddedProps?.program?.supplier?.pageUrl ?? '');
+    const m2 = pageUrl.match(/\/user\/(\d+)/);
+    return m2 ? m2[1] : '';
   })();
 
   const thumbnailUrl = toAbsoluteUrl(
@@ -3568,8 +3591,7 @@ function collectWatchPageSnapshot() {
     broadcasterUserId,
     broadcasterLevel: (() => {
       try {
-        const props = extractEmbeddedDataProps(document);
-        const lv = props?.program?.supplier?.level ?? props?.socialGroup?.level ?? props?.user?.userLevel;
+        const lv = embeddedProps?.program?.supplier?.level ?? embeddedProps?.socialGroup?.level ?? embeddedProps?.user?.userLevel;
         if (typeof lv === 'number' && Number.isFinite(lv) && lv > 0) return lv;
         const parsed = parseInt(String(lv), 10);
         return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -3593,9 +3615,8 @@ function collectWatchPageSnapshot() {
         const age = (Date.now() - programBeginAtMs) / 60000;
         if (age >= 0) return Math.round(age);
       }
-      // Priority 2: embedded-data props
-      const props = extractEmbeddedDataProps(document);
-      const beginMs = props ? pickProgramBeginAt(props) : null;
+      // Priority 2: embedded-data props（上で取得済みの embeddedProps を再利用）
+      const beginMs = embeddedProps ? pickProgramBeginAt(embeddedProps) : null;
       if (beginMs != null && Number.isFinite(beginMs)) {
         const age = (Date.now() - beginMs) / 60000;
         if (age >= 0) return Math.round(age);

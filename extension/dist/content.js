@@ -5519,6 +5519,16 @@
       const text = clean(a.textContent);
       return /\/user\/\d+/.test(href) && /\/live_programs(?:\?|$)/.test(href) && text && !/^https?:\/\//i.test(text);
     });
+    const embeddedProps = (() => {
+      try {
+        return extractEmbeddedDataProps(document);
+      } catch {
+        return null;
+      }
+    })();
+    const broadcasterNameFromEmbedded = clean(
+      embeddedProps?.program?.supplier?.name ?? ""
+    );
     const broadcasterNameFromMeta = clean(
       metaGet(metaMap, ["author", "twitter:creator", "profile:username"])
     );
@@ -5526,11 +5536,18 @@
     const broadcasterNameFromDomFallback = clean(
       document.querySelector('[class*="userName"], [class*="streamerName"]')?.textContent || ""
     );
-    const broadcasterName = broadcasterNameFromStreamLink || broadcasterNameFromMeta || broadcasterNameFromDomFallback;
+    const broadcasterName = broadcasterNameFromEmbedded || broadcasterNameFromStreamLink || broadcasterNameFromMeta || broadcasterNameFromDomFallback;
     const broadcasterUserId = (() => {
       const href = String(streamLink?.getAttribute("href") || "");
       const m = href.match(/\/user\/(\d+)/);
-      return m ? m[1] : "";
+      if (m) return m[1];
+      const supplierId = String(
+        embeddedProps?.program?.supplier?.programProviderId ?? embeddedProps?.program?.supplier?.id ?? ""
+      ).trim();
+      if (/^\d+$/.test(supplierId)) return supplierId;
+      const pageUrl = String(embeddedProps?.program?.supplier?.pageUrl ?? "");
+      const m2 = pageUrl.match(/\/user\/(\d+)/);
+      return m2 ? m2[1] : "";
     })();
     const thumbnailUrl = toAbsoluteUrl(
       clean(metaGet(metaMap, ["og:image", "twitter:image"]))
@@ -5729,8 +5746,7 @@
       broadcasterUserId,
       broadcasterLevel: (() => {
         try {
-          const props = extractEmbeddedDataProps(document);
-          const lv = props?.program?.supplier?.level ?? props?.socialGroup?.level ?? props?.user?.userLevel;
+          const lv = embeddedProps?.program?.supplier?.level ?? embeddedProps?.socialGroup?.level ?? embeddedProps?.user?.userLevel;
           if (typeof lv === "number" && Number.isFinite(lv) && lv > 0) return lv;
           const parsed = parseInt(String(lv), 10);
           return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -5755,8 +5771,7 @@
           const age = (Date.now() - programBeginAtMs) / 6e4;
           if (age >= 0) return Math.round(age);
         }
-        const props = extractEmbeddedDataProps(document);
-        const beginMs = props ? pickProgramBeginAt(props) : null;
+        const beginMs = embeddedProps ? pickProgramBeginAt(embeddedProps) : null;
         if (beginMs != null && Number.isFinite(beginMs)) {
           const age = (Date.now() - beginMs) / 6e4;
           if (age >= 0) return Math.round(age);

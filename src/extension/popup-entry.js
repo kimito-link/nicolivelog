@@ -3316,11 +3316,37 @@ function renderStoryCommentDetailPanel() {
     }
   }
   userEl.textContent = storyGrowthDisplayLabel(entry, lidForOwn);
+  // 数値 ID のユーザーはプレビューからユーザーページにリンク
+  const detailLinkableUid = /^\d{5,14}$/.test(userId) ? userId
+    : /^\d{5,14}$/.test(viewerUid) && ownPosted ? viewerUid
+    : '';
   if (userId) {
-    userMetaEl.textContent = `ID: ${userId}`;
+    if (detailLinkableUid) {
+      const a = document.createElement('a');
+      a.href = `https://www.nicovideo.jp/user/${detailLinkableUid}`;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = `ID: ${userId}`;
+      a.className = 'nl-story-detail-user-link';
+      userMetaEl.textContent = '';
+      userMetaEl.appendChild(a);
+    } else {
+      userMetaEl.textContent = `ID: ${userId}`;
+    }
   } else if (ownPosted) {
     if (viewerUid) {
-      userMetaEl.textContent = `ID（ヘッダーから推定）: ${viewerUid}`;
+      if (detailLinkableUid) {
+        const a = document.createElement('a');
+        a.href = `https://www.nicovideo.jp/user/${detailLinkableUid}`;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = `ID（ヘッダーから推定）: ${viewerUid}`;
+        a.className = 'nl-story-detail-user-link';
+        userMetaEl.textContent = '';
+        userMetaEl.appendChild(a);
+      } else {
+        userMetaEl.textContent = `ID（ヘッダーから推定）: ${viewerUid}`;
+      }
     } else if (viewerNick) {
       userMetaEl.textContent = `表示名（ヘッダー）: ${viewerNick}`;
     } else {
@@ -4452,15 +4478,21 @@ function renderTopSupportRankStrip(stripRooms) {
         lineClass += ' nl-top-support-rank__line--has-accent';
         lineStyle = ` style="--nl-rank-accent:${escapeAttr(m.accentColorCss)}"`;
       }
-      return `<div class="${lineClass}"${lineStyle} role="listitem" title="${full}">
-        ${placeHtml}
+      // 数値 ID（非匿名）のユーザーはニコニコのユーザーページにリンクする
+      const isLinkable = !m.isUnknown && !isAnonymousStyleNicoUserId(m.userKey);
+      const linkHref = isLinkable
+        ? `https://www.nicovideo.jp/user/${escapeAttr(m.userKey)}`
+        : '';
+      const innerHtml = `${placeHtml}
         <span class="nl-top-support-rank__count">${m.count}件</span>
         <span class="nl-top-support-rank__thumb-wrap">
           <img class="nl-top-support-rank__thumb" src="${escapeAttr(displayThumb)}" alt="" decoding="async"${thumbRp} />
         </span>
         <span class="nl-top-support-rank__id" title="${idTitle}">${idText}</span>
-        <span class="nl-top-support-rank__name">${nameText}</span>
-      </div>`;
+        <span class="nl-top-support-rank__name">${nameText}</span>`;
+      return isLinkable
+        ? `<a class="${lineClass} nl-top-support-rank__line--linkable"${lineStyle} role="listitem" title="${full}" href="${linkHref}" target="_blank" rel="noopener noreferrer">${innerHtml}</a>`
+        : `<div class="${lineClass}"${lineStyle} role="listitem" title="${full}">${innerHtml}</div>`;
     })
     .join('');
   strip.innerHTML = `<p class="nl-top-support-rank__note">記録内・ユーザー別の応援件数が多い順です。</p><div class="nl-top-support-rank__list" role="list">${html}</div>`;

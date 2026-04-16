@@ -1509,8 +1509,16 @@
     el.hidden = false;
     const frag = document.createDocumentFragment();
     for (const p of items) {
-      const cell = document.createElement("span");
+      const fullUid = String(p.entry?.userId || "").trim();
+      const isLinkable = /^\d{5,14}$/.test(fullUid);
+      const cell = isLinkable ? document.createElement("a") : document.createElement("span");
       cell.className = "nl-story-userlane-cell";
+      if (isLinkable) {
+        cell.href = `https://www.nicovideo.jp/user/${fullUid}`;
+        cell.target = "_blank";
+        cell.rel = "noopener noreferrer";
+        cell.classList.add("nl-story-userlane-cell--linkable");
+      }
       const img = document.createElement("img");
       img.className = "nl-story-userlane-avatar";
       const requestedLane = p.displaySrc;
@@ -1522,7 +1530,6 @@
         io.storyTileUsesYukkuriTvStyle(requestedLane, displayLane)
       );
       img.alt = "";
-      const fullUid = String(p.entry?.userId || "").trim();
       const tip = fullUid && fullUid !== p.meta.idLine ? `${p.title} | ${fullUid}` : p.title;
       img.title = tip;
       cell.title = tip;
@@ -1912,6 +1919,7 @@
       }
       return {
         count: Math.max(0, Number(r?.count) || 0),
+        userKey,
         isUnknown,
         placeNumber,
         hasAccent,
@@ -6683,11 +6691,34 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       }
     }
     userEl.textContent = storyGrowthDisplayLabel(entry, lidForOwn);
+    const detailLinkableUid = /^\d{5,14}$/.test(userId) ? userId : /^\d{5,14}$/.test(viewerUid) && ownPosted ? viewerUid : "";
     if (userId) {
-      userMetaEl.textContent = `ID: ${userId}`;
+      if (detailLinkableUid) {
+        const a = document.createElement("a");
+        a.href = `https://www.nicovideo.jp/user/${detailLinkableUid}`;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = `ID: ${userId}`;
+        a.className = "nl-story-detail-user-link";
+        userMetaEl.textContent = "";
+        userMetaEl.appendChild(a);
+      } else {
+        userMetaEl.textContent = `ID: ${userId}`;
+      }
     } else if (ownPosted) {
       if (viewerUid) {
-        userMetaEl.textContent = `ID\uFF08\u30D8\u30C3\u30C0\u30FC\u304B\u3089\u63A8\u5B9A\uFF09: ${viewerUid}`;
+        if (detailLinkableUid) {
+          const a = document.createElement("a");
+          a.href = `https://www.nicovideo.jp/user/${detailLinkableUid}`;
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+          a.textContent = `ID\uFF08\u30D8\u30C3\u30C0\u30FC\u304B\u3089\u63A8\u5B9A\uFF09: ${viewerUid}`;
+          a.className = "nl-story-detail-user-link";
+          userMetaEl.textContent = "";
+          userMetaEl.appendChild(a);
+        } else {
+          userMetaEl.textContent = `ID\uFF08\u30D8\u30C3\u30C0\u30FC\u304B\u3089\u63A8\u5B9A\uFF09: ${viewerUid}`;
+        }
       } else if (viewerNick) {
         userMetaEl.textContent = `\u8868\u793A\u540D\uFF08\u30D8\u30C3\u30C0\u30FC\uFF09: ${viewerNick}`;
       } else {
@@ -7595,15 +7626,16 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         lineClass += " nl-top-support-rank__line--has-accent";
         lineStyle = ` style="--nl-rank-accent:${escapeAttr(m.accentColorCss)}"`;
       }
-      return `<div class="${lineClass}"${lineStyle} role="listitem" title="${full}">
-        ${placeHtml}
+      const isLinkable = !m.isUnknown && !isAnonymousStyleNicoUserId(m.userKey);
+      const linkHref = isLinkable ? `https://www.nicovideo.jp/user/${escapeAttr(m.userKey)}` : "";
+      const innerHtml = `${placeHtml}
         <span class="nl-top-support-rank__count">${m.count}\u4EF6</span>
         <span class="nl-top-support-rank__thumb-wrap">
           <img class="nl-top-support-rank__thumb" src="${escapeAttr(displayThumb)}" alt="" decoding="async"${thumbRp} />
         </span>
         <span class="nl-top-support-rank__id" title="${idTitle}">${idText}</span>
-        <span class="nl-top-support-rank__name">${nameText}</span>
-      </div>`;
+        <span class="nl-top-support-rank__name">${nameText}</span>`;
+      return isLinkable ? `<a class="${lineClass} nl-top-support-rank__line--linkable"${lineStyle} role="listitem" title="${full}" href="${linkHref}" target="_blank" rel="noopener noreferrer">${innerHtml}</a>` : `<div class="${lineClass}"${lineStyle} role="listitem" title="${full}">${innerHtml}</div>`;
     }).join("");
     strip.innerHTML = `<p class="nl-top-support-rank__note">\u8A18\u9332\u5185\u30FB\u30E6\u30FC\u30B6\u30FC\u5225\u306E\u5FDC\u63F4\u4EF6\u6570\u304C\u591A\u3044\u9806\u3067\u3059\u3002</p><div class="nl-top-support-rank__list" role="list">${html}</div>`;
     const thumbs = strip.querySelectorAll("img.nl-top-support-rank__thumb");
@@ -10273,7 +10305,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     try {
       const manifest = chrome.runtime.getManifest();
       const version = String(manifest?.version || "").trim() || "?";
-      const buildId = "0416-0555" ? String("0416-0555") : "dev";
+      const buildId = "0416-1029" ? String("0416-1029") : "dev";
       valueEl.textContent = `v${version}\u30FBb${buildId}`;
     } catch {
       valueEl.textContent = "\u2014";

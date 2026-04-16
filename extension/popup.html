@@ -643,6 +643,16 @@
         box-shadow: 0 0 0 2px color-mix(in srgb, var(--nl-user-accent) 48%, transparent);
       }
 
+      a.nl-story-userlane-cell--linkable {
+        text-decoration: none;
+        color: inherit;
+        cursor: pointer;
+        transition: background-color 0.12s;
+      }
+      a.nl-story-userlane-cell--linkable:hover {
+        background-color: color-mix(in srgb, var(--nl-border) 40%, transparent);
+      }
+
       /* 完成度の段（tier）が変わるところで折り返し、匿名の塊と手前のユーザーを視覚的に分ける */
       .nl-story-userlane-tier-break {
         flex: 0 0 100%;
@@ -1079,6 +1089,15 @@
         font-size: 9px;
         line-height: 1.2;
         color: var(--nl-muted);
+      }
+
+      .nl-story-detail-user-link {
+        color: var(--nl-muted);
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+      .nl-story-detail-user-link:hover {
+        color: var(--nl-text);
       }
 
       .nl-story-detail-text {
@@ -2089,6 +2108,16 @@
         line-height: 1.25;
         color: var(--nl-text);
         min-width: 0;
+      }
+
+      a.nl-top-support-rank__line--linkable {
+        text-decoration: none;
+        color: inherit;
+        border-radius: 4px;
+        transition: background-color 0.12s;
+      }
+      a.nl-top-support-rank__line--linkable:hover {
+        background-color: color-mix(in srgb, var(--nl-border) 40%, transparent);
       }
 
       .nl-top-support-rank__place {
