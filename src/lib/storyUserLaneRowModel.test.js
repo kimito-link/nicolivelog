@@ -38,8 +38,12 @@ describe('userLaneProfileCompletenessTier', () => {
     ).toBe(2);
   });
 
-  it('数値ID + 強ニック + avatarObserved=true で個人サムネなしは tier 2（konta）', () => {
-    // 旧実装は同条件で link(3) を返していた（こん太列が枯れる原因）。
+  it('数値ID + 強ニック + avatarObserved=true は tier 3（りんく）— DOM でアバター描画を確認している', () => {
+    // 直前の fix では hasPersonalThumb のみで判定していたため、ニコ生が配信する
+    // `usericon/s/<bucket>/<uid>.jpg`（合成 canonical と一致する URL）では
+    // 実際には個人アバターが見えていても link に上がらず konta に落ちていた。
+    // avatarObserved=true のときは URL 形式にかかわらず「個人アバター確定」として
+    // りんく段に格上げする。
     expect(
       userLaneProfileCompletenessTier(
         {
@@ -50,10 +54,12 @@ describe('userLaneProfileCompletenessTier', () => {
         },
         ''
       )
-    ).toBe(2);
+    ).toBe(3);
   });
 
-  it('avatarObserved なしの数値ID＋強ニックは tier 2（konta）', () => {
+  it('avatarObserved なしの数値ID＋強ニック＋URL 無しは tier 2（こん太）', () => {
+    // まだ DOM/intercept がアバターを観測できていない中間状態。
+    // 強ニックはあるので たぬ姉(1) まで落とさず こん太(2) に置く。
     expect(
       userLaneProfileCompletenessTier(
         {
@@ -64,6 +70,34 @@ describe('userLaneProfileCompletenessTier', () => {
         ''
       )
     ).toBe(2);
+  });
+
+  it('avatarObserved なしで httpCandidate が合成 canonical（/usericon/s/<bucket>/<uid>.jpg）だけでも tier 2（こん太）', () => {
+    // 直前実装はここで 2 を返して「こん太列が枯れない」を達成していたが、
+    // avatarObserved=true のケースでは true を返すべき（別テストで担保）。
+    expect(
+      userLaneProfileCompletenessTier(
+        { userId: '2201069', nickname: 'ソウルブラザー', avatarUrl: '' },
+        'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/220/2201069.jpg'
+      )
+    ).toBe(2);
+  });
+
+  it('avatarObserved=true のユーザは httpCandidate が合成 canonical でも tier 3（りんく）', () => {
+    // スクリーンショットで「こん太に良質ユーザー（数値ID+個人アバター観測済み）が
+    // 漏れている」と報告されたケース。DOM で avatar 描画が見えている以上、
+    // URL が合成形式と一致していても実物のアバターがあると判断して link に上げる。
+    expect(
+      userLaneProfileCompletenessTier(
+        {
+          userId: '2201069',
+          nickname: 'ソウルブラザー',
+          avatarUrl: '',
+          avatarObserved: true
+        },
+        'https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/s/220/2201069.jpg'
+      )
+    ).toBe(3);
   });
 
   it('匿名ID(a:) + 強ニック + 個人サムネなしは tier 1（たぬ姉、こん太に混ぜない）', () => {
