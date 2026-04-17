@@ -135,6 +135,13 @@ import {
   shouldRunEndedBulkHarvest
 } from '../lib/watchProgramEndState.js';
 import { hydrateInterceptAvatarMapFromProfile } from '../lib/interceptAvatarHydration.js';
+import {
+  COMMENT_PANEL_RESTORE_COOLDOWN_MS,
+  KEY_COMMENT_PANEL_AUTO_RESTORE,
+  LATEST_COMMENT_BUTTON_SELECTOR,
+  decideCommentPanelRestoreAction,
+  normalizeCommentPanelAutoRestoreEnabled
+} from '../lib/commentPanelHealthProbe.js';
 
 /**
  * @typedef {{ commentNo: string, text: string, userId: string|null, avatarUrl?: string, avatarObserved?: boolean }} ParsedCommentRow
@@ -5126,6 +5133,113 @@ function scanVisibleCommentsNow() {
   const rows = extractCommentsFromNode(root);
   void persistCommentRows(rows, { source: COMMENT_INGEST_SOURCE.VISIBLE });
   void syncCommentHarvestPanelStatus();
+  // 注: probeAndRestoreCommentPanelHealth はここでは呼ばない。
+  // scroll イベントで発火すると、ユーザが古いコメントを読むために手動で
+  // 上にスクロールしているときにも発火してしまい、せっかく上げた位置を
+  // 最下部に戻して邪魔してしまう。定期 tick（LIVE_PANEL_SCAN_MS 間隔）から
+  // だけ呼ぶことで、ユーザ操作と衝突しないようにする。
+}
+
+/**
+ * 設定（デフォルト ON）。false が storage に明示保存されているときだけ OFF。
+ * @type {boolean}
+ */
+let commentPanelAutoRestoreEnabled = true;
+/**
+ * 前回 `click_latest_button` / `scroll_panel_into_view` を実行した epoch ms。
+ * 0 or 負値 = まだ一度も実行していない。
+ * @type {number}
+ */
+let lastCommentPanelRestoreActionAt = 0;
+
+async function readCommentPanelAutoRestoreFromStorage() {
+  if (!hasExtensionContext()) return;
+  try {
+    const bag = await chrome.storage.local.get(KEY_COMMENT_PANEL_AUTO_RESTORE);
+    commentPanelAutoRestoreEnabled = normalizeCommentPanelAutoRestoreEnabled(
+      bag[KEY_COMMENT_PANEL_AUTO_RESTORE]
+    );
+  } catch (err) {
+    if (!isContextInvalidatedError(err)) {
+      // no-op: storage 失敗時は既定値（true）のまま
+    }
+  }
+}
+
+/**
+ * コメントパネルが「下に流れて見えない／viewport 外に追いやられている」状態を
+ * 検出して、可能なら復旧アクションを 1 つだけ実行する。
+ * 純粋モジュール `commentPanelHealthProbe` に判断を委ねる（DOM 触りはここだけ）。
+ */
+async function probeAndRestoreCommentPanelHealth() {
+  if (!commentPanelAutoRestoreEnabled) return;
+  if (!hasExtensionContext()) return;
+  if (!recording || !liveId || !locationAllowsCommentRecording()) return;
+
+  const panel = findNicoCommentPanel(document);
+  /** @type {{ top: number, height: number } | null} */
+  let panelRect = null;
+  if (panel && typeof panel.getBoundingClientRect === 'function') {
+    try {
+      const r = panel.getBoundingClientRect();
+      panelRect = { top: r.top, height: r.height };
+    } catch {
+      panelRect = null;
+    }
+  }
+
+  const host = findCommentListScrollHost(document);
+  /** @type {{ scrollTop: number, scrollHeight: number, clientHeight: number } | null} */
+  let scrollHost = null;
+  if (host) {
+    scrollHost = {
+      scrollTop: Number(host.scrollTop) || 0,
+      scrollHeight: Number(host.scrollHeight) || 0,
+      clientHeight: Number(host.clientHeight) || 0
+    };
+  }
+
+  /** @type {HTMLButtonElement | null} */
+  let latestButton = null;
+  try {
+    latestButton = /** @type {HTMLButtonElement | null} */ (
+      document.querySelector(LATEST_COMMENT_BUTTON_SELECTOR)
+    );
+  } catch {
+    latestButton = null;
+  }
+
+  const decision = decideCommentPanelRestoreAction({
+    enabled: true,
+    now: Date.now(),
+    lastActionAt: lastCommentPanelRestoreActionAt,
+    panelPresent: !!panel,
+    panelRect,
+    viewportHeight: Number(window.innerHeight) || 0,
+    scrollHost,
+    hasLatestButton: !!latestButton
+  });
+
+  if (decision.action === 'click_latest_button') {
+    if (!latestButton) return;
+    try {
+      latestButton.click();
+      lastCommentPanelRestoreActionAt = Date.now();
+    } catch {
+      // 押せなかったときは次 tick で再挑戦（lastActionAt を更新しない）
+    }
+    return;
+  }
+
+  if (decision.action === 'scroll_panel_into_view') {
+    if (!panel || typeof panel.scrollIntoView !== 'function') return;
+    try {
+      panel.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
+      lastCommentPanelRestoreActionAt = Date.now();
+    } catch {
+      // no-op: scrollIntoView が未対応のブラウザは次 tick で諦める
+    }
+  }
 }
 
 function attachCommentScrollHook() {
@@ -5267,6 +5381,7 @@ async function start() {
   if (!shouldRunWatchContentInThisFrame()) return;
   recording = await readRecordingFlag();
   await readDeepHarvestQuietUiFromStorage();
+  await readCommentPanelAutoRestoreFromStorage();
   if (isWatchInlinePanelTopFrame()) {
     ensurePageFrameStyle();
     await migrateFloatingInlinePanelToDockOnce({
@@ -5358,6 +5473,12 @@ async function start() {
         .catch(() => {});
     }
 
+    if (changes[KEY_COMMENT_PANEL_AUTO_RESTORE]) {
+      commentPanelAutoRestoreEnabled = normalizeCommentPanelAutoRestoreEnabled(
+        changes[KEY_COMMENT_PANEL_AUTO_RESTORE].newValue
+      );
+    }
+
     if (changes[KEY_DEEP_HARVEST_QUIET_UI]) {
       deepHarvestQuietUi = isDeepHarvestQuietUiEnabled(
         changes[KEY_DEEP_HARVEST_QUIET_UI].newValue
@@ -5423,6 +5544,7 @@ async function start() {
       return;
     }
     scanVisibleCommentsNow();
+    void probeAndRestoreCommentPanelHealth();
   }, LIVE_PANEL_SCAN_MS);
 
   setInterval(() => {
