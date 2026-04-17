@@ -1237,6 +1237,117 @@
     };
   }
 
+  // src/lib/selfPostedMatcher.js
+  var SELF_POST_MATCH_EARLY_MS = 30 * 1e3;
+  var SELF_POST_MATCH_LATE_MS = 10 * 60 * 1e3;
+  var SELF_POST_RECENT_TTL_MS = 24 * 60 * 60 * 1e3;
+  function filterValidSelfPostedRecents(raw, now = Date.now()) {
+    if (!raw || typeof raw !== "object") return [];
+    const items = (
+      /** @type {{ items?: unknown }} */
+      raw.items
+    );
+    if (!Array.isArray(items)) return [];
+    const out = [];
+    for (const x of items) {
+      if (!x || typeof x !== "object") continue;
+      const rec = (
+        /** @type {{liveId?: unknown, at?: unknown, textNorm?: unknown}} */
+        x
+      );
+      if (typeof rec.liveId === "string" && typeof rec.textNorm === "string" && typeof rec.at === "number" && now - rec.at < SELF_POST_RECENT_TTL_MS) {
+        out.push({ liveId: rec.liveId, textNorm: rec.textNorm, at: rec.at });
+      }
+    }
+    return out;
+  }
+  function prepareSelfPostedMatchRecents(recents, liveId) {
+    const lid = String(liveId || "").trim().toLowerCase();
+    if (!lid) return [];
+    const src = Array.isArray(recents) ? recents : [];
+    return src.map((it, itemIndex) => ({
+      itemIndex,
+      liveId: String(it?.liveId || "").trim().toLowerCase(),
+      at: Number(it?.at) || 0,
+      textNorm: String(it?.textNorm || "")
+    })).filter((it) => it.liveId === lid && it.at > 0 && it.textNorm).sort((a, b) => a.at - b.at || a.itemIndex - b.itemIndex).map(({ itemIndex, at, textNorm }) => ({ itemIndex, at, textNorm }));
+  }
+  function matchSelfPostedRecents(entries, recents, opts = {}) {
+    const earlyMs = Number.isFinite(opts.earlyMs) ? (
+      /** @type {number} */
+      opts.earlyMs
+    ) : SELF_POST_MATCH_EARLY_MS;
+    const lateMs = Number.isFinite(opts.lateMs) ? (
+      /** @type {number} */
+      opts.lateMs
+    ) : SELF_POST_MATCH_LATE_MS;
+    const matchedIds = /* @__PURE__ */ new Set();
+    const consumedIndexes = /* @__PURE__ */ new Set();
+    const entryList = Array.isArray(entries) ? entries : [];
+    const recentList = Array.isArray(recents) ? recents : [];
+    if (!entryList.length || !recentList.length) {
+      return { matchedIds, consumedIndexes };
+    }
+    const byText = /* @__PURE__ */ new Map();
+    for (const e of entryList) {
+      if (!e || !e.textNorm || !e.id) continue;
+      const bucket = byText.get(e.textNorm) || [];
+      bucket.push(e);
+      byText.set(e.textNorm, bucket);
+    }
+    for (const bucket of byText.values()) {
+      bucket.sort((a, b) => {
+        if (a.capturedAt !== b.capturedAt) return a.capturedAt - b.capturedAt;
+        return a.index - b.index;
+      });
+    }
+    for (const recent of recentList) {
+      const bucket = byText.get(recent.textNorm);
+      if (!bucket?.length) continue;
+      let best = null;
+      let bestScore = Number.POSITIVE_INFINITY;
+      let bestIndex = Number.POSITIVE_INFINITY;
+      for (const candidate of bucket) {
+        if (matchedIds.has(candidate.id)) continue;
+        const cap = candidate.capturedAt;
+        if (cap < recent.at - earlyMs || cap > recent.at + lateMs) continue;
+        const delta = cap - recent.at;
+        const score = Math.abs(delta) + (delta >= 0 ? 0 : earlyMs + 1);
+        if (score < bestScore || score === bestScore && candidate.index < bestIndex) {
+          best = candidate;
+          bestScore = score;
+          bestIndex = candidate.index;
+        }
+      }
+      if (!best) continue;
+      matchedIds.add(best.id);
+      consumedIndexes.add(recent.itemIndex);
+    }
+    return { matchedIds, consumedIndexes };
+  }
+  function matchesAnySelfPostedRecent(entry, recents, liveId, opts = {}) {
+    const earlyMs = Number.isFinite(opts.earlyMs) ? (
+      /** @type {number} */
+      opts.earlyMs
+    ) : SELF_POST_MATCH_EARLY_MS;
+    const lateMs = Number.isFinite(opts.lateMs) ? (
+      /** @type {number} */
+      opts.lateMs
+    ) : SELF_POST_MATCH_LATE_MS;
+    const norm = String(entry?.textNorm || "");
+    if (!norm) return false;
+    const lid = String(liveId || "").trim().toLowerCase();
+    if (!lid) return false;
+    const cap = Number(entry?.capturedAt) || 0;
+    const list = Array.isArray(recents) ? recents : [];
+    for (const it of list) {
+      if (String(it?.liveId || "").toLowerCase() !== lid) continue;
+      if (it?.textNorm !== norm) continue;
+      if (cap >= it.at - earlyMs && cap <= it.at + lateMs) return true;
+    }
+    return false;
+  }
+
   // src/lib/watchConcurrentEstimateUiCopy.js
   var SPARSE_CONCURRENT_ESTIMATE_NOTE = "\u6765\u5834\u8005\u30FB\u7D71\u8A08\u304C\u672A\u53D6\u5F97\u306E\u305F\u3081\u63A8\u5B9A\u306F\u53C2\u8003\u5024";
   function concurrentResolutionMethodTitlePart(method) {
@@ -5648,9 +5759,6 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
   }
   var MAX_SELF_POSTED_ITEMS = 48;
   var SELF_POST_DUPLICATE_WINDOW_MS = 5e3;
-  var SELF_POST_MATCH_LATE_MS = 10 * 60 * 1e3;
-  var SELF_POST_MATCH_EARLY_MS = 30 * 1e3;
-  var SELF_POST_RECENT_TTL_MS = 24 * 60 * 60 * 1e3;
   var selfPostedRecentsCache = [];
   var SELF_POST_MATCH_CACHE = {
     entriesRef: (
@@ -5701,11 +5809,8 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
   }
   function applySelfPostedRecentsFromBag(bag) {
     try {
-      const raw = bag[KEY_SELF_POSTED_RECENTS];
-      const items = raw && typeof raw === "object" && Array.isArray(raw.items) ? raw.items : [];
-      const now = Date.now();
-      selfPostedRecentsCache = items.filter(
-        (x) => x && typeof x.liveId === "string" && typeof x.textNorm === "string" && typeof x.at === "number" && now - x.at < SELF_POST_RECENT_TTL_MS
+      selfPostedRecentsCache = filterValidSelfPostedRecents(
+        bag[KEY_SELF_POSTED_RECENTS]
       );
     } catch {
       selfPostedRecentsCache = [];
@@ -5769,15 +5874,11 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     }
     const norm = normalizeCommentText(entry.text);
     if (!norm) return false;
-    const cap = Number(entry.capturedAt) || 0;
-    for (const it of selfPostedRecentsCache) {
-      if (String(it.liveId).toLowerCase() !== lid) continue;
-      if (it.textNorm !== norm) continue;
-      if (cap >= it.at - SELF_POST_MATCH_EARLY_MS && cap <= it.at + SELF_POST_MATCH_LATE_MS) {
-        return true;
-      }
-    }
-    return false;
+    return matchesAnySelfPostedRecent(
+      { textNorm: norm, capturedAt: Number(entry.capturedAt) || 0 },
+      selfPostedRecentsCache,
+      lid
+    );
   }
   var popupUserCommentProfileMap = (
     /** @type {null|Record<string, { nickname?: string, avatarUrl?: string, updatedAt: number }>} */
@@ -5960,65 +6061,27 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
   function matchSelfPostedRecentsToEntries(entries, liveId) {
     const list = Array.isArray(entries) ? entries : [];
     const lid = String(liveId || "").trim().toLowerCase();
-    const matchedIds = /* @__PURE__ */ new Set();
-    const consumedIndexes = /* @__PURE__ */ new Set();
     if (!lid || !list.length || !selfPostedRecentsCache.length) {
-      return { matchedIds, consumedIndexes };
+      return { matchedIds: /* @__PURE__ */ new Set(), consumedIndexes: /* @__PURE__ */ new Set() };
     }
-    const recents = selfPostedRecentsCache.map((it, itemIndex) => ({
-      itemIndex,
-      liveId: String(it?.liveId || "").trim().toLowerCase(),
-      at: Number(it?.at) || 0,
-      textNorm: String(it?.textNorm || "")
-    })).filter((it) => it.liveId === lid && it.at > 0 && it.textNorm).sort((a, b) => a.at - b.at || a.itemIndex - b.itemIndex);
+    const recents = prepareSelfPostedMatchRecents(selfPostedRecentsCache, lid);
     if (!recents.length) {
-      return { matchedIds, consumedIndexes };
+      return { matchedIds: /* @__PURE__ */ new Set(), consumedIndexes: /* @__PURE__ */ new Set() };
     }
-    const byText = /* @__PURE__ */ new Map();
+    const matchEntries = [];
     for (let i = 0; i < list.length; i += 1) {
       const entry = list[i];
       const textNorm = normalizeCommentText(entry?.text);
       const id = popupEntryStableId(entry, lid);
       if (!textNorm || !id) continue;
-      const bucket = byText.get(textNorm) || [];
-      bucket.push({
+      matchEntries.push({
         id,
+        textNorm,
         capturedAt: Number(entry?.capturedAt || 0),
         index: i
       });
-      byText.set(textNorm, bucket);
     }
-    for (const bucket of byText.values()) {
-      bucket.sort((a, b) => {
-        if (a.capturedAt !== b.capturedAt) return a.capturedAt - b.capturedAt;
-        return a.index - b.index;
-      });
-    }
-    for (const recent of recents) {
-      const bucket = byText.get(recent.textNorm);
-      if (!bucket?.length) continue;
-      let best = null;
-      let bestScore = Number.POSITIVE_INFINITY;
-      let bestIndex = Number.POSITIVE_INFINITY;
-      for (const candidate of bucket) {
-        if (matchedIds.has(candidate.id)) continue;
-        const cap = candidate.capturedAt;
-        if (cap < recent.at - SELF_POST_MATCH_EARLY_MS || cap > recent.at + SELF_POST_MATCH_LATE_MS) {
-          continue;
-        }
-        const delta = cap - recent.at;
-        const score = Math.abs(delta) + (delta >= 0 ? 0 : SELF_POST_MATCH_EARLY_MS + 1);
-        if (score < bestScore || score === bestScore && candidate.index < bestIndex) {
-          best = candidate;
-          bestScore = score;
-          bestIndex = candidate.index;
-        }
-      }
-      if (!best) continue;
-      matchedIds.add(best.id);
-      consumedIndexes.add(recent.itemIndex);
-    }
-    return { matchedIds, consumedIndexes };
+    return matchSelfPostedRecents(matchEntries, recents);
   }
   function reconcileStoredOwnPostedEntries(entries, liveId) {
     const list = Array.isArray(entries) ? entries : [];
@@ -10520,7 +10583,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     try {
       const manifest = chrome.runtime.getManifest();
       const version = String(manifest?.version || "").trim() || "?";
-      const buildId = "0417-0949" ? String("0417-0949") : "dev";
+      const buildId = "0417-0958" ? String("0417-0958") : "dev";
       valueEl.textContent = `v${version}\u30FBb${buildId}`;
     } catch {
       valueEl.textContent = "\u2014";

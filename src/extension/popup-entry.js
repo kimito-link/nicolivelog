@@ -95,6 +95,13 @@ import {
   parseFrameShareCode
 } from '../lib/popupFrameCodec.js';
 import {
+  SELF_POST_RECENT_TTL_MS,
+  filterValidSelfPostedRecents,
+  matchSelfPostedRecents,
+  matchesAnySelfPostedRecent,
+  prepareSelfPostedMatchRecents
+} from '../lib/selfPostedMatcher.js';
+import {
   concurrentResolutionMethodTitlePart,
   SPARSE_CONCURRENT_ESTIMATE_NOTE
 } from '../lib/watchConcurrentEstimateUiCopy.js';
@@ -1674,11 +1681,6 @@ function pickSupportGrowthTileForStory(userId, httpCandidate) {
 
 const MAX_SELF_POSTED_ITEMS = 48;
 const SELF_POST_DUPLICATE_WINDOW_MS = 5000;
-/** コメント送信後、DOM 保存までに許容する遅延（ms） */
-const SELF_POST_MATCH_LATE_MS = 10 * 60 * 1000;
-/** capturedAt が送信記録より少し手前に見えるケースの許容（ms） */
-const SELF_POST_MATCH_EARLY_MS = 30 * 1000;
-const SELF_POST_RECENT_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** @type {{ liveId: string, at: number, textNorm: string }[]} */
 let selfPostedRecentsCache = [];
@@ -1762,19 +1764,8 @@ function getOwnPostedMatchedIdSet(entries, liveId) {
  */
 function applySelfPostedRecentsFromBag(bag) {
   try {
-    const raw = bag[KEY_SELF_POSTED_RECENTS];
-    const items =
-      raw && typeof raw === 'object' && Array.isArray(raw.items)
-        ? raw.items
-        : [];
-    const now = Date.now();
-    selfPostedRecentsCache = items.filter(
-      (x) =>
-        x &&
-        typeof x.liveId === 'string' &&
-        typeof x.textNorm === 'string' &&
-        typeof x.at === 'number' &&
-        now - x.at < SELF_POST_RECENT_TTL_MS
+    selfPostedRecentsCache = filterValidSelfPostedRecents(
+      bag[KEY_SELF_POSTED_RECENTS]
     );
   } catch {
     selfPostedRecentsCache = [];
@@ -1860,18 +1851,11 @@ function isOwnPostedSupportComment(entry, liveId, entries = STORY_SOURCE_STATE.e
   }
   const norm = normalizeCommentText(entry.text);
   if (!norm) return false;
-  const cap = Number(entry.capturedAt) || 0;
-  for (const it of selfPostedRecentsCache) {
-    if (String(it.liveId).toLowerCase() !== lid) continue;
-    if (it.textNorm !== norm) continue;
-    if (
-      cap >= it.at - SELF_POST_MATCH_EARLY_MS &&
-      cap <= it.at + SELF_POST_MATCH_LATE_MS
-    ) {
-      return true;
-    }
-  }
-  return false;
+  return matchesAnySelfPostedRecent(
+    { textNorm: norm, capturedAt: Number(entry.capturedAt) || 0 },
+    selfPostedRecentsCache,
+    lid
+  );
 }
 
 /** 永続プロファイルキャッシュ（refresh ごとに再読込） */
@@ -2131,80 +2115,31 @@ function countSavedOwnPostedEntries(entries) {
 function matchSelfPostedRecentsToEntries(entries, liveId) {
   const list = Array.isArray(entries) ? entries : [];
   const lid = String(liveId || '').trim().toLowerCase();
-  /** @type {Set<string>} */
-  const matchedIds = new Set();
-  /** @type {Set<number>} */
-  const consumedIndexes = new Set();
   if (!lid || !list.length || !selfPostedRecentsCache.length) {
-    return { matchedIds, consumedIndexes };
+    return { matchedIds: new Set(), consumedIndexes: new Set() };
   }
 
-  const recents = selfPostedRecentsCache
-    .map((it, itemIndex) => ({
-      itemIndex,
-      liveId: String(it?.liveId || '').trim().toLowerCase(),
-      at: Number(it?.at) || 0,
-      textNorm: String(it?.textNorm || '')
-    }))
-    .filter((it) => it.liveId === lid && it.at > 0 && it.textNorm)
-    .sort((a, b) => a.at - b.at || a.itemIndex - b.itemIndex);
+  const recents = prepareSelfPostedMatchRecents(selfPostedRecentsCache, lid);
   if (!recents.length) {
-    return { matchedIds, consumedIndexes };
+    return { matchedIds: new Set(), consumedIndexes: new Set() };
   }
 
-  /** @type {Map<string, { id: string, capturedAt: number, index: number }[]>} */
-  const byText = new Map();
+  /** @type {import('../lib/selfPostedMatcher.js').SelfPostedMatchEntry[]} */
+  const matchEntries = [];
   for (let i = 0; i < list.length; i += 1) {
     const entry = list[i];
     const textNorm = normalizeCommentText(entry?.text);
     const id = popupEntryStableId(entry, lid);
     if (!textNorm || !id) continue;
-    const bucket = byText.get(textNorm) || [];
-    bucket.push({
+    matchEntries.push({
       id,
+      textNorm,
       capturedAt: Number(entry?.capturedAt || 0),
       index: i
     });
-    byText.set(textNorm, bucket);
-  }
-  for (const bucket of byText.values()) {
-    bucket.sort((a, b) => {
-      if (a.capturedAt !== b.capturedAt) return a.capturedAt - b.capturedAt;
-      return a.index - b.index;
-    });
   }
 
-  for (const recent of recents) {
-    const bucket = byText.get(recent.textNorm);
-    if (!bucket?.length) continue;
-    let best = null;
-    let bestScore = Number.POSITIVE_INFINITY;
-    let bestIndex = Number.POSITIVE_INFINITY;
-    for (const candidate of bucket) {
-      if (matchedIds.has(candidate.id)) continue;
-      const cap = candidate.capturedAt;
-      if (
-        cap < recent.at - SELF_POST_MATCH_EARLY_MS ||
-        cap > recent.at + SELF_POST_MATCH_LATE_MS
-      ) {
-        continue;
-      }
-      const delta = cap - recent.at;
-      const score =
-        Math.abs(delta) +
-        (delta >= 0 ? 0 : SELF_POST_MATCH_EARLY_MS + 1);
-      if (score < bestScore || (score === bestScore && candidate.index < bestIndex)) {
-        best = candidate;
-        bestScore = score;
-        bestIndex = candidate.index;
-      }
-    }
-    if (!best) continue;
-    matchedIds.add(best.id);
-    consumedIndexes.add(recent.itemIndex);
-  }
-
-  return { matchedIds, consumedIndexes };
+  return matchSelfPostedRecents(matchEntries, recents);
 }
 
 /**
