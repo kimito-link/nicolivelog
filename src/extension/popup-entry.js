@@ -459,6 +459,15 @@ let _lastTopSupportRankStripStableKey = null;
  * 直近値）を全て強制リセットする。複数 refresh が並走したときに古い描画が新しい描画を上書きしても
  * 放送間のデータが混ざらないようにする防御策（2026-04 追加: 同一ポップアップで配信切替時に上位ユーザー
  * が前配信のものと同じに見える不具合対応）。
+ *
+ * リセット対象は「前回値 → 今回値」の差分で動くキャッシュ。以下の 3 種の `_prev*` は
+ * すべて「カウンタが前回より増えた／変わったら動画アイコンをポップさせる」用途なので、
+ * 放送を跨ぐと別配信の値と比較して巨大な delta が出てしまうため必ずセットで null 化する。
+ *   - `_prevSupportCount`         ..... 応援（コメント数）delta
+ *   - `_prevViewerCount`          ..... DOM 視聴者数 delta
+ *   - `_prevConcurrentEstimated`  ..... 推定同時接続 delta
+ * `_lastTopSupportRankStripStableKey` は上位ランクストリップの描画冪等キー。
+ *
  * @param {string} nextLiveId
  */
 function resetPerBroadcastPopupCachesIfLiveIdChanged(nextLiveId) {
@@ -468,6 +477,7 @@ function resetPerBroadcastPopupCachesIfLiveIdChanged(nextLiveId) {
   _lastTopSupportRankStripStableKey = null;
   _prevSupportCount = null;
   _prevViewerCount = null;
+  _prevConcurrentEstimated = null;
 }
 
 /**

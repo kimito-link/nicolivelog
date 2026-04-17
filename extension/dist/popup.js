@@ -4830,6 +4830,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     _lastTopSupportRankStripStableKey = null;
     _prevSupportCount = null;
     _prevViewerCount = null;
+    _prevConcurrentEstimated = null;
   }
   function setCountDisplay(value, watchSnapshot = null) {
     const countEl = $("count");
@@ -10583,7 +10584,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     try {
       const manifest = chrome.runtime.getManifest();
       const version = String(manifest?.version || "").trim() || "?";
-      const buildId = "0417-0958" ? String("0417-0958") : "dev";
+      const buildId = "0417-1618" ? String("0417-1618") : "dev";
       valueEl.textContent = `v${version}\u30FBb${buildId}`;
     } catch {
       valueEl.textContent = "\u2014";
