@@ -5563,16 +5563,23 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
   var anonymousIdenticonRuntimeEnabled = true;
   var anonymousIdenticonDataUrlCache = /* @__PURE__ */ new Map();
   var foldAnonymousInRankStripRuntimeEnabled = true;
-  function applyAnonymousIdenticonRuntimeFromBag(bag) {
-    const on = normalizeAnonymousIdenticonEnabled(
-      bag?.[KEY_ANONYMOUS_IDENTICON_ENABLED]
-    );
-    if (on !== anonymousIdenticonRuntimeEnabled) {
-      anonymousIdenticonDataUrlCache.clear();
-    }
-    anonymousIdenticonRuntimeEnabled = on;
-  }
   var popupBooleanSettingsRegistry = createBooleanSettingsRegistry();
+  var anonymousIdenticonSettingController = popupBooleanSettingsRegistry.register(
+    createBooleanSettingController({
+      key: KEY_ANONYMOUS_IDENTICON_ENABLED,
+      normalize: normalizeAnonymousIdenticonEnabled,
+      getCheckbox: () => (
+        /** @type {HTMLInputElement|null} */
+        $("anonymousIdenticonEnabled")
+      ),
+      applyRuntime: (value) => {
+        if (value !== anonymousIdenticonRuntimeEnabled) {
+          anonymousIdenticonDataUrlCache.clear();
+        }
+        anonymousIdenticonRuntimeEnabled = value;
+      }
+    })
+  );
   var foldAnonymousInRankStripSettingController = popupBooleanSettingsRegistry.register(
     createBooleanSettingController({
       key: KEY_FOLD_ANONYMOUS_IN_RANK_STRIP,
@@ -5587,6 +5594,27 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         }
         foldAnonymousInRankStripRuntimeEnabled = value;
       }
+    })
+  );
+  popupBooleanSettingsRegistry.register(
+    createBooleanSettingController({
+      key: KEY_VOICE_AUTOSEND,
+      // 既定 true（`raw !== false`）: 既存実装と互換
+      normalize: (raw) => raw !== false,
+      getCheckbox: () => (
+        /** @type {HTMLInputElement|null} */
+        $("voiceAutoSend")
+      )
+    })
+  );
+  popupBooleanSettingsRegistry.register(
+    createBooleanSettingController({
+      key: KEY_COMMENT_ENTER_SEND,
+      normalize: isCommentEnterSendEnabled,
+      getCheckbox: () => (
+        /** @type {HTMLInputElement|null} */
+        $("commentEnterSend")
+      )
     })
   );
   function getCachedAnonymousIdenticonDataUrl(userId) {
@@ -8262,36 +8290,11 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     const allowed = /* @__PURE__ */ new Set(["0", "30000", "60000", "300000"]);
     sel.value = allowed.has(v) ? v : "0";
   }
-  async function applyVoiceAutosendFromStorage() {
-    const cb = (
-      /** @type {HTMLInputElement|null} */
-      $("voiceAutoSend")
-    );
-    if (!cb) return;
-    const bag = await chrome.storage.local.get(KEY_VOICE_AUTOSEND);
-    cb.checked = bag[KEY_VOICE_AUTOSEND] !== false;
-  }
-  async function applyCommentEnterSendFromStorage() {
-    const cb = (
-      /** @type {HTMLInputElement|null} */
-      $("commentEnterSend")
-    );
-    if (!cb) return;
-    const bag = await chrome.storage.local.get(KEY_COMMENT_ENTER_SEND);
-    cb.checked = isCommentEnterSendEnabled(bag[KEY_COMMENT_ENTER_SEND]);
-  }
-  async function applyAnonymousIdenticonFromStorage() {
-    const cb = (
-      /** @type {HTMLInputElement|null} */
-      $("anonymousIdenticonEnabled")
-    );
-    const bag = await chrome.storage.local.get(KEY_ANONYMOUS_IDENTICON_ENABLED);
-    applyAnonymousIdenticonRuntimeFromBag(bag);
-    if (cb) {
-      cb.checked = normalizeAnonymousIdenticonEnabled(
-        bag[KEY_ANONYMOUS_IDENTICON_ENABLED]
-      );
-    }
+  async function applyRegisteredBooleanSettingsFromStorage() {
+    const keys = popupBooleanSettingsRegistry.keys();
+    if (keys.length === 0) return;
+    const bag = await chrome.storage.local.get(keys);
+    popupBooleanSettingsRegistry.applyFromBag(bag);
   }
   var suppressSupportVisualTogglePersist = false;
   var ownSupportVisualPersistInFlight = false;
@@ -8991,17 +8994,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
           openBag[KEY_MARKETING_EXPORT_MASK_LABELS]
         );
       }
-      const anonIdnHydrate = (
-        /** @type {HTMLInputElement|null} */
-        $("anonymousIdenticonEnabled")
-      );
-      if (anonIdnHydrate) {
-        anonIdnHydrate.checked = normalizeAnonymousIdenticonEnabled(
-          openBag[KEY_ANONYMOUS_IDENTICON_ENABLED]
-        );
-      }
-      applyAnonymousIdenticonRuntimeFromBag(openBag);
-      foldAnonymousInRankStripSettingController.applyFromBag(openBag);
+      popupBooleanSettingsRegistry.applyFromBag(openBag);
       const { url, fromActiveTab } = resolveWatchUrlFromTabAndStash(
         tabs[0],
         openBag[KEY_LAST_WATCH_URL]
@@ -10520,7 +10513,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     try {
       const manifest = chrome.runtime.getManifest();
       const version = String(manifest?.version || "").trim() || "?";
-      const buildId = "0417-0511" ? String("0417-0511") : "dev";
+      const buildId = "0417-0939" ? String("0417-0939") : "dev";
       valueEl.textContent = `v${version}\u30FBb${buildId}`;
     } catch {
       valueEl.textContent = "\u2014";
@@ -11476,13 +11469,12 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       }
     });
     anonymousIdenticonEnabled?.addEventListener("change", async () => {
+      const next = !!anonymousIdenticonEnabled.checked;
       try {
-        await storageSetSafe({
-          [KEY_ANONYMOUS_IDENTICON_ENABLED]: anonymousIdenticonEnabled.checked
-        });
+        await storageSetSafe({ [KEY_ANONYMOUS_IDENTICON_ENABLED]: next });
       } catch {
       }
-      await applyAnonymousIdenticonFromStorage();
+      anonymousIdenticonSettingController.applyRaw(next);
       safeRefresh();
     });
     foldAnonymousInRankStrip?.addEventListener("change", async () => {
@@ -11805,11 +11797,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         document.documentElement.setAttribute("data-nl-support-wired", "");
         void applyThumbSelectFromStorage().catch(() => {
         });
-        void applyVoiceAutosendFromStorage().catch(() => {
-        });
-        void applyCommentEnterSendFromStorage().catch(() => {
-        });
-        void applyAnonymousIdenticonFromStorage().catch(() => {
+        void applyRegisteredBooleanSettingsFromStorage().catch(() => {
         });
         void applyStoryGrowthCollapsedFromStorage().catch(() => {
         });
@@ -11830,18 +11818,6 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
           }
           if (changes[KEY_THUMB_AUTO] || changes[KEY_THUMB_INTERVAL_MS]) {
             applyThumbSelectFromStorage().catch(() => {
-            });
-          }
-          if (changes[KEY_VOICE_AUTOSEND]) {
-            applyVoiceAutosendFromStorage().catch(() => {
-            });
-          }
-          if (changes[KEY_COMMENT_ENTER_SEND]) {
-            applyCommentEnterSendFromStorage().catch(() => {
-            });
-          }
-          if (changes[KEY_ANONYMOUS_IDENTICON_ENABLED]) {
-            applyAnonymousIdenticonFromStorage().catch(() => {
             });
           }
           if (changes[KEY_STORY_GROWTH_COLLAPSED]) {

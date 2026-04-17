@@ -1787,19 +1787,6 @@ const anonymousIdenticonDataUrlCache = new Map();
 let foldAnonymousInRankStripRuntimeEnabled = true;
 
 /**
- * @param {Record<string, unknown>|null|undefined} bag
- */
-function applyAnonymousIdenticonRuntimeFromBag(bag) {
-  const on = normalizeAnonymousIdenticonEnabled(
-    bag?.[KEY_ANONYMOUS_IDENTICON_ENABLED]
-  );
-  if (on !== anonymousIdenticonRuntimeEnabled) {
-    anonymousIdenticonDataUrlCache.clear();
-  }
-  anonymousIdenticonRuntimeEnabled = on;
-}
-
-/**
  * popup のブール設定をまとめて管理するレジストリ。
  * 各設定は `createBooleanSettingController` で定義し、
  *   - openBag ハイドレート: `registry.applyFromBag(openBag)`
@@ -1808,6 +1795,25 @@ function applyAnonymousIdenticonRuntimeFromBag(bag) {
  * 異なる（safeRefresh 等）ためコールサイトに残す。
  */
 const popupBooleanSettingsRegistry = createBooleanSettingsRegistry();
+
+/**
+ * 匿名ユーザーのアバターを identicon に差し替えるか。
+ * 値が変わったら生成済み identicon キャッシュを破棄する。
+ */
+const anonymousIdenticonSettingController = popupBooleanSettingsRegistry.register(
+  createBooleanSettingController({
+    key: KEY_ANONYMOUS_IDENTICON_ENABLED,
+    normalize: normalizeAnonymousIdenticonEnabled,
+    getCheckbox: () =>
+      /** @type {HTMLInputElement|null} */ ($('anonymousIdenticonEnabled')),
+    applyRuntime: (value) => {
+      if (value !== anonymousIdenticonRuntimeEnabled) {
+        anonymousIdenticonDataUrlCache.clear();
+      }
+      anonymousIdenticonRuntimeEnabled = value;
+    }
+  })
+);
 
 /**
  * 応援ランクストリップの匿名折り畳みトグル。
@@ -1826,6 +1832,30 @@ const foldAnonymousInRankStripSettingController = popupBooleanSettingsRegistry.r
       }
       foldAnonymousInRankStripRuntimeEnabled = value;
     }
+  })
+);
+
+/**
+ * 音声コメントの自動送信トグル（runtime 変数なし。checkbox.checked を直接参照）。
+ */
+popupBooleanSettingsRegistry.register(
+  createBooleanSettingController({
+    key: KEY_VOICE_AUTOSEND,
+    // 既定 true（`raw !== false`）: 既存実装と互換
+    normalize: (raw) => raw !== false,
+    getCheckbox: () => /** @type {HTMLInputElement|null} */ ($('voiceAutoSend'))
+  })
+);
+
+/**
+ * コメント入力の Enter 送信トグル（runtime 変数なし）。
+ */
+popupBooleanSettingsRegistry.register(
+  createBooleanSettingController({
+    key: KEY_COMMENT_ENTER_SEND,
+    normalize: isCommentEnterSendEnabled,
+    getCheckbox: () =>
+      /** @type {HTMLInputElement|null} */ ($('commentEnterSend'))
   })
 );
 
@@ -5106,29 +5136,17 @@ async function applyThumbSelectFromStorage() {
   sel.value = allowed.has(v) ? v : '0';
 }
 
-async function applyVoiceAutosendFromStorage() {
-  const cb = /** @type {HTMLInputElement|null} */ ($('voiceAutoSend'));
-  if (!cb) return;
-  const bag = await chrome.storage.local.get(KEY_VOICE_AUTOSEND);
-  cb.checked = bag[KEY_VOICE_AUTOSEND] !== false;
-}
-
-async function applyCommentEnterSendFromStorage() {
-  const cb = /** @type {HTMLInputElement|null} */ ($('commentEnterSend'));
-  if (!cb) return;
-  const bag = await chrome.storage.local.get(KEY_COMMENT_ENTER_SEND);
-  cb.checked = isCommentEnterSendEnabled(bag[KEY_COMMENT_ENTER_SEND]);
-}
-
-async function applyAnonymousIdenticonFromStorage() {
-  const cb = /** @type {HTMLInputElement|null} */ ($('anonymousIdenticonEnabled'));
-  const bag = await chrome.storage.local.get(KEY_ANONYMOUS_IDENTICON_ENABLED);
-  applyAnonymousIdenticonRuntimeFromBag(bag);
-  if (cb) {
-    cb.checked = normalizeAnonymousIdenticonEnabled(
-      bag[KEY_ANONYMOUS_IDENTICON_ENABLED]
-    );
-  }
+/**
+ * popup で登録された全ブール設定を storage から一括ハイドレートする。
+ * 旧 `applyVoiceAutosendFromStorage` / `applyCommentEnterSendFromStorage` /
+ * `applyAnonymousIdenticonFromStorage` / `applyFoldAnonymousInRankStripFromStorage`
+ * をまとめたもの。registry が knows する key セットに応じて自動で範囲が広がる。
+ */
+async function applyRegisteredBooleanSettingsFromStorage() {
+  const keys = popupBooleanSettingsRegistry.keys();
+  if (keys.length === 0) return;
+  const bag = await chrome.storage.local.get(keys);
+  popupBooleanSettingsRegistry.applyFromBag(bag);
 }
 
 /** storage 反映中は details の toggle で永続化しない */
@@ -5954,16 +5972,10 @@ async function refresh() {
       openBag[KEY_MARKETING_EXPORT_MASK_LABELS]
     );
   }
-  const anonIdnHydrate = /** @type {HTMLInputElement|null} */ ($('anonymousIdenticonEnabled'));
-  if (anonIdnHydrate) {
-    anonIdnHydrate.checked = normalizeAnonymousIdenticonEnabled(
-      openBag[KEY_ANONYMOUS_IDENTICON_ENABLED]
-    );
-  }
-  applyAnonymousIdenticonRuntimeFromBag(openBag);
-  // 応援ランクの匿名折り畳み：controller 経由で checkbox.checked + runtime 変数 +
-  // rank strip 再描画キーのリセットを一括反映（registry 管理下）
-  foldAnonymousInRankStripSettingController.applyFromBag(openBag);
+  // popup 全ブール設定を registry 経由で一括ハイドレート
+  // （checkbox.checked + runtime 変数 + キャッシュクリア / 再描画キー破棄などの
+  //  副作用をコントローラが内包）
+  popupBooleanSettingsRegistry.applyFromBag(openBag);
   const { url, fromActiveTab } = resolveWatchUrlFromTabAndStash(
     tabs[0],
     openBag[KEY_LAST_WATCH_URL]
@@ -8765,14 +8777,14 @@ function initPopup() {
   });
 
   anonymousIdenticonEnabled?.addEventListener('change', async () => {
+    const next = !!anonymousIdenticonEnabled.checked;
     try {
-      await storageSetSafe({
-        [KEY_ANONYMOUS_IDENTICON_ENABLED]: anonymousIdenticonEnabled.checked
-      });
+      await storageSetSafe({ [KEY_ANONYMOUS_IDENTICON_ENABLED]: next });
     } catch {
       //
     }
-    await applyAnonymousIdenticonFromStorage();
+    // DOM が意図した値そのもの。controller に流して runtime 変数 + キャッシュクリアを反映。
+    anonymousIdenticonSettingController.applyRaw(next);
     safeRefresh();
   });
 
@@ -9124,9 +9136,9 @@ function initPopup() {
         wireSupportVisualUi();
         document.documentElement.setAttribute('data-nl-support-wired', '');
         void applyThumbSelectFromStorage().catch(() => {});
-        void applyVoiceAutosendFromStorage().catch(() => {});
-        void applyCommentEnterSendFromStorage().catch(() => {});
-        void applyAnonymousIdenticonFromStorage().catch(() => {});
+        // registry 登録済みのブール設定を storage から一括同期
+        // （voiceAutosend / commentEnterSend / anonymousIdenticon / foldAnonymousInRankStrip）
+        void applyRegisteredBooleanSettingsFromStorage().catch(() => {});
         void applyStoryGrowthCollapsedFromStorage().catch(() => {});
         void refreshVoiceInputDeviceList().catch(() => {});
         await refreshDone;
@@ -9146,15 +9158,8 @@ function initPopup() {
         if (changes[KEY_THUMB_AUTO] || changes[KEY_THUMB_INTERVAL_MS]) {
           applyThumbSelectFromStorage().catch(() => {});
         }
-        if (changes[KEY_VOICE_AUTOSEND]) {
-          applyVoiceAutosendFromStorage().catch(() => {});
-        }
-        if (changes[KEY_COMMENT_ENTER_SEND]) {
-          applyCommentEnterSendFromStorage().catch(() => {});
-        }
-        if (changes[KEY_ANONYMOUS_IDENTICON_ENABLED]) {
-          applyAnonymousIdenticonFromStorage().catch(() => {});
-        }
+        // voiceAutosend / commentEnterSend / anonymousIdenticon / foldAnonymousInRankStrip は
+        // 直上の popupBooleanSettingsRegistry.dispatchStorageChanges(changes) で反映済み
         if (changes[KEY_STORY_GROWTH_COLLAPSED]) {
           applyStoryGrowthCollapsedFromStorage().catch(() => {});
         }
