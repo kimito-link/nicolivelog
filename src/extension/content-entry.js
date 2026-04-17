@@ -101,9 +101,6 @@ import {
 import { countRecentActiveUsers } from '../lib/concurrentEstimate.js';
 import { summarizeOfficialCommentHistory } from '../lib/officialStatsWindow.js';
 import { buildWatchSnapshotOfficialFields } from '../lib/watchSnapshotOfficialFields.js';
-import {
-  pickStrongestAvatarUrlForUser
-} from '../lib/supportGrowthTileSrc.js';
 import { mergeUserIdForEnrichment } from '../lib/userIdPreference.js';
 import {
   COMMENT_INGEST_SOURCE,
@@ -111,7 +108,7 @@ import {
 } from '../lib/commentIngestLog.js';
 import { migrateFloatingInlinePanelToDockOnce } from '../lib/migrateInlinePanelFloatToDock.js';
 import { createPersistCoalescer } from '../lib/persistThrottle.js';
-import { enrichmentAvatarWithCanonicalFallback } from '../lib/enrichmentAvatarFallback.js';
+import { resolveUserEntryAvatarSignals } from '../lib/userEntryAvatarResolve.js';
 import { buildSilentErrorPayload, isContextInvalidatedError as isCtxInvalidated } from '../lib/reportSilentError.js';
 import { cleanNdgrChatRows } from '../lib/cleanNdgrChatRows.js';
 import { trimMapToMax } from '../lib/trimMap.js';
@@ -136,7 +133,6 @@ import {
 } from '../lib/watchProgramEndState.js';
 import { hydrateInterceptAvatarMapFromProfile } from '../lib/interceptAvatarHydration.js';
 import {
-  COMMENT_PANEL_RESTORE_COOLDOWN_MS,
   KEY_COMMENT_PANEL_AUTO_RESTORE,
   LATEST_COMMENT_BUTTON_SELECTOR,
   decideCommentPanelRestoreAction,
@@ -4230,22 +4226,20 @@ function enrichRowsWithInterceptedUserIds(rows) {
       userId && isHttpAvatarUrl(interceptedAvatars.get(String(userId)))
         ? String(interceptedAvatars.get(String(userId)) || '').trim()
         : '';
-    const canonicalFallback = enrichmentAvatarWithCanonicalFallback(
-      userId, interceptEntryAv, interceptMapAv, rowAv
-    );
-    const av = pickStrongestAvatarUrlForUser(userId, [
-      interceptEntryAv,
-      interceptMapAv,
+    // 表示用 URL と tier 判定用の観測信号を userEntryAvatarResolve に一任する。
+    // ここで 2 本を混ぜない設計が「視認性／混入の再発」を止めるための要。
+    const { displayAvatarUrl, avatarObserved } = resolveUserEntryAvatarSignals({
+      userId,
       rowAv,
-      canonicalFallback
-    ]);
-    const observed = Boolean(rowAv || interceptEntryAv || interceptMapAv);
+      interceptEntryAv,
+      interceptMapAv
+    });
     return {
       ...r,
       userId,
       ...(nickname ? { nickname } : {}),
-      ...(av ? { avatarUrl: av } : {}),
-      ...(observed ? { avatarObserved: true } : {})
+      ...(displayAvatarUrl ? { avatarUrl: displayAvatarUrl } : {}),
+      ...(avatarObserved ? { avatarObserved: true } : {})
     };
   });
 }
