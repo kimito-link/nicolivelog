@@ -84,9 +84,8 @@
         max-height: 100%;
         min-height: 0;
         overflow-x: hidden;
-        overflow-y: auto;
-        /* 縦バー出し入れで本文幅が変わり、グリッド列数が振れるのを抑える */
-        scrollbar-gutter: stable;
+        /* body ではスクロールさせず、.nl-main だけが縦スクロール（body と .nl-main の二重バー防止） */
+        overflow-y: hidden;
         box-sizing: border-box;
         font-size: var(--nl-base-font, 15px);
         border: none;
@@ -101,7 +100,13 @@
       }
 
       html.nl-inline body .nl-main {
-        overflow: visible;
+        flex: 1 1 auto;
+        min-height: 0;
+        overflow-x: hidden;
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        /* グリッド列幅の振れ抑制はメイン列側の gutter に寄せる */
+        scrollbar-gutter: stable;
         border: none;
         outline: none;
         box-shadow: none;
