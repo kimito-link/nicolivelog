@@ -5710,13 +5710,25 @@ function applyCalmPanelMotionClass(enabled) {
 }
 
 /**
- * 記録 ON/OFF を `<html data-nl-recording>` に同期（E2E・将来のスタイル用フック）。
- * 真実の状態は `#recordToggle` の checked。recordToggle が 詳細設定 内に移ったため、
- * SA 用の hero ではなく html ルートに付ける（どこからでも CSS / E2E が拾える）。
+ * 記録 ON/OFF を `<html data-nl-recording>` と `.nl-record-hero[data-nl-recording]` に同期。
+ *
+ * 真実の状態は `#recordToggle` の checked。recordToggle が 詳細設定 内に移ったあとも、
+ * 応援開始カード（`.nl-record-hero`）は SA（State Accessibility）用の fingerprint として
+ * `data-nl-recording` を公開する契約で、E2E（popup-recording-sa.spec.js H1/H2）が依存する。
+ * popup.html 側は編集時点のリテラル ("on") が残るため、ここで毎 toggle 反映を保証する。
+ * html ルートにも同じ値を書くことで、CSS や埋め込み (inline=1) からも読める。
+ *
  * @param {HTMLInputElement} toggle
  */
 function applyRecordHeroRecordingDataset(toggle) {
-  document.documentElement.dataset.nlRecording = toggle.checked ? 'on' : 'off';
+  const val = toggle.checked ? 'on' : 'off';
+  document.documentElement.dataset.nlRecording = val;
+  const heroes = document.querySelectorAll('.nl-record-hero');
+  for (const hero of heroes) {
+    if (hero instanceof HTMLElement) {
+      hero.dataset.nlRecording = val;
+    }
+  }
 }
 
 /**

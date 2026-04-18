@@ -5144,7 +5144,7 @@
           }
         }
       }
-      if (!inlineHostLooksVisible()) {
+      if (!inlineHostLooksVisible() && effPlacement !== INLINE_PANEL_PLACEMENT_FLOATING && effPlacement !== INLINE_PANEL_PLACEMENT_DOCK_BOTTOM) {
         renderInlinePanelDockBottomHost();
       }
     } catch (e) {

@@ -2696,8 +2696,22 @@ function renderPageFrameOverlay() {
         }
       }
     }
-    if (!inlineHostLooksVisible()) {
-      /* 例外は出ていないが host が見えていないケースを救済 */
+    /*
+     * host が「見えない」ときの最終フォールバック。
+     *
+     * below / beside はプレイヤー DOM 依存なので、iframe 未ロードや target 消失で
+     * 可視領域を得られないことがあり、その救済として dock_bottom に落とす意義がある。
+     * 一方で floating / dock_bottom はプレイヤー DOM に依存しない body 直下の固定パネル。
+     * iframe 初回ロード前に width/height が 120 未満になって一時的に不可視に見えることがあり、
+     * ここで dock_bottom 再描画に走ると `nls-inline-host--floating` クラスが剥がされ、
+     * floating 表示契約（E2E inline-panel-align）を壊す。
+     * 「意図した配置が floating or dock_bottom のとき」はフォールバックを skip する。
+     */
+    if (
+      !inlineHostLooksVisible() &&
+      effPlacement !== INLINE_PANEL_PLACEMENT_FLOATING &&
+      effPlacement !== INLINE_PANEL_PLACEMENT_DOCK_BOTTOM
+    ) {
       renderInlinePanelDockBottomHost();
     }
   } catch (e) {

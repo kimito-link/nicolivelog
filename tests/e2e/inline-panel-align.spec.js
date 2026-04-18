@@ -4,6 +4,15 @@ const INLINE_HOST_ID = 'nls-inline-popup-host';
 const KEY_INLINE_PANEL_WIDTH_MODE = 'nls_inline_panel_width_mode';
 const KEY_INLINE_PANEL_PLACEMENT = 'nls_inline_panel_placement';
 const KEY_INLINE_FLOATING_ANCHOR = 'nls_inline_floating_anchor';
+/*
+ * 拡張は「初回起動で floating を一度だけ dock_bottom に寄せる」旧利用者向け移行を
+ * background.js と content-entry.js の両方で持っている（migrateFloatingInlinePanelToDockOnce）。
+ * 生の E2E コンテキストは毎回 migrated=false で起動するため、テストが floating を指定しても
+ * 移行ロジックが直ちに dock_bottom に書き換えてしまう。テスト側で「移行済み」フラグを
+ * 明示して移行 path に入らないようにする（背景のクリーンルーム側の挙動は別途 E2E で担保する想定）。
+ */
+const KEY_INLINE_PANEL_FLOAT_TO_DOCK_MIGRATED =
+  'nls_inline_panel_float_to_dock_migrated';
 
 async function extensionServiceWorker(context) {
   const pickExt = () =>
@@ -68,10 +77,11 @@ async function setInlinePanelModes(context, opts = {}) {
       touchFloatingAnchor,
       widthKey,
       placementKey,
-      anchorKey
+      anchorKey,
+      migratedKey
     }) => {
       const removeKeys = [];
-      /** @type {Record<string, string>} */
+      /** @type {Record<string, unknown>} */
       const save = {};
       if (widthMode == null) removeKeys.push(widthKey);
       else save[widthKey] = widthMode;
@@ -81,6 +91,8 @@ async function setInlinePanelModes(context, opts = {}) {
         if (floatingAnchor == null) removeKeys.push(anchorKey);
         else save[anchorKey] = floatingAnchor;
       }
+      /* 移行フラグは常に true で固定し、content/background のワンショット再書き込みを封じる */
+      save[migratedKey] = true;
       if (removeKeys.length) {
         await chrome.storage.local.remove(removeKeys);
       }
@@ -95,7 +107,8 @@ async function setInlinePanelModes(context, opts = {}) {
       touchFloatingAnchor: opts.touchFloatingAnchor === true,
       widthKey: KEY_INLINE_PANEL_WIDTH_MODE,
       placementKey: KEY_INLINE_PANEL_PLACEMENT,
-      anchorKey: KEY_INLINE_FLOATING_ANCHOR
+      anchorKey: KEY_INLINE_FLOATING_ANCHOR,
+      migratedKey: KEY_INLINE_PANEL_FLOAT_TO_DOCK_MIGRATED
     }
   );
 }

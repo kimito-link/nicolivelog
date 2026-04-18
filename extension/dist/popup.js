@@ -2645,11 +2645,16 @@ ${body}`;
     };
   }
 
-  // src/lib/userLaneCandidatesFromStorage.js
+  // src/shared/niconico/liveId.js
   function normalizeLv(v) {
     const s = String(v ?? "").trim().toLowerCase();
     if (!s) return "";
     return s.startsWith("lv") ? s : `lv${s}`;
+  }
+
+  // src/lib/userLaneCandidatesFromStorage.js
+  function normalizeLv2(v) {
+    return normalizeLv(v);
   }
   function rowLiveId(row) {
     const o = (
@@ -2664,8 +2669,8 @@ ${body}`;
       /** @type {{ liveId?: unknown, lvId?: unknown }} */
       row
     );
-    const a = normalizeLv(o?.liveId);
-    const b = normalizeLv(o?.lvId);
+    const a = normalizeLv2(o?.liveId);
+    const b = normalizeLv2(o?.lvId);
     return Boolean(a) && a === targetNorm || Boolean(b) && b === targetNorm;
   }
   function rowCapturedAt(row) {
@@ -2678,7 +2683,7 @@ ${body}`;
   function userLaneCandidatesFromStorage(storedComments, liveId) {
     const filterByLive = arguments.length >= 2 && liveId != null && String(liveId).trim() !== "";
     const lidNorm = filterByLive ? String(liveId).trim() : "";
-    const targetNorm = filterByLive ? normalizeLv(lidNorm) : "";
+    const targetNorm = filterByLive ? normalizeLv2(lidNorm) : "";
     const allRows = Array.isArray(storedComments) ? storedComments : [];
     let rows = filterByLive ? allRows.filter((e) => rowMatchesLiveFilter(e, targetNorm)) : allRows;
     let useLidForOutput = filterByLive;
@@ -2768,8 +2773,261 @@ ${body}`;
     );
   }
 
+  // src/data/store/laneStore.js
+  var EMPTY_COLUMNS = Object.freeze({
+    link: Object.freeze([]),
+    konta: Object.freeze([]),
+    tanu: Object.freeze([])
+  });
+  var INITIAL_STATE = Object.freeze({
+    liveId: "",
+    candidates: Object.freeze([]),
+    byColumn: EMPTY_COLUMNS,
+    version: 0
+  });
+  function partitionByColumn(candidates) {
+    const link = [];
+    const konta = [];
+    const tanu = [];
+    for (const c of candidates) {
+      const tier = resolveLaneTier(c);
+      if (tier === 3) link.push(c);
+      else if (tier === 2) konta.push(c);
+      else if (tier === 1) tanu.push(c);
+    }
+    return Object.freeze({
+      link: Object.freeze(link),
+      konta: Object.freeze(konta),
+      tanu: Object.freeze(tanu)
+    });
+  }
+  function createLaneStore() {
+    let state = INITIAL_STATE;
+    const listeners = /* @__PURE__ */ new Set();
+    const getState = () => state;
+    const notify = () => {
+      for (const l of listeners) {
+        try {
+          l(state);
+        } catch (err) {
+          if (typeof console !== "undefined" && console?.warn) {
+            console.warn("[laneStore] subscriber threw:", err);
+          }
+        }
+      }
+    };
+    const setCandidates = (liveId, candidates) => {
+      const liveIdStr = String(liveId || "");
+      const arr = Array.isArray(candidates) ? candidates.slice() : [];
+      const byColumn = partitionByColumn(arr);
+      state = Object.freeze({
+        liveId: liveIdStr,
+        candidates: Object.freeze(arr),
+        byColumn,
+        version: state.version + 1
+      });
+      notify();
+    };
+    const reset = () => {
+      if (state === INITIAL_STATE) return;
+      state = Object.freeze({
+        liveId: "",
+        candidates: Object.freeze([]),
+        byColumn: EMPTY_COLUMNS,
+        version: state.version + 1
+      });
+      notify();
+    };
+    const subscribe = (listener) => {
+      if (typeof listener !== "function") return () => {
+      };
+      listeners.add(listener);
+      return () => {
+        listeners.delete(listener);
+      };
+    };
+    return { getState, setCandidates, reset, subscribe };
+  }
+  var laneStoreInstance = createLaneStore();
+
+  // src/domain/lane/aggregate.js
+  function rowCapturedAt2(row) {
+    const n = Number(
+      /** @type {{ capturedAt?: unknown }} */
+      row?.capturedAt
+    );
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+  function rowLiveId2(row) {
+    const o = (
+      /** @type {{ liveId?: unknown, lvId?: unknown }} */
+      row
+    );
+    return String(o?.liveId ?? o?.lvId ?? "").trim();
+  }
+  function toKindSet(v) {
+    if (v instanceof Set) return new Set(
+      /** @type {Set<AvatarObservationKind>} */
+      v
+    );
+    if (Array.isArray(v)) return new Set(
+      /** @type {AvatarObservationKind[]} */
+      v
+    );
+    return /* @__PURE__ */ new Set();
+  }
+  function aggregateOneUser(userId, rows) {
+    const chronological = [...rows].sort(
+      (a, b) => rowCapturedAt2(a) - rowCapturedAt2(b)
+    );
+    const newestFirst = [...chronological].reverse();
+    const kinds = /* @__PURE__ */ new Set();
+    let nonCanonical = false;
+    for (const r of chronological) {
+      for (const k of toKindSet(r?.avatarObservationKinds)) kinds.add(k);
+      if (r?.hasNonCanonicalPersonalUrl) nonCanonical = true;
+    }
+    let avatarUrl = "";
+    for (const r of newestFirst) {
+      const u = String(r?.avatarUrl || "").trim();
+      if (u) {
+        avatarUrl = u;
+        break;
+      }
+    }
+    let nickname = "";
+    for (const r of newestFirst) {
+      const n = String(r?.nickname || "").trim();
+      if (isStrongNickname(n, userId)) {
+        nickname = n;
+        break;
+      }
+    }
+    if (!nickname && newestFirst.length > 0) {
+      nickname = String(newestFirst[0]?.nickname || "").trim();
+    }
+    const lastCapturedAt = chronological.length > 0 ? rowCapturedAt2(chronological[chronological.length - 1]) : 0;
+    const liveId = rowLiveId2(newestFirst[0] || chronological[chronological.length - 1] || {});
+    return {
+      userId,
+      nickname,
+      avatarUrl,
+      avatarObservationKinds: kinds,
+      hasNonCanonicalPersonalUrl: nonCanonical,
+      liveId,
+      lastCapturedAt
+    };
+  }
+  function aggregateLaneCandidates(rows) {
+    const src = Array.isArray(rows) ? rows : [];
+    const byUid = /* @__PURE__ */ new Map();
+    for (const r of src) {
+      const uid = String(r?.userId || "").trim();
+      if (!uid) continue;
+      const g = byUid.get(uid);
+      if (g) g.push(r);
+      else byUid.set(uid, [r]);
+    }
+    const out = (
+      /** @type {LaneCandidate[]} */
+      []
+    );
+    for (const [uid, group] of byUid) {
+      out.push(aggregateOneUser(uid, group));
+    }
+    out.sort((a, b) => b.lastCapturedAt - a.lastCapturedAt);
+    return out;
+  }
+
+  // src/domain/user/avatar.js
+  function kindsFromLegacyObservedFlag(avatarObserved) {
+    return avatarObserved ? /* @__PURE__ */ new Set(["dom"]) : /* @__PURE__ */ new Set();
+  }
+
+  // src/data/sources/laneFromStoredComments.js
+  var CANONICAL_USERICON_HTTPS_PREFIX = "https://secure-dcdn.cdn.nimg.jp/nicoaccount/usericon/";
+  function isHttpUrl(url) {
+    return /^https?:\/\//i.test(String(url || "").trim());
+  }
+  function isCanonicalUsericonUrl(url) {
+    const s = String(url || "").trim();
+    if (!isHttpUrl(s)) return false;
+    return s.startsWith(CANONICAL_USERICON_HTTPS_PREFIX);
+  }
+  function rowMatchesLiveFilter2(row, targetNorm) {
+    if (!targetNorm) return true;
+    const o = (
+      /** @type {{ liveId?: unknown, lvId?: unknown }} */
+      row
+    );
+    const a = normalizeLv(o?.liveId);
+    const b = normalizeLv(o?.lvId);
+    return Boolean(a) && a === targetNorm || Boolean(b) && b === targetNorm;
+  }
+  function storedRowToAggregateRow(row) {
+    const o = (
+      /** @type {Record<string, unknown>} */
+      row || {}
+    );
+    const avatarUrl = String(o?.avatarUrl || "").trim();
+    const observed = Boolean(o?.avatarObserved);
+    const kinds = kindsFromLegacyObservedFlag(observed);
+    const hasNonCanonicalPersonalUrl = Boolean(avatarUrl) && !isCanonicalUsericonUrl(avatarUrl);
+    return {
+      userId: String(o?.userId || "").trim(),
+      nickname: String(o?.nickname || "").trim(),
+      avatarUrl,
+      avatarObservationKinds: kinds,
+      hasNonCanonicalPersonalUrl,
+      liveId: String(o?.liveId || o?.lvId || "").trim(),
+      capturedAt: Number(o?.capturedAt) || 0
+    };
+  }
+  function laneCandidatesFromStoredComments(storedComments, liveId) {
+    const allRows = Array.isArray(storedComments) ? storedComments : [];
+    const filterByLive = arguments.length >= 2 && liveId != null && String(liveId).trim() !== "";
+    const targetNorm = filterByLive ? normalizeLv(String(liveId)) : "";
+    let rows = filterByLive ? allRows.filter((r) => rowMatchesLiveFilter2(r, targetNorm)) : allRows;
+    if (filterByLive && rows.length === 0) {
+      rows = allRows;
+    }
+    const aggregateRows = rows.map(storedRowToAggregateRow);
+    return aggregateLaneCandidates(aggregateRows);
+  }
+
+  // src/data/acquirers/laneFromStorage.js
+  function rowCapturedAt3(row) {
+    const n = Number(
+      /** @type {{ capturedAt?: unknown }} */
+      row?.capturedAt
+    );
+    return Number.isFinite(n) && n > 0 ? n : 0;
+  }
+  function rowLiveIdNorm(row) {
+    const o = (
+      /** @type {{ liveId?: unknown, lvId?: unknown }} */
+      row
+    );
+    return normalizeLv(o?.liveId) || normalizeLv(o?.lvId);
+  }
+  function findLatestLiveIdFromStoredComments(storedComments) {
+    if (!Array.isArray(storedComments) || storedComments.length === 0) return "";
+    let bestAt = -1;
+    let bestLive = "";
+    for (const row of storedComments) {
+      const at = rowCapturedAt3(row);
+      if (at <= 0) continue;
+      if (at <= bestAt) continue;
+      const lv = rowLiveIdNorm(row);
+      if (!lv) continue;
+      bestAt = at;
+      bestLive = lv;
+    }
+    return bestLive;
+  }
+
   // src/lib/userLaneDiagSnapshot.js
-  function normalizeLv2(v) {
+  function normalizeLv3(v) {
     if (!v) return "";
     const s = String(v).toLowerCase();
     return s.startsWith("lv") ? s : `lv${s}`;
@@ -2787,8 +3045,8 @@ ${body}`;
       row
     );
     return {
-      liveIdNorm: normalizeLv2(o?.liveId),
-      lvIdNorm: normalizeLv2(o?.lvId),
+      liveIdNorm: normalizeLv3(o?.liveId),
+      lvIdNorm: normalizeLv3(o?.lvId),
       hasUserId: Boolean(String(o?.userId ?? "").trim()),
       avatarUrl: Boolean(o?.avatarUrl),
       avatarObserved: o?.avatarObserved === true,
@@ -2805,7 +3063,7 @@ ${body}`;
       hasNickname: Boolean(String(o?.nickname ?? "").trim()),
       avatarUrl: Boolean(o?.avatarUrl),
       avatarObserved: o?.avatarObserved === true,
-      liveIdNorm: normalizeLv2(o?.liveId)
+      liveIdNorm: normalizeLv3(o?.liveId)
     };
   }
   function sanitizeEntrySample(row) {
@@ -2814,8 +3072,8 @@ ${body}`;
       row
     );
     return {
-      liveIdNorm: normalizeLv2(o?.liveId),
-      lvIdNorm: normalizeLv2(o?.lvId),
+      liveIdNorm: normalizeLv3(o?.liveId),
+      lvIdNorm: normalizeLv3(o?.lvId),
       hasUserId: Boolean(String(o?.userId ?? "").trim()),
       avatarUrl: Boolean(o?.avatarUrl),
       avatarObserved: o?.avatarObserved === true
@@ -2855,7 +3113,7 @@ ${body}`;
       }
     });
     try {
-      const liveId = normalizeLv2(state?.liveId);
+      const liveId = normalizeLv3(state?.liveId);
       const storageRows = Array.isArray(state?.storageRowsForCurrentLive) ? state.storageRowsForCurrentLive : [];
       const laneAggregates = Array.isArray(state?.laneAggregates) ? state.laneAggregates : [];
       const entries = Array.isArray(state?.entries) ? state.entries : [];
@@ -9447,7 +9705,44 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     document.documentElement.classList.toggle("nl-calm-motion", Boolean(enabled));
   }
   function applyRecordHeroRecordingDataset(toggle) {
-    document.documentElement.dataset.nlRecording = toggle.checked ? "on" : "off";
+    const val = toggle.checked ? "on" : "off";
+    document.documentElement.dataset.nlRecording = val;
+    const heroes = document.querySelectorAll(".nl-record-hero");
+    for (const hero of heroes) {
+      if (hero instanceof HTMLElement) {
+        hero.dataset.nlRecording = val;
+      }
+    }
+  }
+  async function populateStorySourceEntriesFromStorageFallback() {
+    try {
+      const bag = await storageGetSafe("nls_comments", { nls_comments: [] });
+      const rows = Array.isArray(bag?.nls_comments) ? bag.nls_comments : [];
+      const latestLv = findLatestLiveIdFromStoredComments(rows);
+      if (!latestLv) return;
+      const laneLvKey = normalizeLv2(latestLv);
+      const storageRowsForLane = rows.filter((e) => {
+        const a = normalizeLv2(e?.liveId);
+        const b = normalizeLv2(e?.lvId);
+        return Boolean(a) && a === laneLvKey || Boolean(b) && b === laneLvKey;
+      });
+      const displayEntries = buildDisplayCommentEntries(storageRowsForLane, latestLv);
+      syncStorySourceEntries(latestLv, displayEntries, storageRowsForLane);
+      try {
+        laneStoreInstance.setCandidates(
+          latestLv,
+          laneCandidatesFromStoredComments(rows, latestLv)
+        );
+      } catch (err) {
+        if (typeof console !== "undefined" && console?.warn) {
+          console.warn("[populateLaneFromStorage] laneStore setCandidates failed:", err);
+        }
+      }
+    } catch (err) {
+      if (typeof console !== "undefined" && console?.warn) {
+        console.warn("[populateLaneFromStorage] fallback failed:", err);
+      }
+    }
   }
   async function refresh() {
     if (!hasExtensionContext()) {
@@ -9508,10 +9803,10 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         updateCommentPostUiContext(url, lv, relevantCommentPanelCode);
         paintCommentComposeUi();
         setReloadWatchTabUiDisabled(false);
-        const laneLvKey = normalizeLv(lv);
+        const laneLvKey = normalizeLv2(lv);
         const storageRowsForLane = !laneLvKey ? arr : arr.filter((e) => {
-          const a = normalizeLv(e?.liveId);
-          const b = normalizeLv(e?.lvId);
+          const a = normalizeLv2(e?.liveId);
+          const b = normalizeLv2(e?.lvId);
           return Boolean(a) && a === laneLvKey || Boolean(b) && b === laneLvKey;
         });
         syncStorySourceEntries(lv, displayEntries, storageRowsForLane);
@@ -9724,6 +10019,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         void updateIngestHeartbeatDisplay("");
         void renderSessionSummaryComparePanel("");
         void renderGiftQuickStatsPanel("");
+        await populateStorySourceEntriesFromStorageFallback();
         markPopupRefreshContentPainted();
         revealPopupPrimaryOnce();
         return;
@@ -9773,6 +10069,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         void updateIngestHeartbeatDisplay("");
         void renderSessionSummaryComparePanel("");
         void renderGiftQuickStatsPanel("");
+        await populateStorySourceEntriesFromStorageFallback();
         markPopupRefreshContentPainted();
         revealPopupPrimaryOnce();
         return;
@@ -11112,7 +11409,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     try {
       const manifest = chrome.runtime.getManifest();
       const version = String(manifest?.version || "").trim() || "?";
-      const buildId = "0418-1931" ? String("0418-1931") : "dev";
+      const buildId = "0418-2113" ? String("0418-2113") : "dev";
       valueEl.textContent = `v${version}\u30FBb${buildId}`;
     } catch {
       valueEl.textContent = "\u2014";

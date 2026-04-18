@@ -240,9 +240,39 @@ test.describe('popup layout', () => {
     }
     const extensionId = new URL(sw.url()).hostname;
 
-    await sw.evaluate(async ({ key }) => {
-      await chrome.storage.local.remove(key);
-    }, { key: KEY_SUPPORT_VISUAL_EXPANDED });
+    /* 応援グリッドは「1 件以上のコメントが入ったときに行が伸びる」のがそもそもの UX。
+     * 未記録の状態では .nl-story-growth が 0 行 0 高になり gauge が invisible になるため、
+     * 「details を開けば見える」契約を検証するために、295 行目以降の scroll テストと同じく
+     * 実録画フロー（recording ON + lastWatchUrl + watch タブ + per-live 行）を seed する。
+     * details 既定の開閉状態自体は expandedKey を消すことで担保する（既存テストと同じ方針）。 */
+    await sw.evaluate(
+      async ({ recordingKey, lastWatchKey, commentsKey, watchUrl, expandedKey }) => {
+        const rows = Array.from({ length: 3 }, (_, idx) => ({
+          id: `lv888888888::${idx + 1}`,
+          liveId: 'lv888888888',
+          commentNo: String(idx + 1),
+          userId: `user_visible_${idx + 1}`,
+          text: `mock row ${idx + 1}`,
+          capturedAt: Date.now() - idx * 1000
+        }));
+        await chrome.storage.local.remove(expandedKey);
+        await chrome.storage.local.set({
+          [recordingKey]: true,
+          [lastWatchKey]: watchUrl,
+          [commentsKey]: rows
+        });
+      },
+      {
+        recordingKey: KEY_RECORDING,
+        lastWatchKey: KEY_LAST_WATCH_URL,
+        commentsKey: STORAGE_COMMENTS,
+        watchUrl: MOCK_WATCH,
+        expandedKey: KEY_SUPPORT_VISUAL_EXPANDED
+      }
+    );
+
+    const watch = await context.newPage();
+    await watch.goto(MOCK_WATCH, { waitUntil: 'load', timeout: 60_000 });
 
     const popup = await context.newPage();
     await popup.goto(`chrome-extension://${extensionId}/popup.html`, {
@@ -274,9 +304,35 @@ test.describe('popup layout', () => {
     }
     const extensionId = new URL(sw.url()).hostname;
 
-    await sw.evaluate(async ({ key }) => {
-      await chrome.storage.local.remove(key);
-    }, { key: KEY_SUPPORT_VISUAL_EXPANDED });
+    /* 同上: 0 件だと gauge 高さ 0 で invisible 扱いになるため、実録画相当の seed を入れる。 */
+    await sw.evaluate(
+      async ({ recordingKey, lastWatchKey, commentsKey, watchUrl, expandedKey }) => {
+        const rows = Array.from({ length: 3 }, (_, idx) => ({
+          id: `lv888888888::${idx + 1}`,
+          liveId: 'lv888888888',
+          commentNo: String(idx + 1),
+          userId: `user_visible_${idx + 1}`,
+          text: `mock row ${idx + 1}`,
+          capturedAt: Date.now() - idx * 1000
+        }));
+        await chrome.storage.local.remove(expandedKey);
+        await chrome.storage.local.set({
+          [recordingKey]: true,
+          [lastWatchKey]: watchUrl,
+          [commentsKey]: rows
+        });
+      },
+      {
+        recordingKey: KEY_RECORDING,
+        lastWatchKey: KEY_LAST_WATCH_URL,
+        commentsKey: STORAGE_COMMENTS,
+        watchUrl: MOCK_WATCH,
+        expandedKey: KEY_SUPPORT_VISUAL_EXPANDED
+      }
+    );
+
+    const watch = await context.newPage();
+    await watch.goto(MOCK_WATCH, { waitUntil: 'load', timeout: 60_000 });
 
     const popup = await context.newPage();
     await popup.goto(`chrome-extension://${extensionId}/popup.html`, {
