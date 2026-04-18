@@ -2754,7 +2754,7 @@ ${body}`;
     let rows = filterByLive ? allRows.filter((e) => rowMatchesLiveFilter(e, targetNorm)) : allRows;
     let useLidForOutput = filterByLive;
     if (filterByLive && rows.length === 0) {
-      console.warn("[lane] filter matched 0, fallback all");
+      console.debug("[lane] filter matched 0, fallback all");
       rows = allRows;
       useLidForOutput = false;
     }
@@ -11454,7 +11454,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     try {
       const manifest = chrome.runtime.getManifest();
       const version = String(manifest?.version || "").trim() || "?";
-      const buildId = "0418-2238" ? String("0418-2238") : "dev";
+      const buildId = "0418-2240" ? String("0418-2240") : "dev";
       valueEl.textContent = `v${version}\u30FBb${buildId}`;
     } catch {
       valueEl.textContent = "\u2014";

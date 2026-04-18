@@ -81,7 +81,13 @@ export function userLaneCandidatesFromStorage(storedComments, liveId) {
   /** 集約結果の liveId 表示に lid を使うか（フォールバック後は行ベース） */
   let useLidForOutput = filterByLive;
   if (filterByLive && rows.length === 0) {
-    console.warn('[lane] filter matched 0, fallback all');
+    /*
+     * 当 lv でまだ StoredComment が無い（視聴開始直後など）状態。
+     * 空配列を返す代わりに全 live を集約して仮表示する合法フォールバックなので、
+     * エンドユーザ向けには警告ではなく debug トレースに留める。
+     * （以前は console.warn で黄色スタックを毎回出していた — UX 的にノイズ）
+     */
+    console.debug('[lane] filter matched 0, fallback all');
     rows = allRows;
     useLidForOutput = false;
   }
