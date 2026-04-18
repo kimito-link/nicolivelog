@@ -5082,16 +5082,8 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     const heightMax = sh >= 900 ? 960 : sh >= 800 ? 900 : 860;
     const heightMin = sh >= 760 ? 700 : sh >= 660 ? 640 : 560;
     const baseHeight = Math.max(heightMin, Math.min(heightMax, Math.round(sh * 0.88)));
-    const header = (
-      /** @type {HTMLElement|null} */
-      document.querySelector(".nl-header")
-    );
-    const main = (
-      /** @type {HTMLElement|null} */
-      document.querySelector(".nl-main")
-    );
-    const contentHeight = header && main ? Math.ceil(header.scrollHeight + main.scrollHeight + 2) : 0;
-    const height = Math.min(heightMax, Math.max(baseHeight, contentHeight));
+    const CHROME_ACTION_POPUP_MAX_HEIGHT_PX = 580;
+    const height = Math.min(CHROME_ACTION_POPUP_MAX_HEIGHT_PX, baseHeight);
     const baseFont = width >= 500 ? 16.25 : width >= 460 ? 15.75 : width >= 420 ? 15.25 : width >= 380 ? 14.75 : 14.25;
     root.style.setProperty("--nl-pop-width", `${width}px`);
     root.style.setProperty("--nl-pop-height", `${height}px`);
@@ -10964,7 +10956,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     try {
       const manifest = chrome.runtime.getManifest();
       const version = String(manifest?.version || "").trim() || "?";
-      const buildId = "0418-1812" ? String("0418-1812") : "dev";
+      const buildId = "0418-1820" ? String("0418-1820") : "dev";
       valueEl.textContent = `v${version}\u30FBb${buildId}`;
     } catch {
       valueEl.textContent = "\u2014";

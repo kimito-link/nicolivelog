@@ -39,7 +39,7 @@
         min-width: 340px;
         max-width: 540px;
         height: var(--nl-pop-height);
-        min-height: 560px;
+        min-height: 0;
         max-height: 960px;
         margin: 0;
         padding: 0;
@@ -53,7 +53,7 @@
         min-width: 340px;
         max-width: 540px;
         height: var(--nl-pop-height);
-        min-height: 560px;
+        min-height: 0;
         max-height: 960px;
         background: linear-gradient(160deg, var(--nl-bg), var(--nl-bg-soft));
         color: var(--nl-text);
@@ -62,6 +62,20 @@
         overflow: hidden;
         display: flex;
         flex-direction: column;
+      }
+
+      /*
+       * ツールバーポップアップ: --nl-pop-height がビューポートより大きいと外側スクロールが付きやすい。
+       * JS でも上限するが、CSS でも二重に抑える（nl-inline は html.nl-inline で上書き）。
+       */
+      html:not(.nl-inline) {
+        height: min(var(--nl-pop-height), 580px);
+        max-height: min(var(--nl-pop-height), 580px);
+      }
+
+      html:not(.nl-inline) body {
+        height: min(var(--nl-pop-height), 580px);
+        max-height: min(var(--nl-pop-height), 580px);
       }
 
       /* 親 iframe の高さ内に収め、はみ出しは内側スクロール（820px 級の白塔を防ぐ） */
@@ -1142,8 +1156,8 @@
         min-height: 0;
         padding: 5px 9px 4px;
         overflow-x: hidden;
-        /* auto だと閾値付近でバー有無が切り替わり、auto-fill グリッドの列幅が振れる */
-        overflow-y: scroll;
+        /* 常時スクロールバー枠を出さず、必要時のみ（二重バーに見えにくくする） */
+        overflow-y: auto;
         scrollbar-gutter: stable;
       }
 

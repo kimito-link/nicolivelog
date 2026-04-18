@@ -361,15 +361,13 @@ function applyResponsivePopupLayout() {
   const heightMax = sh >= 900 ? 960 : sh >= 800 ? 900 : 860;
   const heightMin = sh >= 760 ? 700 : sh >= 660 ? 640 : 560;
   const baseHeight = Math.max(heightMin, Math.min(heightMax, Math.round(sh * 0.88)));
-  const header = /** @type {HTMLElement|null} */ (
-    document.querySelector('.nl-header')
-  );
-  const main = /** @type {HTMLElement|null} */ (
-    document.querySelector('.nl-main')
-  );
-  const contentHeight =
-    header && main ? Math.ceil(header.scrollHeight + main.scrollHeight + 2) : 0;
-  const height = Math.min(heightMax, Math.max(baseHeight, contentHeight));
+  /**
+   * アクションポップアップの実効表示は多くの環境で ~600px 未満。それより高い html/body を
+   * 固定するとウィンドウ外枠のスクロールと .nl-main のスクロールが二重になる。
+   * main.scrollHeight を外枠に足すのはスクロール領域の全文高になり得るため使わない。
+   */
+  const CHROME_ACTION_POPUP_MAX_HEIGHT_PX = 580;
+  const height = Math.min(CHROME_ACTION_POPUP_MAX_HEIGHT_PX, baseHeight);
   const baseFont =
     width >= 500
       ? 16.25
