@@ -108,6 +108,15 @@ test.describe('応援レーン可視性の契約（Phase 0 baseline）', () => {
     await dismissExtensionUsageTermsGate(popup);
     await openNlPopupSettings(popup);
 
+    // 応援ビジュアル（アイコン列・グリッド・診断）はデフォルトで折り畳まれているので、
+    // ユーザーが開く操作を明示的にシミュレートする。E2E はユーザー視点の「見える／見えない」を
+    // 契約にするため、UI の折り畳み解除はテスト側の責務として扱う。
+    const supportVisualDetails = popup.locator('#supportVisualDetails');
+    if (!(await supportVisualDetails.evaluate((el) => el.open))) {
+      await supportVisualDetails.locator('summary').click();
+    }
+    await expect(supportVisualDetails).toHaveJSProperty('open', true);
+
     // 応援レーンのスタック自体が表示されること
     const stack = popup.locator('#sceneStoryUserLaneStack');
     await expect(stack).toBeVisible({ timeout: 20_000 });

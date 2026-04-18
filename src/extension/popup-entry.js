@@ -167,6 +167,9 @@ import {
   normalizeLv,
   userLaneCandidatesFromStorage
 } from '../lib/userLaneCandidatesFromStorage.js';
+import { laneStoreInstance } from '../data/store/laneStore.js';
+import { laneCandidatesFromStoredComments } from '../data/sources/laneFromStoredComments.js';
+import { findLatestLiveIdFromStoredComments } from '../data/acquirers/laneFromStorage.js';
 import { buildUserLaneDiagSnapshot } from '../lib/userLaneDiagSnapshot.js';
 import { shouldSkipStoryUserLaneCandidateByContamination } from '../lib/storyUserLaneContaminationGuard.js';
 import { explainSupportGridDisplayTier } from '../lib/supportGridDisplayTier.js';
@@ -5716,6 +5719,57 @@ function applyRecordHeroRecordingDataset(toggle) {
   document.documentElement.dataset.nlRecording = toggle.checked ? 'on' : 'off';
 }
 
+/**
+ * 当タブが nico live watch ではない／lv が取り出せない場合の応援レーン fallback。
+ *
+ * 既存 refresh() は no-url 系のとき `syncStorySourceEntries('', [])` で lane を
+ * 空にし、結果として popup を生 URL で開くと応援レーンが常に空になる退行があった
+ * （tests/e2e/story-user-lane-visibility.spec.js が赤）。
+ *
+ * この helper は `nls_comments` から直近放送（capturedAt 最大）の liveId を推定し、
+ * 見つかればその放送の storageRows + displayEntries を既存 pipeline に流し込む。
+ * 同時に data/store/laneStore.js にも投入する（将来 UI がそこから subscribe する前提）。
+ *
+ * 既存の `syncStorySourceEntries('', [])` による reset の **後** に呼ぶこと。
+ * reset を先に済ませてから fallback で上書きする順序にすることで、renderCharacterScene
+ * 内部（line 3884）の二重 reset の影響を受けない。
+ *
+ * @returns {Promise<void>}
+ */
+async function populateStorySourceEntriesFromStorageFallback() {
+  try {
+    const bag = await storageGetSafe('nls_comments', { nls_comments: [] });
+    const rows = Array.isArray(bag?.nls_comments) ? bag.nls_comments : [];
+    const latestLv = findLatestLiveIdFromStoredComments(rows);
+    if (!latestLv) return; // 保存が無ければ何もしない（空 lane のまま）
+    const laneLvKey = normalizeLv(latestLv);
+    const storageRowsForLane = rows.filter((e) => {
+      const a = normalizeLv(e?.liveId);
+      const b = normalizeLv(e?.lvId);
+      return (
+        (Boolean(a) && a === laneLvKey) ||
+        (Boolean(b) && b === laneLvKey)
+      );
+    });
+    const displayEntries = buildDisplayCommentEntries(storageRowsForLane, latestLv);
+    syncStorySourceEntries(latestLv, displayEntries, storageRowsForLane);
+    try {
+      laneStoreInstance.setCandidates(
+        latestLv,
+        laneCandidatesFromStoredComments(rows, latestLv)
+      );
+    } catch (err) {
+      if (typeof console !== 'undefined' && console?.warn) {
+        console.warn('[populateLaneFromStorage] laneStore setCandidates failed:', err);
+      }
+    }
+  } catch (err) {
+    if (typeof console !== 'undefined' && console?.warn) {
+      console.warn('[populateLaneFromStorage] fallback failed:', err);
+    }
+  }
+}
+
 async function refresh() {
   if (!hasExtensionContext()) {
     renderExtensionContextBanner(true);
@@ -5918,6 +5972,9 @@ async function refresh() {
     void updateIngestHeartbeatDisplay('');
     void renderSessionSummaryComparePanel('');
     void renderGiftQuickStatsPanel('');
+    // 応援レーンは「直近放送の保存」から暫定復元する。reset の後に呼ぶことで、
+    // 生 URL で popup を開いたときに lane が真っ白にならない（E2E lane-visibility）。
+    await populateStorySourceEntriesFromStorageFallback();
     markPopupRefreshContentPainted();
     revealPopupPrimaryOnce();
     return;
@@ -5969,6 +6026,8 @@ async function refresh() {
     void updateIngestHeartbeatDisplay('');
     void renderSessionSummaryComparePanel('');
     void renderGiftQuickStatsPanel('');
+    // lv が取り出せなかった場合も、同じ保存ベース fallback を試みる。
+    await populateStorySourceEntriesFromStorageFallback();
     markPopupRefreshContentPainted();
     revealPopupPrimaryOnce();
     return;
