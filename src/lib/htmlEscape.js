@@ -1,17 +1,10 @@
 /**
- * ユーザー由来文字列を HTML 断片に埋め込む前にエスケープする（XSS 対策の共通実装）
+ * 旧パス：`src/lib/htmlEscape.js`
+ *
+ * Phase 1 以降の正本は `src/shared/html/escape.js` にある。
+ * ここは transitional re-export として残してあり、新規 import は `shared/html/escape.js`
+ * から行うこと（docs/lane-architecture-redesign.md §5 Phase 1 参照）。
+ * Phase 5 で本ファイルは削除される予定。
  */
 
-/** @param {unknown} s */
-export function escapeHtml(s) {
-  return String(s || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-/** @param {unknown} s */
-export function escapeAttr(s) {
-  return escapeHtml(s);
-}
+export { escapeHtml, escapeAttr } from '../shared/html/escape.js';
