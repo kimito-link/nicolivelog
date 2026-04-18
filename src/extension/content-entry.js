@@ -1918,14 +1918,14 @@ let inlineFloatingAnchor = normalizeInlineFloatingAnchor(undefined);
 
 /**
  * 視聴ページで extension のインラインパネルを自動表示するかどうか（storage から更新）。
- * false のときはページを開いてもパネルは出ず、ツールバーアイコンを押すまで非表示。
- * 「こん太を押す前から勝手に出る」UX 不一致を回避するための opt-out スイッチ。
+ * 既定 false（opt-in）。ユーザが popup で明示的に ON にしたときだけ自動で出る。
+ * 既定 OFF の狙いは「こん太を押す前から勝手に出る」UX 不一致の回避。
  */
 let inlinePanelAutoshowEnabled = normalizeInlinePanelAutoshowEnabled(undefined);
 
 /**
  * このタブで一度でもツールバーアイコンを押したか（セッション局所フラグ、storage には持たない）。
- * autoshow が false でも、ユーザがツールバーを押した瞬間から同じタブでは表示する。
+ * autoshow が false でもツールバーを押した瞬間から同じタブでは表示する（one-shot 解禁）。
  */
 let toolbarInitiatedShowThisSession = false;
 
@@ -2686,8 +2686,8 @@ function renderPageFrameOverlay() {
     return;
   }
   /*
-   * autoshow 設定が明示的に OFF、かつユーザがこのタブでまだツールバーを押していない場合は、
-   * インラインパネルを一切表示しない（ユーザー要望「こん太を押す前は extension を出さない」）。
+   * autoshow 設定が OFF（既定）で、かつユーザがこのタブでまだツールバーを押していない場合は、
+   * インラインパネルを一切表示しない（「こん太を押す前は extension を出さない」が既定動作）。
    * ツールバークリックで toolbarInitiatedShowThisSession が立つと以降は通常どおり表示する。
    */
   if (!inlinePanelAutoshowEnabled && !toolbarInitiatedShowThisSession) {

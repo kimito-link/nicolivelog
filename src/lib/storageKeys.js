@@ -111,11 +111,12 @@ export const KEY_INLINE_PANEL_FLOAT_TO_DOCK_MIGRATED =
 
 /**
  * 視聴ページで extension のインラインパネルを自動表示するかどうか。
- * 既定 true（従来動作）。false を明示保存したときだけ OFF。
+ * 既定 false（opt-in）。true を明示保存したときだけ自動で出る。
  *
- * OFF のときは視聴ページを開いてもパネルが出ず、ツールバーアイコンを押したときに
- * 前面化する（ユーザーが明示的に操作した場合のみ見える）挙動になる。
- * 「こん太アイコンを押す前から勝手に拡張がでる」という UX 不一致を設定で吸収する手段。
+ * 既定が opt-in な理由：ユーザーは「こん太アイコンを押す前から勝手に拡張が出る」
+ * ことを UX 違和と感じた。視聴を邪魔しないために、既定ではツールバーを押したときだけ
+ * パネルを前面化する。popup で「視聴ページを開いたらパネルを自動表示する」に
+ * チェックを入れると従来互換（自動出現）に戻る。
  */
 export const KEY_INLINE_PANEL_AUTOSHOW_ENABLED =
   'nls_inline_panel_autoshow_enabled';
@@ -125,7 +126,7 @@ export const KEY_INLINE_PANEL_AUTOSHOW_ENABLED =
  * @returns {boolean}
  */
 export function normalizeInlinePanelAutoshowEnabled(raw) {
-  return raw !== false;
+  return raw === true;
 }
 
 /** @type {'below'} */

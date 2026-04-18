@@ -85,7 +85,7 @@
   var KEY_INLINE_PANEL_FLOAT_TO_DOCK_MIGRATED = "nls_inline_panel_float_to_dock_migrated";
   var KEY_INLINE_PANEL_AUTOSHOW_ENABLED = "nls_inline_panel_autoshow_enabled";
   function normalizeInlinePanelAutoshowEnabled(raw) {
-    return raw !== false;
+    return raw === true;
   }
   var INLINE_PANEL_PLACEMENT_BELOW = "below";
   var INLINE_PANEL_PLACEMENT_BESIDE = "beside";

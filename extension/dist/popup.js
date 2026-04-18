@@ -250,7 +250,7 @@
   var KEY_INLINE_PANEL_PLACEMENT = "nls_inline_panel_placement";
   var KEY_INLINE_PANEL_AUTOSHOW_ENABLED = "nls_inline_panel_autoshow_enabled";
   function normalizeInlinePanelAutoshowEnabled(raw) {
-    return raw !== false;
+    return raw === true;
   }
   var INLINE_PANEL_PLACEMENT_BELOW = "below";
   var INLINE_PANEL_PLACEMENT_BESIDE = "beside";
@@ -11454,7 +11454,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     try {
       const manifest = chrome.runtime.getManifest();
       const version = String(manifest?.version || "").trim() || "?";
-      const buildId = "0418-2240" ? String("0418-2240") : "dev";
+      const buildId = "0418-2248" ? String("0418-2248") : "dev";
       valueEl.textContent = `v${version}\u30FBb${buildId}`;
     } catch {
       valueEl.textContent = "\u2014";
