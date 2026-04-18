@@ -2523,6 +2523,16 @@ const STORY_SOURCE_STATE = {
   laneAggregates: /** @type {readonly unknown[]} */ (Object.freeze([]))
 };
 
+/** initPopup の途中失敗後も DevTools から呼べるよう、読み込み直後に束縛する（観測のみ） */
+if (typeof globalThis !== 'undefined') {
+  globalThis.__NLS_LANE_DIAG__ = function () {
+    const snap = buildUserLaneDiagSnapshot(STORY_SOURCE_STATE);
+    console.log('=== NLS_LANE_DIAG ===');
+    console.log(JSON.stringify(snap, null, 2));
+    return snap;
+  };
+}
+
 /** 開発監視エクスポート用・直近の render 引数 */
 let lastDevMonitorPanelParams = /** @type {null|object} */ (null);
 
@@ -8981,15 +8991,6 @@ function initPopup() {
       watchMetaCache.snapshot = null;
       safeRefresh();
     });
-  }
-
-  if (typeof window !== 'undefined') {
-    window.__NLS_LANE_DIAG__ = function () {
-      const snap = buildUserLaneDiagSnapshot(STORY_SOURCE_STATE);
-      console.log('=== NLS_LANE_DIAG ===');
-      console.log(JSON.stringify(snap, null, 2));
-      return snap;
-    };
   }
 }
 

@@ -867,15 +867,11 @@
        * （html.nl-inline より詳細度が高い open 単体セレクは使わない — 埋め込みの全表示を壊す）
        */
       html:not(.nl-inline) .nl-support-visual-details[open] .nl-story-growth {
-        /* max-height のみだと内容に合わせて箱の高さが伸び縮みし、auto と相まってバーが点滅しやすい */
-        height: min(52vh, 420px);
-        max-height: min(52vh, 420px);
+        /* 内側スクロールは .nl-main と二重になるためやめ、メイン列の1本スクロールに任せる */
+        height: auto;
+        max-height: none;
         min-height: 0;
-        overflow-x: hidden;
-        overflow-y: scroll;
-        -webkit-overflow-scrolling: touch;
-        scrollbar-width: thin;
-        scrollbar-gutter: stable;
+        overflow: visible;
       }
 
       .nl-story-growth-cell {

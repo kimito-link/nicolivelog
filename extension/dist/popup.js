@@ -2647,8 +2647,8 @@ ${body}`;
 
   // src/lib/userLaneDiagSnapshot.js
   function normalizeLv2(v) {
-    const s = String(v ?? "").trim().toLowerCase();
-    if (!s) return "";
+    if (!v) return "";
+    const s = String(v).toLowerCase();
     return s.startsWith("lv") ? s : `lv${s}`;
   }
   function rowLiveIdRaw(row) {
@@ -2732,7 +2732,7 @@ ${body}`;
       }
     });
     try {
-      const liveId = String(state?.liveId ?? "").trim();
+      const liveId = normalizeLv2(state?.liveId);
       const storageRows = Array.isArray(state?.storageRowsForCurrentLive) ? state.storageRowsForCurrentLive : [];
       const laneAggregates = Array.isArray(state?.laneAggregates) ? state.laneAggregates : [];
       const entries = Array.isArray(state?.entries) ? state.entries : [];
@@ -6731,6 +6731,14 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       Object.freeze([])
     )
   };
+  if (typeof globalThis !== "undefined") {
+    globalThis.__NLS_LANE_DIAG__ = function() {
+      const snap = buildUserLaneDiagSnapshot(STORY_SOURCE_STATE);
+      console.log("=== NLS_LANE_DIAG ===");
+      console.log(JSON.stringify(snap, null, 2));
+      return snap;
+    };
+  }
   var lastDevMonitorPanelParams = (
     /** @type {null|object} */
     null
@@ -10956,7 +10964,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     try {
       const manifest = chrome.runtime.getManifest();
       const version = String(manifest?.version || "").trim() || "?";
-      const buildId = "0418-1548" ? String("0418-1548") : "dev";
+      const buildId = "0418-1812" ? String("0418-1812") : "dev";
       valueEl.textContent = `v${version}\u30FBb${buildId}`;
     } catch {
       valueEl.textContent = "\u2014";
@@ -12297,14 +12305,6 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         watchMetaCache.snapshot = null;
         safeRefresh();
       });
-    }
-    if (typeof window !== "undefined") {
-      window.__NLS_LANE_DIAG__ = function() {
-        const snap = buildUserLaneDiagSnapshot(STORY_SOURCE_STATE);
-        console.log("=== NLS_LANE_DIAG ===");
-        console.log(JSON.stringify(snap, null, 2));
-        return snap;
-      };
     }
   }
   if (document.readyState === "loading") {
