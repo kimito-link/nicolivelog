@@ -9,8 +9,8 @@
  * @returns {string}
  */
 export function normalizeLv(v) {
-  const s = String(v ?? '').trim().toLowerCase();
-  if (!s) return '';
+  if (!v) return '';
+  const s = String(v).toLowerCase();
   return s.startsWith('lv') ? s : `lv${s}`;
 }
 
@@ -94,7 +94,7 @@ export function buildUserLaneDiagSnapshot(state) {
   });
 
   try {
-    const liveId = String(state?.liveId ?? '').trim();
+    const liveId = normalizeLv(state?.liveId);
     const storageRows = Array.isArray(state?.storageRowsForCurrentLive)
       ? state.storageRowsForCurrentLive
       : [];
