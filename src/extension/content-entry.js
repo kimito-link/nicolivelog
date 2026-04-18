@@ -2332,6 +2332,9 @@ function focusInlinePanelHostFromToolbar() {
   const r = host.getBoundingClientRect();
   if (r.width < 120 || r.height < 120) return false;
   try {
+    // ツールバーからの前面化は意図的な大きなスクロール変化になり得るので、
+    // 発生する scroll イベントを user-scroll として誤カウントしないよう抑止窓を張る。
+    suppressOwnScrollCountingFor(1000);
     host.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   } catch {
     try {
@@ -5203,7 +5206,7 @@ let lastCommentPanelRestoreActionAt = 0;
 
 /**
  * ユーザが能動的にスクロール操作した最後の epoch ms。
- * wheel / touchmove / PageUp / PageDown / 矢印キー / Space / Home / End で更新。
+ * wheel / touchmove / スクロール系キー / スクロールバードラッグ由来の scroll で更新。
  * probeAndRestoreCommentPanelHealth が直近操作中（既定 5 秒以内）は自動復旧を
  * 抑止するためのフラグ（ユーザが上にスクロール中に panel.scrollIntoView で
  * 強制的に戻される問題の根治）。
@@ -5211,8 +5214,34 @@ let lastCommentPanelRestoreActionAt = 0;
  */
 let lastUserInitiatedScrollAt = 0;
 
-/** wheel/touchmove/スクロール系キー で呼び、ユーザ意図のスクロール時刻を刻む。 */
+/**
+ * 自分で scrollIntoView を叩いた直後、その副作用として firing する scroll イベントを
+ * 「ユーザスクロール」と誤認しないためのサプレッション締切（epoch ms）。
+ * @type {number}
+ */
+let ownScrollSuppressionUntil = 0;
+
+/**
+ * content script 側が自分で panel.scrollIntoView などを呼ぶ直前に使う。
+ * 指定 ms だけ scroll イベントの user-scroll 更新を抑止する。
+ * @param {number} ms
+ */
+function suppressOwnScrollCountingFor(ms) {
+  const dur = Number.isFinite(ms) ? /** @type {number} */ (ms) : 800;
+  ownScrollSuppressionUntil = Date.now() + dur;
+}
+
+/** wheel/touch/key で呼ぶ（これらは確実にユーザ起点）。 */
 function noteUserInitiatedScroll() {
+  lastUserInitiatedScrollAt = Date.now();
+}
+
+/**
+ * scroll イベントで呼ぶ。スクロールバードラッグはこれでしか検知できないが、
+ * 自分が叩いた scrollIntoView による scroll も発火するため、サプレッション窓で弾く。
+ */
+function noteScrollEventMaybeFromUser() {
+  if (Date.now() < ownScrollSuppressionUntil) return;
   lastUserInitiatedScrollAt = Date.now();
 }
 
@@ -5224,6 +5253,13 @@ function attachUserScrollListeners() {
   const opts = { passive: true, capture: true };
   window.addEventListener('wheel', noteUserInitiatedScroll, opts);
   window.addEventListener('touchmove', noteUserInitiatedScroll, opts);
+  // スクロールバー本体をマウスでドラッグした場合は wheel/touch イベントが発火しない。
+  // scroll イベントで補足するが、自分の scrollIntoView 由来の scroll は
+  // suppressOwnScrollCountingFor() で弾く。
+  window.addEventListener('scroll', noteScrollEventMaybeFromUser, opts);
+  if (typeof document !== 'undefined' && document && document.addEventListener) {
+    document.addEventListener('scroll', noteScrollEventMaybeFromUser, opts);
+  }
   window.addEventListener(
     'keydown',
     (ev) => {
@@ -5328,6 +5364,8 @@ async function probeAndRestoreCommentPanelHealth() {
   if (decision.action === 'scroll_panel_into_view') {
     if (!panel || typeof panel.scrollIntoView !== 'function') return;
     try {
+      // 自分で発火させる scroll イベントが user-scroll として誤カウントされないよう抑止窓を張る。
+      suppressOwnScrollCountingFor(800);
       panel.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
       lastCommentPanelRestoreActionAt = Date.now();
     } catch {

@@ -4896,6 +4896,7 @@
     const r = host.getBoundingClientRect();
     if (r.width < 120 || r.height < 120) return false;
     try {
+      suppressOwnScrollCountingFor(1e3);
       host.scrollIntoView({ block: "nearest", behavior: "smooth" });
     } catch {
       try {
@@ -7151,7 +7152,19 @@
   var commentPanelAutoRestoreEnabled = true;
   var lastCommentPanelRestoreActionAt = 0;
   var lastUserInitiatedScrollAt = 0;
+  var ownScrollSuppressionUntil = 0;
+  function suppressOwnScrollCountingFor(ms) {
+    const dur = Number.isFinite(ms) ? (
+      /** @type {number} */
+      ms
+    ) : 800;
+    ownScrollSuppressionUntil = Date.now() + dur;
+  }
   function noteUserInitiatedScroll() {
+    lastUserInitiatedScrollAt = Date.now();
+  }
+  function noteScrollEventMaybeFromUser() {
+    if (Date.now() < ownScrollSuppressionUntil) return;
     lastUserInitiatedScrollAt = Date.now();
   }
   var userScrollListenersAttached = false;
@@ -7162,6 +7175,10 @@
     const opts = { passive: true, capture: true };
     window.addEventListener("wheel", noteUserInitiatedScroll, opts);
     window.addEventListener("touchmove", noteUserInitiatedScroll, opts);
+    window.addEventListener("scroll", noteScrollEventMaybeFromUser, opts);
+    if (typeof document !== "undefined" && document && document.addEventListener) {
+      document.addEventListener("scroll", noteScrollEventMaybeFromUser, opts);
+    }
     window.addEventListener(
       "keydown",
       (ev) => {
@@ -7238,6 +7255,7 @@
     if (decision.action === "scroll_panel_into_view") {
       if (!panel || typeof panel.scrollIntoView !== "function") return;
       try {
+        suppressOwnScrollCountingFor(800);
         panel.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "auto" });
         lastCommentPanelRestoreActionAt = Date.now();
       } catch {
