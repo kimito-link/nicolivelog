@@ -631,6 +631,33 @@
     return v === true;
   }
 
+  // src/lib/storedCommentDedupeMerge.js
+  function storyCommentTextPenalty(text) {
+    const s = normalizeCommentText(text).replace(/\n+/g, " ").trim();
+    if (!s) return Number.POSITIVE_INFINITY;
+    const numberedTokens = s.match(/(?:^|[\s\u3000])\d{3,9}(?=\s+\S)/g)?.length || 0;
+    return s.length + Math.max(0, numberedTokens - 1) * 240;
+  }
+  function mergeStoredCommentDedupeVariants(prev, next) {
+    const prevText = normalizeCommentText(prev.text);
+    const nextText = normalizeCommentText(next.text);
+    const preferNextText = Boolean(nextText) && storyCommentTextPenalty(nextText) < storyCommentTextPenalty(prevText);
+    const userId = String(next.userId || "").trim() || String(prev.userId || "").trim() || null;
+    const nickname = String(next.nickname || "").trim() || String(prev.nickname || "").trim() || "";
+    const avatarUrl = String(next.avatarUrl || "").trim() || String(prev.avatarUrl || "").trim() || "";
+    const selfPosted = Boolean(prev.selfPosted) || Boolean(next.selfPosted);
+    const avatarObserved = Boolean(prev.avatarObserved) || Boolean(next.avatarObserved);
+    return {
+      ...prev,
+      ...preferNextText ? { text: nextText || prevText } : {},
+      ...userId ? { userId } : { userId: null },
+      ...nickname ? { nickname } : {},
+      ...avatarUrl ? { avatarUrl } : {},
+      ...selfPosted ? { selfPosted: true } : {},
+      ...avatarObserved ? { avatarObserved: true } : {}
+    };
+  }
+
   // src/lib/liveCommenterStats.js
   function normalizedUserIdFromRow(row) {
     if (row == null || typeof row !== "object") return "";
@@ -7152,35 +7179,21 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     if (!isOwnPostedSupportComment(entry, liveId, list)) return [];
     return list.filter((row) => isOwnPostedSupportComment(row, liveId, list)).slice(-limit).reverse();
   }
-  function storyCommentTextPenalty(text) {
-    const s = normalizeCommentText(text).replace(/\n+/g, " ").trim();
-    if (!s) return Number.POSITIVE_INFINITY;
-    const numberedTokens = s.match(/(?:^|[\s\u3000])\d{3,9}(?=\s+\S)/g)?.length || 0;
-    return s.length + Math.max(0, numberedTokens - 1) * 240;
-  }
   function normalizeStoredCommentEntries(entries) {
     const list = Array.isArray(entries) ? entries : [];
     if (list.length <= 1) return { next: list, changed: false };
     const out = [];
     const indexByKey = /* @__PURE__ */ new Map();
     let changed = false;
-    const mergeVariant = (prev, next) => {
-      const prevText = normalizeCommentText(prev.text);
-      const nextText = normalizeCommentText(next.text);
-      const preferNextText = Boolean(nextText) && storyCommentTextPenalty(nextText) < storyCommentTextPenalty(prevText);
-      const userId = String(next.userId || "").trim() || String(prev.userId || "").trim() || null;
-      const nickname = String(next.nickname || "").trim() || String(prev.nickname || "").trim() || "";
-      const avatarUrl = String(next.avatarUrl || "").trim() || String(prev.avatarUrl || "").trim() || "";
-      const selfPosted = Boolean(prev.selfPosted) || Boolean(next.selfPosted);
-      return {
-        ...prev,
-        ...preferNextText ? { text: nextText || prevText } : {},
-        ...userId ? { userId } : { userId: null },
-        ...nickname ? { nickname } : {},
-        ...avatarUrl ? { avatarUrl } : {},
-        ...selfPosted ? { selfPosted: true } : {}
-      };
-    };
+    const mergeVariant = (prev, next) => (
+      /** @type {PopupCommentEntry} */
+      mergeStoredCommentDedupeVariants(
+        /** @type {Record<string, unknown>} */
+        prev,
+        /** @type {Record<string, unknown>} */
+        next
+      )
+    );
     for (const raw of list) {
       const entry = (
         /** @type {PopupCommentEntry} */
@@ -10611,7 +10624,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     try {
       const manifest = chrome.runtime.getManifest();
       const version = String(manifest?.version || "").trim() || "?";
-      const buildId = "0418-1339" ? String("0418-1339") : "dev";
+      const buildId = "0418-1404" ? String("0418-1404") : "dev";
       valueEl.textContent = `v${version}\u30FBb${buildId}`;
     } catch {
       valueEl.textContent = "\u2014";

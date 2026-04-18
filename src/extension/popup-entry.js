@@ -74,6 +74,7 @@ import {
   buildDedupeKey,
   normalizeCommentText
 } from '../lib/commentRecord.js';
+import { mergeStoredCommentDedupeVariants } from '../lib/storedCommentDedupeMerge.js';
 import { summarizeRecordedCommenters } from '../lib/liveCommenterStats.js';
 import { resolveConcurrentViewers } from '../lib/concurrentEstimate.js';
 import { watchMetaConcurrentGateFromSnapshot } from '../lib/popupWatchMetaConcurrentGate.js';
@@ -3335,15 +3336,6 @@ function storyDetailRecentEntries(entries, focusEntry, liveId, opts = {}) {
     .reverse();
 }
 
-/** @param {string} text */
-function storyCommentTextPenalty(text) {
-  const s = normalizeCommentText(text).replace(/\n+/g, ' ').trim();
-  if (!s) return Number.POSITIVE_INFINITY;
-  const numberedTokens =
-    s.match(/(?:^|[\s\u3000])\d{3,9}(?=\s+\S)/g)?.length || 0;
-  return s.length + Math.max(0, numberedTokens - 1) * 240;
-}
-
 /**
  * 同一 commentNo の重複保存があるとき、短く自然な本文と欠損の少ないメタを優先する。
  * 旧バグで混ざった「複数コメント連結行」を UI 表示前に潰す。
@@ -3366,28 +3358,13 @@ function normalizeStoredCommentEntries(entries) {
    * @param {PopupCommentEntry} next
    * @returns {PopupCommentEntry}
    */
-  const mergeVariant = (prev, next) => {
-    const prevText = normalizeCommentText(prev.text);
-    const nextText = normalizeCommentText(next.text);
-    const preferNextText =
-      Boolean(nextText) &&
-      (storyCommentTextPenalty(nextText) < storyCommentTextPenalty(prevText));
-    const userId =
-      String(next.userId || '').trim() || String(prev.userId || '').trim() || null;
-    const nickname =
-      String(next.nickname || '').trim() || String(prev.nickname || '').trim() || '';
-    const avatarUrl =
-      String(next.avatarUrl || '').trim() || String(prev.avatarUrl || '').trim() || '';
-    const selfPosted = Boolean(prev.selfPosted) || Boolean(next.selfPosted);
-    return {
-      ...prev,
-      ...(preferNextText ? { text: nextText || prevText } : {}),
-      ...(userId ? { userId } : { userId: null }),
-      ...(nickname ? { nickname } : {}),
-      ...(avatarUrl ? { avatarUrl } : {}),
-      ...(selfPosted ? { selfPosted: true } : {})
-    };
-  };
+  const mergeVariant = (prev, next) =>
+    /** @type {PopupCommentEntry} */ (
+      mergeStoredCommentDedupeVariants(
+        /** @type {Record<string, unknown>} */ (prev),
+        /** @type {Record<string, unknown>} */ (next)
+      )
+    );
 
   for (const raw of list) {
     const entry = /** @type {PopupCommentEntry} */ (raw);
