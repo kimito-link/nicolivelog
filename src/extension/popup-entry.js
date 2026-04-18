@@ -37,6 +37,7 @@ import {
   KEY_THUMB_INTERVAL_MS,
   KEY_COMMENT_ENTER_SEND,
   KEY_ANONYMOUS_IDENTICON_ENABLED,
+  KEY_FOLD_ANONYMOUS_IN_RANK_STRIP,
   KEY_STORY_GROWTH_COLLAPSED,
   KEY_SUPPORT_VISUAL_EXPANDED,
   KEY_USAGE_TERMS_ACK,
@@ -55,8 +56,10 @@ import {
   normalizeInlineFloatingAnchor,
   normalizeCalmPanelMotion,
   normalizeMarketingExportMaskLabels,
-  normalizeAnonymousIdenticonEnabled
+  normalizeAnonymousIdenticonEnabled,
+  normalizeFoldAnonymousInRankStrip
 } from '../lib/storageKeys.js';
+import { partitionRankedRoomsForStrip } from '../lib/topSupportRankAnonymousFold.js';
 import { normalizeSupportVisualExpanded } from '../lib/supportVisualExpanded.js';
 import { computeScrollDeltaToRevealInParent } from '../lib/nlMainScrollReveal.js';
 import { commentComposeKeyAction } from '../lib/commentComposeShortcuts.js';
@@ -74,6 +77,31 @@ import {
 import { summarizeRecordedCommenters } from '../lib/liveCommenterStats.js';
 import { resolveConcurrentViewers } from '../lib/concurrentEstimate.js';
 import { watchMetaConcurrentGateFromSnapshot } from '../lib/popupWatchMetaConcurrentGate.js';
+import { retrySnapshotRequestUntilReady } from '../lib/popupWatchSnapshotRetry.js';
+import { buildCommentTickerNameHref } from '../lib/commentTickerNameLink.js';
+import { buildUserProfileLinkedLabelHtml } from '../lib/userProfileLinkHtml.js';
+import { createBooleanSettingController } from '../lib/popupBooleanSettingController.js';
+import { createBooleanSettingsRegistry } from '../lib/popupBooleanSettingsRegistry.js';
+import {
+  DEFAULT_CUSTOM_FRAME,
+  DEFAULT_FRAME_ID,
+  frameLabel,
+  hasFramePreset,
+  normalizeFrameId,
+  resolveFrameVars,
+  sanitizeCustomFrame
+} from '../lib/popupFramePresets.js';
+import {
+  createFrameShareCode,
+  parseFrameShareCode
+} from '../lib/popupFrameCodec.js';
+import {
+  SELF_POST_RECENT_TTL_MS,
+  filterValidSelfPostedRecents,
+  matchSelfPostedRecents,
+  matchesAnySelfPostedRecent,
+  prepareSelfPostedMatchRecents
+} from '../lib/selfPostedMatcher.js';
 import {
   concurrentResolutionMethodTitlePart,
   SPARSE_CONCURRENT_ESTIMATE_NOTE
@@ -428,6 +456,32 @@ let _prevSupportCount = /** @type {number|null} */ (null);
 let _lastTopSupportRankStripStableKey = null;
 
 /**
+ * 放送切替（liveId 変化）を検知して、直前放送の UI キャッシュ（rank strip キー・差分リアクション用の
+ * 直近値）を全て強制リセットする。複数 refresh が並走したときに古い描画が新しい描画を上書きしても
+ * 放送間のデータが混ざらないようにする防御策（2026-04 追加: 同一ポップアップで配信切替時に上位ユーザー
+ * が前配信のものと同じに見える不具合対応）。
+ *
+ * リセット対象は「前回値 → 今回値」の差分で動くキャッシュ。以下の 3 種の `_prev*` は
+ * すべて「カウンタが前回より増えた／変わったら動画アイコンをポップさせる」用途なので、
+ * 放送を跨ぐと別配信の値と比較して巨大な delta が出てしまうため必ずセットで null 化する。
+ *   - `_prevSupportCount`         ..... 応援（コメント数）delta
+ *   - `_prevViewerCount`          ..... DOM 視聴者数 delta
+ *   - `_prevConcurrentEstimated`  ..... 推定同時接続 delta
+ * `_lastTopSupportRankStripStableKey` は上位ランクストリップの描画冪等キー。
+ *
+ * @param {string} nextLiveId
+ */
+function resetPerBroadcastPopupCachesIfLiveIdChanged(nextLiveId) {
+  const norm = String(nextLiveId || '').trim().toLowerCase();
+  if (norm === watchPopupLastPaintedLiveId) return;
+  watchPopupLastPaintedLiveId = norm;
+  _lastTopSupportRankStripStableKey = null;
+  _prevSupportCount = null;
+  _prevViewerCount = null;
+  _prevConcurrentEstimated = null;
+}
+
+/**
  * @param {string} value
  * @param {WatchPageSnapshot|null} [watchSnapshot] 公式コメント数の併記用
  */
@@ -475,6 +529,72 @@ function setCountDisplay(value, watchSnapshot = null) {
     });
   }
   if (!Number.isNaN(num)) _prevSupportCount = num;
+}
+
+/**
+ * 「取り込みが生きている」ことを小さなサブ行で見せる（サイレント故障の体感防止）。
+ * 15秒以内 = 強調色、5分以内 = 通常、それ以上 = 「しばらく取り込みがありません」表示。
+ * @param {string} liveId
+ */
+async function updateIngestHeartbeatDisplay(liveId) {
+  const el = /** @type {HTMLElement|null} */ ($('liveStatCommentsIngest'));
+  if (!el) return;
+  const lid = String(liveId || '').trim().toLowerCase();
+  if (!lid) {
+    el.hidden = true;
+    el.textContent = '';
+    el.classList.remove('is-stale');
+    return;
+  }
+  try {
+    const bag = await chrome.storage.local.get(KEY_COMMENT_INGEST_LOG);
+    const parsed = parseCommentIngestLog(bag[KEY_COMMENT_INGEST_LOG]);
+    /** @type {import('../lib/commentIngestLog.js').CommentIngestLogItem|null} */
+    let latest = null;
+    for (let i = parsed.items.length - 1; i >= 0; i--) {
+      const it = parsed.items[i];
+      if (it.liveId === lid) {
+        latest = it;
+        break;
+      }
+    }
+    if (!latest) {
+      el.hidden = true;
+      el.textContent = '';
+      el.classList.remove('is-stale');
+      return;
+    }
+    const ageSec = Math.max(0, Math.round((Date.now() - latest.t) / 1000));
+    const stale = ageSec > 5 * 60;
+    el.hidden = false;
+    el.classList.toggle('is-stale', stale);
+    const ageLabel =
+      ageSec < 60
+        ? `${ageSec}秒前`
+        : ageSec < 3600
+          ? `${Math.floor(ageSec / 60)}分前`
+          : `${Math.floor(ageSec / 3600)}時間前`;
+    const sourceLabel =
+      latest.source === 'ndgr'
+        ? 'NDGR'
+        : latest.source === 'visible'
+          ? '画面'
+          : latest.source === 'mutation'
+            ? '画面'
+            : latest.source === 'deep'
+              ? '一括'
+              : '取り込み';
+    el.textContent = stale
+      ? `最終取り込み ${ageLabel}（しばらく更新がありません）`
+      : `✓ 最終取り込み ${ageLabel}・${sourceLabel}`;
+    el.title = stale
+      ? '直近5分で新しい取り込みがありません。watch タブを前面にする・再読み込みで回復することがあります。'
+      : '拡張が直近取り込んだ経路と経過時間。ここが動いていれば取り込みは生きています。';
+  } catch {
+    el.hidden = true;
+    el.textContent = '';
+    el.classList.remove('is-stale');
+  }
 }
 
 /**
@@ -532,18 +652,22 @@ function renderCommentTicker(comments) {
     ? `${noPrefix}${label}：${rawText || '（コメント本文なし）'}`
     : `${noPrefix}${rawText || '（コメント本文なし）'}`;
   const labelHtml = label
-    ? `<span class="nl-ticker-latest__name">${escapeHtml(label)}</span><span class="nl-ticker-latest__colon">：</span>`
+    ? `<span class="nl-ticker-latest__name">${escapeHtml(label)}</span>` +
+      `<span class="nl-ticker-latest__colon">：</span>`
     : '';
-
-  segA.innerHTML =
-    `<span class="nl-ticker-item nl-ticker-latest" aria-live="polite">` +
+  // 数値 ID を持つユーザーの場合、行全体（アバター＋名前＋本文）を niconico ユーザーページへのリンクにする。
+  // 匿名（a:xxx）やハッシュ風 ID は buildCommentTickerNameHref が '' を返すので、リンクにはならない span のまま。
+  const userPageHref = buildCommentTickerNameHref(latest.userId);
+  const rowInnerHtml =
     `<span class="nl-ticker-latest__row">` +
     `<img class="nl-ticker-latest__avatar" alt="" src="${escapeHtml(avatarSrc)}">` +
     labelHtml +
     `<span class="nl-ticker-latest__text">${escapeHtml(textShown)}</span>` +
-    `</span>` +
     `</span>`;
-  const line = /** @type {HTMLSpanElement|null} */ (segA.querySelector('.nl-ticker-latest'));
+  segA.innerHTML = userPageHref
+    ? `<a class="nl-ticker-item nl-ticker-latest nl-ticker-latest--linkable" aria-live="polite" href="${escapeAttr(userPageHref)}" target="_blank" rel="noopener noreferrer">${rowInnerHtml}</a>`
+    : `<span class="nl-ticker-item nl-ticker-latest" aria-live="polite">${rowInnerHtml}</span>`;
+  const line = /** @type {HTMLElement|null} */ (segA.querySelector('.nl-ticker-latest'));
   if (line) line.title = tip;
   const avatar = /** @type {HTMLImageElement|null} */ (
     segA.querySelector('.nl-ticker-latest__avatar')
@@ -896,6 +1020,12 @@ const watchMetaCache = {
 /** 遅延フェーズの描画が直近の refresh に属するか判定する */
 let watchPopupRefreshGeneration = 0;
 
+/**
+ * 直近の paintWatchPopupUi が対象とした liveId。放送切替時にクロス配信データ汚染を検知して
+ * 関連キャッシュを強制リセットするための追跡変数。値は空文字列=まだ描画なし。
+ */
+let watchPopupLastPaintedLiveId = '';
+
 /** E2E / 体感計測用: メインコンテンツの初回ペイントが終わった印 */
 function markPopupRefreshContentPainted() {
   try {
@@ -1091,179 +1221,11 @@ const INTERCEPT_BACKFILL_STATE = {
   deepTried: false
 };
 
-const DEFAULT_FRAME_ID = 'light';
-
-const LEGACY_FRAME_ALIAS = {
-  trio: 'light',
-  link: 'light',
-  konta: 'sunset',
-  tanunee: 'midnight'
-};
-
-const FRAME_PRESETS = {
-  light: {
-    label: 'ライト',
-    vars: {
-      '--nl-bg': '#fffaf2',
-      '--nl-bg-soft': '#eef8ff',
-      '--nl-surface': '#ffffff',
-      '--nl-text': '#1f2937',
-      '--nl-muted': '#5b6475',
-      '--nl-border': '#d5e3f5',
-      '--nl-accent': '#0f8fd8',
-      '--nl-accent-hover': '#0b73ad',
-      '--nl-header-start': '#0f8fd8',
-      '--nl-header-end': '#14b8a6',
-      '--nl-frame-outline': 'rgb(255 255 255 / 22%)'
-    }
-  },
-  dark: {
-    label: 'ダーク',
-    vars: {
-      '--nl-bg': '#0b1220',
-      '--nl-bg-soft': '#111827',
-      '--nl-surface': '#0f172a',
-      '--nl-text': '#e5e7eb',
-      '--nl-muted': '#94a3b8',
-      '--nl-border': '#243244',
-      '--nl-accent': '#60a5fa',
-      '--nl-accent-hover': '#3b82f6',
-      '--nl-header-start': '#1e293b',
-      '--nl-header-end': '#334155',
-      '--nl-frame-outline': 'rgb(255 255 255 / 18%)'
-    }
-  },
-  midnight: {
-    label: 'ミッドナイト',
-    vars: {
-      '--nl-bg': '#0b1022',
-      '--nl-bg-soft': '#1b1f3a',
-      '--nl-surface': '#10182f',
-      '--nl-text': '#e2e8f0',
-      '--nl-muted': '#9fb1ca',
-      '--nl-border': '#2a3761',
-      '--nl-accent': '#7dd3fc',
-      '--nl-accent-hover': '#38bdf8',
-      '--nl-header-start': '#1e1b4b',
-      '--nl-header-end': '#1d4ed8',
-      '--nl-frame-outline': 'rgb(255 255 255 / 22%)'
-    }
-  },
-  sunset: {
-    label: 'サンセット',
-    vars: {
-      '--nl-bg': '#fff7ed',
-      '--nl-bg-soft': '#ffedd5',
-      '--nl-surface': '#fffbf6',
-      '--nl-text': '#1f2937',
-      '--nl-muted': '#6b7280',
-      '--nl-border': '#f5d0b5',
-      '--nl-accent': '#ea580c',
-      '--nl-accent-hover': '#c2410c',
-      '--nl-header-start': '#fb923c',
-      '--nl-header-end': '#f43f5e',
-      '--nl-frame-outline': 'rgb(255 255 255 / 30%)'
-    }
-  }
-};
-
-const DEFAULT_CUSTOM_FRAME = Object.freeze({
-  headerStart: '#0f8fd8',
-  headerEnd: '#14b8a6',
-  accent: '#0f8fd8'
-});
-
-/** @param {string} id */
-function hasFramePreset(id) {
-  return Object.prototype.hasOwnProperty.call(FRAME_PRESETS, id);
-}
-
-/** @param {unknown} raw */
-function normalizeFrameId(raw) {
-  const id = String(raw || '').trim().toLowerCase();
-  if (!id) return '';
-  return (
-    LEGACY_FRAME_ALIAS[/** @type {keyof typeof LEGACY_FRAME_ALIAS} */ (id)] || id
-  );
-}
-
-/** @param {string} id */
-function getFramePreset(id) {
-  return hasFramePreset(id)
-    ? FRAME_PRESETS[/** @type {keyof typeof FRAME_PRESETS} */ (id)]
-    : null;
-}
-
 /** @type {{ id: string, custom: { headerStart: string, headerEnd: string, accent: string } }} */
 const popupFrameState = {
   id: DEFAULT_FRAME_ID,
   custom: { ...DEFAULT_CUSTOM_FRAME }
 };
-
-/** @param {unknown} value @param {string} fallback */
-function normalizeHexColor(value, fallback) {
-  const s = String(value || '').trim();
-  return /^#[0-9a-f]{6}$/i.test(s) ? s.toLowerCase() : fallback;
-}
-
-/** @param {string} hex @param {number} ratio */
-function darkenHexColor(hex, ratio) {
-  const source = normalizeHexColor(hex, '#0f8fd8').slice(1);
-  const clamp = (v) => Math.max(0, Math.min(255, Math.round(v)));
-  const r = clamp(parseInt(source.slice(0, 2), 16) * (1 - ratio));
-  const g = clamp(parseInt(source.slice(2, 4), 16) * (1 - ratio));
-  const b = clamp(parseInt(source.slice(4, 6), 16) * (1 - ratio));
-  return `#${r.toString(16).padStart(2, '0')}${g
-    .toString(16)
-    .padStart(2, '0')}${b.toString(16).padStart(2, '0')}`;
-}
-
-/** @param {unknown} raw */
-function sanitizeCustomFrame(raw) {
-  const source = raw && typeof raw === 'object' ? raw : {};
-  return {
-    headerStart: normalizeHexColor(
-      /** @type {{ headerStart?: unknown }} */ (source).headerStart,
-      DEFAULT_CUSTOM_FRAME.headerStart
-    ),
-    headerEnd: normalizeHexColor(
-      /** @type {{ headerEnd?: unknown }} */ (source).headerEnd,
-      DEFAULT_CUSTOM_FRAME.headerEnd
-    ),
-    accent: normalizeHexColor(
-      /** @type {{ accent?: unknown }} */ (source).accent,
-      DEFAULT_CUSTOM_FRAME.accent
-    )
-  };
-}
-
-/** @param {string} frameId @param {{ headerStart: string, headerEnd: string, accent: string }} custom */
-function resolveFrameVars(frameId, custom) {
-  if (frameId !== 'custom') {
-    return getFramePreset(frameId)?.vars || FRAME_PRESETS[DEFAULT_FRAME_ID].vars;
-  }
-  const safe = sanitizeCustomFrame(custom);
-  return {
-    '--nl-bg': '#f7fbff',
-    '--nl-bg-soft': '#e8f4ff',
-    '--nl-surface': '#ffffff',
-    '--nl-text': '#1f2937',
-    '--nl-muted': '#5b6475',
-    '--nl-border': '#cfe0f4',
-    '--nl-accent': safe.accent,
-    '--nl-accent-hover': darkenHexColor(safe.accent, 0.2),
-    '--nl-header-start': safe.headerStart,
-    '--nl-header-end': safe.headerEnd,
-    '--nl-frame-outline': 'rgb(255 255 255 / 28%)'
-  };
-}
-
-/** @param {string} frameId */
-function frameLabel(frameId) {
-  return frameId === 'custom'
-    ? 'カスタム'
-    : getFramePreset(frameId)?.label || FRAME_PRESETS[DEFAULT_FRAME_ID].label;
-}
 
 /** @param {string} frameId */
 function renderFrameSelection(frameId) {
@@ -1334,71 +1296,6 @@ async function savePopupFrameSettings() {
     [KEY_POPUP_FRAME]: popupFrameState.id,
     [KEY_POPUP_FRAME_CUSTOM]: popupFrameState.custom
   });
-}
-
-/** @param {string} text */
-function encodeBase64UrlUtf8(text) {
-  const bytes = new TextEncoder().encode(text);
-  let binary = '';
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/g, '');
-}
-
-/** @param {string} text */
-function decodeBase64UrlUtf8(text) {
-  let base64 = text.replace(/-/g, '+').replace(/_/g, '/');
-  const pad = base64.length % 4;
-  if (pad) base64 += '='.repeat(4 - pad);
-  const binary = atob(base64);
-  const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
-  return new TextDecoder().decode(bytes);
-}
-
-/**
- * @param {string} frameId
- * @param {{ headerStart: string, headerEnd: string, accent: string }} custom
- */
-function createFrameShareCode(frameId, custom) {
-  const normalized = normalizeFrameId(frameId);
-  const safeId =
-    normalized === 'custom' || hasFramePreset(normalized)
-      ? normalized
-      : DEFAULT_FRAME_ID;
-  const payload = {
-    v: 1,
-    frame: safeId,
-    custom: sanitizeCustomFrame(custom)
-  };
-  const encoded = encodeBase64UrlUtf8(JSON.stringify(payload));
-  return `nlsframe.${encoded}`;
-}
-
-/** @param {string} raw */
-function parseFrameShareCode(raw) {
-  const code = String(raw || '').trim();
-  if (!code) {
-    throw new Error('共有コードが空です。');
-  }
-
-  const payloadText = code.startsWith('nlsframe.')
-    ? decodeBase64UrlUtf8(code.slice('nlsframe.'.length))
-    : code;
-  const payload = JSON.parse(payloadText);
-  const source = payload && typeof payload === 'object' ? payload : {};
-  const frameValue = normalizeFrameId(
-    /** @type {{ frame?: unknown }} */ (source).frame || ''
-  );
-  const frameId =
-    frameValue === 'custom' || hasFramePreset(frameValue)
-      ? frameValue
-      : DEFAULT_FRAME_ID;
-
-  return {
-    frameId,
-    custom: sanitizeCustomFrame(
-      /** @type {{ custom?: unknown }} */ (source).custom || {}
-    )
-  };
 }
 
 /** @param {string} message @param {'idle'|'error'|'success'} kind */
@@ -1681,17 +1578,84 @@ let anonymousIdenticonRuntimeEnabled = true;
 const anonymousIdenticonDataUrlCache = new Map();
 
 /**
- * @param {Record<string, unknown>|null|undefined} bag
+ * 応援ランクストリップで匿名ユーザーを後送り（折り畳み）するか。
+ * 既定 true。false にすると件数順で並べる従来挙動。
+ * @type {boolean}
  */
-function applyAnonymousIdenticonRuntimeFromBag(bag) {
-  const on = normalizeAnonymousIdenticonEnabled(
-    bag?.[KEY_ANONYMOUS_IDENTICON_ENABLED]
-  );
-  if (on !== anonymousIdenticonRuntimeEnabled) {
-    anonymousIdenticonDataUrlCache.clear();
-  }
-  anonymousIdenticonRuntimeEnabled = on;
-}
+let foldAnonymousInRankStripRuntimeEnabled = true;
+
+/**
+ * popup のブール設定をまとめて管理するレジストリ。
+ * 各設定は `createBooleanSettingController` で定義し、
+ *   - openBag ハイドレート: `registry.applyFromBag(openBag)`
+ *   - onChanged: `registry.dispatchStorageChanges(changes)`
+ * で一括適用する。write（change イベント内の storage.set）は副作用が設定毎に
+ * 異なる（safeRefresh 等）ためコールサイトに残す。
+ */
+const popupBooleanSettingsRegistry = createBooleanSettingsRegistry();
+
+/**
+ * 匿名ユーザーのアバターを identicon に差し替えるか。
+ * 値が変わったら生成済み identicon キャッシュを破棄する。
+ */
+const anonymousIdenticonSettingController = popupBooleanSettingsRegistry.register(
+  createBooleanSettingController({
+    key: KEY_ANONYMOUS_IDENTICON_ENABLED,
+    normalize: normalizeAnonymousIdenticonEnabled,
+    getCheckbox: () =>
+      /** @type {HTMLInputElement|null} */ ($('anonymousIdenticonEnabled')),
+    applyRuntime: (value) => {
+      if (value !== anonymousIdenticonRuntimeEnabled) {
+        anonymousIdenticonDataUrlCache.clear();
+      }
+      anonymousIdenticonRuntimeEnabled = value;
+    }
+  })
+);
+
+/**
+ * 応援ランクストリップの匿名折り畳みトグル。
+ * 値が変わったら rank strip の差分検知キーをリセットして強制再描画する。
+ */
+const foldAnonymousInRankStripSettingController = popupBooleanSettingsRegistry.register(
+  createBooleanSettingController({
+    key: KEY_FOLD_ANONYMOUS_IN_RANK_STRIP,
+    normalize: normalizeFoldAnonymousInRankStrip,
+    getCheckbox: () =>
+      /** @type {HTMLInputElement|null} */ ($('foldAnonymousInRankStrip')),
+    applyRuntime: (value) => {
+      if (value !== foldAnonymousInRankStripRuntimeEnabled) {
+        // 並び順が切り替わるので、ストリップ差分検知をリセットして強制再描画
+        _lastTopSupportRankStripStableKey = null;
+      }
+      foldAnonymousInRankStripRuntimeEnabled = value;
+    }
+  })
+);
+
+/**
+ * 音声コメントの自動送信トグル（runtime 変数なし。checkbox.checked を直接参照）。
+ */
+popupBooleanSettingsRegistry.register(
+  createBooleanSettingController({
+    key: KEY_VOICE_AUTOSEND,
+    // 既定 true（`raw !== false`）: 既存実装と互換
+    normalize: (raw) => raw !== false,
+    getCheckbox: () => /** @type {HTMLInputElement|null} */ ($('voiceAutoSend'))
+  })
+);
+
+/**
+ * コメント入力の Enter 送信トグル（runtime 変数なし）。
+ */
+popupBooleanSettingsRegistry.register(
+  createBooleanSettingController({
+    key: KEY_COMMENT_ENTER_SEND,
+    normalize: isCommentEnterSendEnabled,
+    getCheckbox: () =>
+      /** @type {HTMLInputElement|null} */ ($('commentEnterSend'))
+  })
+);
 
 /**
  * @param {unknown} userId
@@ -1728,11 +1692,6 @@ function pickSupportGrowthTileForStory(userId, httpCandidate) {
 
 const MAX_SELF_POSTED_ITEMS = 48;
 const SELF_POST_DUPLICATE_WINDOW_MS = 5000;
-/** コメント送信後、DOM 保存までに許容する遅延（ms） */
-const SELF_POST_MATCH_LATE_MS = 10 * 60 * 1000;
-/** capturedAt が送信記録より少し手前に見えるケースの許容（ms） */
-const SELF_POST_MATCH_EARLY_MS = 30 * 1000;
-const SELF_POST_RECENT_TTL_MS = 24 * 60 * 60 * 1000;
 
 /** @type {{ liveId: string, at: number, textNorm: string }[]} */
 let selfPostedRecentsCache = [];
@@ -1816,19 +1775,8 @@ function getOwnPostedMatchedIdSet(entries, liveId) {
  */
 function applySelfPostedRecentsFromBag(bag) {
   try {
-    const raw = bag[KEY_SELF_POSTED_RECENTS];
-    const items =
-      raw && typeof raw === 'object' && Array.isArray(raw.items)
-        ? raw.items
-        : [];
-    const now = Date.now();
-    selfPostedRecentsCache = items.filter(
-      (x) =>
-        x &&
-        typeof x.liveId === 'string' &&
-        typeof x.textNorm === 'string' &&
-        typeof x.at === 'number' &&
-        now - x.at < SELF_POST_RECENT_TTL_MS
+    selfPostedRecentsCache = filterValidSelfPostedRecents(
+      bag[KEY_SELF_POSTED_RECENTS]
     );
   } catch {
     selfPostedRecentsCache = [];
@@ -1914,18 +1862,11 @@ function isOwnPostedSupportComment(entry, liveId, entries = STORY_SOURCE_STATE.e
   }
   const norm = normalizeCommentText(entry.text);
   if (!norm) return false;
-  const cap = Number(entry.capturedAt) || 0;
-  for (const it of selfPostedRecentsCache) {
-    if (String(it.liveId).toLowerCase() !== lid) continue;
-    if (it.textNorm !== norm) continue;
-    if (
-      cap >= it.at - SELF_POST_MATCH_EARLY_MS &&
-      cap <= it.at + SELF_POST_MATCH_LATE_MS
-    ) {
-      return true;
-    }
-  }
-  return false;
+  return matchesAnySelfPostedRecent(
+    { textNorm: norm, capturedAt: Number(entry.capturedAt) || 0 },
+    selfPostedRecentsCache,
+    lid
+  );
 }
 
 /** 永続プロファイルキャッシュ（refresh ごとに再読込） */
@@ -2185,80 +2126,31 @@ function countSavedOwnPostedEntries(entries) {
 function matchSelfPostedRecentsToEntries(entries, liveId) {
   const list = Array.isArray(entries) ? entries : [];
   const lid = String(liveId || '').trim().toLowerCase();
-  /** @type {Set<string>} */
-  const matchedIds = new Set();
-  /** @type {Set<number>} */
-  const consumedIndexes = new Set();
   if (!lid || !list.length || !selfPostedRecentsCache.length) {
-    return { matchedIds, consumedIndexes };
+    return { matchedIds: new Set(), consumedIndexes: new Set() };
   }
 
-  const recents = selfPostedRecentsCache
-    .map((it, itemIndex) => ({
-      itemIndex,
-      liveId: String(it?.liveId || '').trim().toLowerCase(),
-      at: Number(it?.at) || 0,
-      textNorm: String(it?.textNorm || '')
-    }))
-    .filter((it) => it.liveId === lid && it.at > 0 && it.textNorm)
-    .sort((a, b) => a.at - b.at || a.itemIndex - b.itemIndex);
+  const recents = prepareSelfPostedMatchRecents(selfPostedRecentsCache, lid);
   if (!recents.length) {
-    return { matchedIds, consumedIndexes };
+    return { matchedIds: new Set(), consumedIndexes: new Set() };
   }
 
-  /** @type {Map<string, { id: string, capturedAt: number, index: number }[]>} */
-  const byText = new Map();
+  /** @type {import('../lib/selfPostedMatcher.js').SelfPostedMatchEntry[]} */
+  const matchEntries = [];
   for (let i = 0; i < list.length; i += 1) {
     const entry = list[i];
     const textNorm = normalizeCommentText(entry?.text);
     const id = popupEntryStableId(entry, lid);
     if (!textNorm || !id) continue;
-    const bucket = byText.get(textNorm) || [];
-    bucket.push({
+    matchEntries.push({
       id,
+      textNorm,
       capturedAt: Number(entry?.capturedAt || 0),
       index: i
     });
-    byText.set(textNorm, bucket);
-  }
-  for (const bucket of byText.values()) {
-    bucket.sort((a, b) => {
-      if (a.capturedAt !== b.capturedAt) return a.capturedAt - b.capturedAt;
-      return a.index - b.index;
-    });
   }
 
-  for (const recent of recents) {
-    const bucket = byText.get(recent.textNorm);
-    if (!bucket?.length) continue;
-    let best = null;
-    let bestScore = Number.POSITIVE_INFINITY;
-    let bestIndex = Number.POSITIVE_INFINITY;
-    for (const candidate of bucket) {
-      if (matchedIds.has(candidate.id)) continue;
-      const cap = candidate.capturedAt;
-      if (
-        cap < recent.at - SELF_POST_MATCH_EARLY_MS ||
-        cap > recent.at + SELF_POST_MATCH_LATE_MS
-      ) {
-        continue;
-      }
-      const delta = cap - recent.at;
-      const score =
-        Math.abs(delta) +
-        (delta >= 0 ? 0 : SELF_POST_MATCH_EARLY_MS + 1);
-      if (score < bestScore || (score === bestScore && candidate.index < bestIndex)) {
-        best = candidate;
-        bestScore = score;
-        bestIndex = candidate.index;
-      }
-    }
-    if (!best) continue;
-    matchedIds.add(best.id);
-    consumedIndexes.add(recent.itemIndex);
-  }
-
-  return { matchedIds, consumedIndexes };
+  return matchSelfPostedRecents(matchEntries, recents);
 }
 
 /**
@@ -3250,11 +3142,37 @@ function renderStoryCommentDetailPanel() {
     }
   }
   userEl.textContent = storyGrowthDisplayLabel(entry, lidForOwn);
+  // 数値 ID のユーザーはプレビューからユーザーページにリンク
+  const detailLinkableUid = /^\d{5,14}$/.test(userId) ? userId
+    : /^\d{5,14}$/.test(viewerUid) && ownPosted ? viewerUid
+    : '';
   if (userId) {
-    userMetaEl.textContent = `ID: ${userId}`;
+    if (detailLinkableUid) {
+      const a = document.createElement('a');
+      a.href = `https://www.nicovideo.jp/user/${detailLinkableUid}`;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      a.textContent = `ID: ${userId}`;
+      a.className = 'nl-story-detail-user-link';
+      userMetaEl.textContent = '';
+      userMetaEl.appendChild(a);
+    } else {
+      userMetaEl.textContent = `ID: ${userId}`;
+    }
   } else if (ownPosted) {
     if (viewerUid) {
-      userMetaEl.textContent = `ID（ヘッダーから推定）: ${viewerUid}`;
+      if (detailLinkableUid) {
+        const a = document.createElement('a');
+        a.href = `https://www.nicovideo.jp/user/${detailLinkableUid}`;
+        a.target = '_blank';
+        a.rel = 'noopener noreferrer';
+        a.textContent = `ID（ヘッダーから推定）: ${viewerUid}`;
+        a.className = 'nl-story-detail-user-link';
+        userMetaEl.textContent = '';
+        userMetaEl.appendChild(a);
+      } else {
+        userMetaEl.textContent = `ID（ヘッダーから推定）: ${viewerUid}`;
+      }
     } else if (viewerNick) {
       userMetaEl.textContent = `表示名（ヘッダー）: ${viewerNick}`;
     } else {
@@ -4386,15 +4304,21 @@ function renderTopSupportRankStrip(stripRooms) {
         lineClass += ' nl-top-support-rank__line--has-accent';
         lineStyle = ` style="--nl-rank-accent:${escapeAttr(m.accentColorCss)}"`;
       }
-      return `<div class="${lineClass}"${lineStyle} role="listitem" title="${full}">
-        ${placeHtml}
+      // 数値 ID（非匿名）のユーザーはニコニコのユーザーページにリンクする
+      const isLinkable = !m.isUnknown && !isAnonymousStyleNicoUserId(m.userKey);
+      const linkHref = isLinkable
+        ? `https://www.nicovideo.jp/user/${escapeAttr(m.userKey)}`
+        : '';
+      const innerHtml = `${placeHtml}
         <span class="nl-top-support-rank__count">${m.count}件</span>
         <span class="nl-top-support-rank__thumb-wrap">
           <img class="nl-top-support-rank__thumb" src="${escapeAttr(displayThumb)}" alt="" decoding="async"${thumbRp} />
         </span>
         <span class="nl-top-support-rank__id" title="${idTitle}">${idText}</span>
-        <span class="nl-top-support-rank__name">${nameText}</span>
-      </div>`;
+        <span class="nl-top-support-rank__name">${nameText}</span>`;
+      return isLinkable
+        ? `<a class="${lineClass} nl-top-support-rank__line--linkable"${lineStyle} role="listitem" title="${full}" href="${linkHref}" target="_blank" rel="noopener noreferrer">${innerHtml}</a>`
+        : `<div class="${lineClass}"${lineStyle} role="listitem" title="${full}">${innerHtml}</div>`;
     })
     .join('');
   strip.innerHTML = `<p class="nl-top-support-rank__note">記録内・ユーザー別の応援件数が多い順です。</p><div class="nl-top-support-rank__list" role="list">${html}</div>`;
@@ -4459,11 +4383,25 @@ function renderUserRooms(entries, liveId = '') {
     return;
   }
 
+  // aggregateCommentsByUser は「そのユーザーが個別コメントに貼っていた avatarUrl」しか
+  // 拾わないため、過去コメントで一度学習しただけ（直近 list には持ち込まれていない）の
+  // 個人サムネが落ちる。りんく列（story user lane）と同じく popupUserCommentProfileMap
+  // から後追いで補完しておくと、ランクストリップ／上位カード両方で個人サムネが復活し、
+  // 下のソートで使う userLaneResolvedThumbScore のスコアも正しく上がる。
   const rankedRooms = rooms
-    .map((room) => ({
-      ...room,
-      recentCount: recentMap.get(room.userKey) || 0
-    }))
+    .map((room) => {
+      const ownAvatar = String(room.avatarUrl || '').trim();
+      const enrichedAvatar =
+        ownAvatar ||
+        (room.userKey && room.userKey !== UNKNOWN_USER_KEY
+          ? rememberedAvatarUrlForUserId(room.userKey)
+          : '');
+      return {
+        ...room,
+        avatarUrl: enrichedAvatar,
+        recentCount: recentMap.get(room.userKey) || 0
+      };
+    })
     .sort((a, b) => {
       if (b.count !== a.count) return b.count - a.count;
       const uidA = a.userKey === UNKNOWN_USER_KEY ? '' : a.userKey;
@@ -4480,7 +4418,13 @@ function renderUserRooms(entries, liveId = '') {
     document.body?.classList.contains('nl-compact');
   const compactRooms = !INLINE_MODE;
   const MAX_VISIBLE_ROOMS = compactRooms ? 1 : denseLayout ? 2 : 3;
-  const stripSlice = rankedRooms.slice(0, TOP_SUPPORT_RANK_STRIP_MAX);
+  // 応援ランクストリップは 11 枠しかないため、件数トップを匿名ユーザー（a:xxxxx／ハッシュ系）に
+  // 埋め尽くされると個人アイコンの固定ファン層が折り畳まれて見えなくなる。
+  // toggle が ON のときは数値 ID を先に並べ、匿名は後段へ送る（総件数の表現は保ちつつ優先順だけ入替）。
+  const stripCandidates = partitionRankedRoomsForStrip(rankedRooms, {
+    foldAnonymous: foldAnonymousInRankStripRuntimeEnabled
+  });
+  const stripSlice = stripCandidates.slice(0, TOP_SUPPORT_RANK_STRIP_MAX);
   const stripKey = topSupportRankStripStableKey(liveId, list.length, stripSlice);
   if (stripKey !== _lastTopSupportRankStripStableKey) {
     _lastTopSupportRankStripStableKey = stripKey;
@@ -4932,29 +4876,17 @@ async function applyThumbSelectFromStorage() {
   sel.value = allowed.has(v) ? v : '0';
 }
 
-async function applyVoiceAutosendFromStorage() {
-  const cb = /** @type {HTMLInputElement|null} */ ($('voiceAutoSend'));
-  if (!cb) return;
-  const bag = await chrome.storage.local.get(KEY_VOICE_AUTOSEND);
-  cb.checked = bag[KEY_VOICE_AUTOSEND] !== false;
-}
-
-async function applyCommentEnterSendFromStorage() {
-  const cb = /** @type {HTMLInputElement|null} */ ($('commentEnterSend'));
-  if (!cb) return;
-  const bag = await chrome.storage.local.get(KEY_COMMENT_ENTER_SEND);
-  cb.checked = isCommentEnterSendEnabled(bag[KEY_COMMENT_ENTER_SEND]);
-}
-
-async function applyAnonymousIdenticonFromStorage() {
-  const cb = /** @type {HTMLInputElement|null} */ ($('anonymousIdenticonEnabled'));
-  const bag = await chrome.storage.local.get(KEY_ANONYMOUS_IDENTICON_ENABLED);
-  applyAnonymousIdenticonRuntimeFromBag(bag);
-  if (cb) {
-    cb.checked = normalizeAnonymousIdenticonEnabled(
-      bag[KEY_ANONYMOUS_IDENTICON_ENABLED]
-    );
-  }
+/**
+ * popup で登録された全ブール設定を storage から一括ハイドレートする。
+ * 旧 `applyVoiceAutosendFromStorage` / `applyCommentEnterSendFromStorage` /
+ * `applyAnonymousIdenticonFromStorage` / `applyFoldAnonymousInRankStripFromStorage`
+ * をまとめたもの。registry が knows する key セットに応じて自動で範囲が広がる。
+ */
+async function applyRegisteredBooleanSettingsFromStorage() {
+  const keys = popupBooleanSettingsRegistry.keys();
+  if (keys.length === 0) return;
+  const bag = await chrome.storage.local.get(keys);
+  popupBooleanSettingsRegistry.applyFromBag(bag);
 }
 
 /** storage 反映中は details の toggle で永続化しない */
@@ -5566,7 +5498,19 @@ function renderDevMonitorPanel(p) {
       ]);
     }
   }
-  rows.push(['公式との差（公式−一覧）', gap != null ? String(gap) : '—']);
+  {
+    let gapLabel;
+    if (gap == null) {
+      gapLabel = '—';
+    } else if (gap > 0) {
+      gapLabel = `${gap}（公式がこれだけ多い＝取り込めていない可能性）`;
+    } else if (gap < 0) {
+      gapLabel = `${Math.abs(gap)}（記録が先行・公式表示の更新待ちのことがあります）`;
+    } else {
+      gapLabel = '0（一致）';
+    }
+    rows.push(['公式との差（公式−一覧）', gapLabel]);
+  }
   rows.push([
     '差が出る主な理由（参考）',
     '画面に載っていないコメントは取り込めません。種類の扱いの違い・通信の切れ・サイトの作り変わりなどが重なり得ます（下の「種類の内訳」も参照）。'
@@ -5704,14 +5648,13 @@ function applyCalmPanelMotionClass(enabled) {
 }
 
 /**
- * H1（SA 知覚）: 記録 ON/OFF を `.nl-record-hero` に data 属性で同期（E2E・スタイル用）。
- * 真実の状態は `#recordToggle` の checked に合わせる。
+ * 記録 ON/OFF を `<html data-nl-recording>` に同期（E2E・将来のスタイル用フック）。
+ * 真実の状態は `#recordToggle` の checked。recordToggle が 詳細設定 内に移ったため、
+ * SA 用の hero ではなく html ルートに付ける（どこからでも CSS / E2E が拾える）。
  * @param {HTMLInputElement} toggle
  */
 function applyRecordHeroRecordingDataset(toggle) {
-  const hero = document.querySelector('.nl-record-hero');
-  if (!(hero instanceof HTMLElement)) return;
-  hero.dataset.nlRecording = toggle.checked ? 'on' : 'off';
+  document.documentElement.dataset.nlRecording = toggle.checked ? 'on' : 'off';
 }
 
 async function refresh() {
@@ -5722,6 +5665,12 @@ async function refresh() {
   }
   renderExtensionContextBanner(false);
   setTimeout(revealPopupPrimaryOnce, 1200);
+
+  // 世代番号は refresh の最初に確保する。放送切替で新しい refresh が走った後、古い refresh の
+  // await から戻ってきた paintWatchPopupUi が新しい放送の描画を上書きしないよう、以降の paint は
+  // すべて isFreshRefresh() で守る。
+  const refreshGen = ++watchPopupRefreshGeneration;
+  const isFreshRefresh = () => refreshGen === watchPopupRefreshGeneration;
 
   const liveEl = $('liveId');
   const toggle = /** @type {HTMLInputElement} */ ($('recordToggle'));
@@ -5746,7 +5695,8 @@ async function refresh() {
       KEY_STORAGE_WRITE_ERROR,
       KEY_COMMENT_PANEL_STATUS,
       KEY_MARKETING_EXPORT_MASK_LABELS,
-      KEY_ANONYMOUS_IDENTICON_ENABLED
+      KEY_ANONYMOUS_IDENTICON_ENABLED,
+      KEY_FOLD_ANONYMOUS_IN_RANK_STRIP
     ])
   ]);
   applySelfPostedRecentsFromBag(openBag);
@@ -5762,13 +5712,10 @@ async function refresh() {
       openBag[KEY_MARKETING_EXPORT_MASK_LABELS]
     );
   }
-  const anonIdnHydrate = /** @type {HTMLInputElement|null} */ ($('anonymousIdenticonEnabled'));
-  if (anonIdnHydrate) {
-    anonIdnHydrate.checked = normalizeAnonymousIdenticonEnabled(
-      openBag[KEY_ANONYMOUS_IDENTICON_ENABLED]
-    );
-  }
-  applyAnonymousIdenticonRuntimeFromBag(openBag);
+  // popup 全ブール設定を registry 経由で一括ハイドレート
+  // （checkbox.checked + runtime 変数 + キャッシュクリア / 再描画キー破棄などの
+  //  副作用をコントローラが内包）
+  popupBooleanSettingsRegistry.applyFromBag(openBag);
   const { url, fromActiveTab } = resolveWatchUrlFromTabAndStash(
     tabs[0],
     openBag[KEY_LAST_WATCH_URL]
@@ -5871,6 +5818,8 @@ async function refresh() {
   syncVoiceCommentButton();
 
   if (!isNicoLiveWatchUrl(url)) {
+    if (!isFreshRefresh()) return;
+    resetPerBroadcastPopupCachesIfLiveIdChanged('');
     if (liveEl) liveEl.textContent = '（ニコ生watchを開いてください）';
     setCountDisplay('-');
     renderCommentTicker([]);
@@ -5907,6 +5856,7 @@ async function refresh() {
       profileGaps: null
     });
     hideCommentVelocityLine();
+    void updateIngestHeartbeatDisplay('');
     void renderSessionSummaryComparePanel('');
     void renderGiftQuickStatsPanel('');
     markPopupRefreshContentPainted();
@@ -5920,6 +5870,8 @@ async function refresh() {
   }
 
   if (!lv) {
+    if (!isFreshRefresh()) return;
+    resetPerBroadcastPopupCachesIfLiveIdChanged('');
     setCountDisplay('-');
     renderCommentTicker([]);
     exportBtn.disabled = true;
@@ -5955,6 +5907,7 @@ async function refresh() {
       profileGaps: null
     });
     hideCommentVelocityLine();
+    void updateIngestHeartbeatDisplay('');
     void renderSessionSummaryComparePanel('');
     void renderGiftQuickStatsPanel('');
     markPopupRefreshContentPainted();
@@ -6077,6 +6030,7 @@ async function refresh() {
     const displayEntries = buildDisplayCommentEntries(arr, lv);
     STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(displayEntries, lv);
     setCountDisplay(String(displayEntries.length), watchSnapshot);
+    void updateIngestHeartbeatDisplay(lv);
     renderCommentTicker(/** @type {PopupCommentEntry[]} */ (displayEntries));
     exportBtn.disabled = false;
     exportBtn.dataset.liveId = lv;
@@ -6119,11 +6073,22 @@ async function refresh() {
     );
   }
 
+  // 放送切替を検知して、直前放送に紐付くキャッシュ（rank strip の再描画抑止キー、
+  // 直近コメント数・視聴者数の差分比較用値）を強制リセットする。paintWatchPopupUi より前で
+  // 呼ぶことで、最初の描画から新しい放送のデータのみが画面に乗るようにする。
+  resetPerBroadcastPopupCachesIfLiveIdChanged(lv);
+
   if (!snapshotCacheHit) {
-    paintWatchPopupUi();
-    markPopupRefreshContentPainted();
-    revealPopupPrimaryOnce();
+    if (isFreshRefresh()) {
+      paintWatchPopupUi();
+      markPopupRefreshContentPainted();
+      revealPopupPrimaryOnce();
+    }
+    // 視聴タブのリロード直後は content script が readiness 揃わず、単発の
+    // NLS_EXPORT_WATCH_SNAPSHOT が snapshot=null で返る瞬間がある。
+    // その状態で polling 周期（10〜30秒）まで待たされないように、内部で短いバックオフで再試行する。
     const snapResult = await requestWatchPageSnapshotFromOpenTab(url);
+    if (!isFreshRefresh()) return;
     watchMetaCache.snapshot = snapResult.snapshot;
     watchSnapshot = watchMetaCache.snapshot;
     const strippedAfterSnap = stripViewerAvatarContamination(
@@ -6134,11 +6099,12 @@ async function refresh() {
     if (strippedAfterSnap.patched > 0) {
       arr = strippedAfterSnap.next;
       await storageSetSafe({ [key]: arr });
+      if (!isFreshRefresh()) return;
     }
     STORY_AVATAR_DIAG_STATE.stripped += strippedAfterSnap.patched;
   }
 
-  const refreshGen = ++watchPopupRefreshGeneration;
+  if (!isFreshRefresh()) return;
 
   if (thumbCountEl) thumbCountEl.textContent = '…';
   paintWatchPopupUi();
@@ -6536,7 +6502,7 @@ async function tabsSendMessageWithRetry(tabId, message, retryOpts = {}) {
  * @param {string} watchUrl
  * @returns {Promise<{ snapshot: WatchPageSnapshot|null, error: string }>}
  */
-async function requestWatchPageSnapshotFromOpenTab(watchUrl) {
+async function requestWatchPageSnapshotFromOpenTabOnce(watchUrl) {
   const candidates = await collectWatchTabCandidates(watchUrl);
 
   if (!candidates.length) {
@@ -6585,6 +6551,25 @@ async function requestWatchPageSnapshotFromOpenTab(watchUrl) {
     error:
       'watchページからの情報取得に失敗しました。放送タブを開いた状態でポップアップを再度開いてください。'
   };
+}
+
+/**
+ * 視聴タブのリロード直後は content script の再注入完了前に返答が取れず
+ * `{snapshot: null}` で確定してしまい、polling 周期まで同接カードが更新されない。
+ * 短いバックオフで数回やり直して救済する（retry 本体は popupWatchSnapshotRetry.js）。
+ *
+ * @param {string} watchUrl
+ * @param {{ maxAttempts?: number, baseDelayMs?: number }} [opts]
+ * @returns {Promise<{ snapshot: WatchPageSnapshot|null, error: string }>}
+ */
+async function requestWatchPageSnapshotFromOpenTab(watchUrl, opts = {}) {
+  return retrySnapshotRequestUntilReady(
+    () => requestWatchPageSnapshotFromOpenTabOnce(watchUrl),
+    {
+      maxAttempts: opts.maxAttempts ?? 3,
+      baseDelayMs: opts.baseDelayMs ?? 450
+    }
+  );
 }
 
 /**
@@ -6809,12 +6794,15 @@ async function buildHtmlReportDocument(
 
   const roomRows = aggregateCommentsByUser(comments).map((room) => {
     const label = displayUserLabel(room.userKey, room.nickname);
+    // 数値 ID のときだけ niconico ユーザーページへのリンクで包む
+    // （匿名・ハッシュ・未取得は escapeHtml されたテキストのみ）。
+    const labelHtml = buildUserProfileLinkedLabelHtml(room.userKey, label);
     const search = escapeAttr(
       `${label} ${room.nickname || ''} ${room.userKey} ${room.lastText || ''} ${room.count}`.toLowerCase()
     );
     return `
       <tr class="search-item" data-search="${search}">
-        <td>${escapeHtml(label)}</td>
+        <td>${labelHtml}</td>
         <td>${room.count}</td>
         <td>${escapeHtml(room.lastText || '')}</td>
       </tr>
@@ -6826,6 +6814,7 @@ async function buildHtmlReportDocument(
     const text = String(c.text || '').trim();
     const userId = c.userId ? String(c.userId) : '';
     const userLabel = displayUserLabel(userId || UNKNOWN_USER_KEY);
+    const userLabelHtml = buildUserProfileLinkedLabelHtml(userId, userLabel);
     const search = escapeAttr(
       `${commentNo} ${text} ${userId} ${userLabel} ${c.liveId || ''}`.toLowerCase()
     );
@@ -6833,7 +6822,7 @@ async function buildHtmlReportDocument(
       <tr class="search-item" data-search="${search}">
         <td>${idx + 1}</td>
         <td>${escapeHtml(commentNo || '-')}</td>
-        <td>${escapeHtml(userLabel)}</td>
+        <td>${userLabelHtml}</td>
         <td>${escapeHtml(text || '-')}</td>
         <td>${escapeHtml(formatDateTime(c.capturedAt || 0))}</td>
       </tr>
@@ -6983,6 +6972,12 @@ async function buildHtmlReportDocument(
       }
       th { color: #bfdbfe; font-weight: 700; font-size: 11px; }
       td { color: var(--text); }
+      .nl-user-profile-link {
+        color: #93c5fd;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+      .nl-user-profile-link:hover { color: #bfdbfe; }
       .pill {
         display: inline-block;
         border-radius: 999px;
@@ -7542,8 +7537,29 @@ function scheduleCoalescedStorageRefresh(changes, runRefresh) {
   }
 }
 
+/**
+ * ビルド反映確認バッジを塗る（chrome://extensions で「更新」済みかの確認用）。
+ * 表示例: v0.1.5・b0415-2311
+ * bMMDD-HHMM は scripts/build.mjs が esbuild --define で埋め込むビルド時刻（JST）。
+ * 新ビルドを当てたのに反映されていない時は「更新」を押してもここが変わらない。
+ */
+function paintVersionBadge() {
+  const valueEl = /** @type {HTMLElement|null} */ ($('nlVersionBadgeValue'));
+  if (!valueEl) return;
+  try {
+    const manifest = chrome.runtime.getManifest();
+    const version = String(manifest?.version || '').trim() || '?';
+    const buildId =
+      typeof NL_BUILD_ID !== 'undefined' && NL_BUILD_ID ? String(NL_BUILD_ID) : 'dev';
+    valueEl.textContent = `v${version}・b${buildId}`;
+  } catch {
+    valueEl.textContent = '—';
+  }
+}
+
 function initPopup() {
   installExtensionContextErrorGuard();
+  paintVersionBadge();
   void globalThis.chrome?.storage?.local
     ?.get(KEY_CALM_PANEL_MOTION)
     ?.then((b) => {
@@ -7584,6 +7600,9 @@ function initPopup() {
   const voiceAutoSend = /** @type {HTMLInputElement|null} */ ($('voiceAutoSend'));
   const anonymousIdenticonEnabled = /** @type {HTMLInputElement|null} */ (
     $('anonymousIdenticonEnabled')
+  );
+  const foldAnonymousInRankStrip = /** @type {HTMLInputElement|null} */ (
+    $('foldAnonymousInRankStrip')
   );
   const commentEnterSend = /** @type {HTMLInputElement|null} */ ($('commentEnterSend'));
   const voiceDeviceSel = /** @type {HTMLSelectElement|null} */ ($('voiceInputDevice'));
@@ -8508,14 +8527,26 @@ function initPopup() {
   });
 
   anonymousIdenticonEnabled?.addEventListener('change', async () => {
+    const next = !!anonymousIdenticonEnabled.checked;
     try {
-      await storageSetSafe({
-        [KEY_ANONYMOUS_IDENTICON_ENABLED]: anonymousIdenticonEnabled.checked
-      });
+      await storageSetSafe({ [KEY_ANONYMOUS_IDENTICON_ENABLED]: next });
     } catch {
       //
     }
-    await applyAnonymousIdenticonFromStorage();
+    // DOM が意図した値そのもの。controller に流して runtime 変数 + キャッシュクリアを反映。
+    anonymousIdenticonSettingController.applyRaw(next);
+    safeRefresh();
+  });
+
+  foldAnonymousInRankStrip?.addEventListener('change', async () => {
+    const next = !!foldAnonymousInRankStrip.checked;
+    try {
+      await storageSetSafe({ [KEY_FOLD_ANONYMOUS_IN_RANK_STRIP]: next });
+    } catch {
+      //
+    }
+    // 書き込み後は DOM が意図した値そのもの。controller に流して runtime に反映。
+    foldAnonymousInRankStripSettingController.applyRaw(next);
     safeRefresh();
   });
 
@@ -8855,9 +8886,9 @@ function initPopup() {
         wireSupportVisualUi();
         document.documentElement.setAttribute('data-nl-support-wired', '');
         void applyThumbSelectFromStorage().catch(() => {});
-        void applyVoiceAutosendFromStorage().catch(() => {});
-        void applyCommentEnterSendFromStorage().catch(() => {});
-        void applyAnonymousIdenticonFromStorage().catch(() => {});
+        // registry 登録済みのブール設定を storage から一括同期
+        // （voiceAutosend / commentEnterSend / anonymousIdenticon / foldAnonymousInRankStrip）
+        void applyRegisteredBooleanSettingsFromStorage().catch(() => {});
         void applyStoryGrowthCollapsedFromStorage().catch(() => {});
         void refreshVoiceInputDeviceList().catch(() => {});
         await refreshDone;
@@ -8869,21 +8900,16 @@ function initPopup() {
     if (stCh && typeof stCh.addListener === 'function') {
       stCh.addListener((changes, area) => {
         if (area !== 'local') return;
+        // レジストリ経由のブール設定を一括反映（未登録 key は何もしない）
+        popupBooleanSettingsRegistry.dispatchStorageChanges(changes);
         if (changes[KEY_POPUP_FRAME] || changes[KEY_POPUP_FRAME_CUSTOM]) {
           loadPopupFrameSettings().catch(() => {});
         }
         if (changes[KEY_THUMB_AUTO] || changes[KEY_THUMB_INTERVAL_MS]) {
           applyThumbSelectFromStorage().catch(() => {});
         }
-        if (changes[KEY_VOICE_AUTOSEND]) {
-          applyVoiceAutosendFromStorage().catch(() => {});
-        }
-        if (changes[KEY_COMMENT_ENTER_SEND]) {
-          applyCommentEnterSendFromStorage().catch(() => {});
-        }
-        if (changes[KEY_ANONYMOUS_IDENTICON_ENABLED]) {
-          applyAnonymousIdenticonFromStorage().catch(() => {});
-        }
+        // voiceAutosend / commentEnterSend / anonymousIdenticon / foldAnonymousInRankStrip は
+        // 直上の popupBooleanSettingsRegistry.dispatchStorageChanges(changes) で反映済み
         if (changes[KEY_STORY_GROWTH_COLLAPSED]) {
           applyStoryGrowthCollapsedFromStorage().catch(() => {});
         }

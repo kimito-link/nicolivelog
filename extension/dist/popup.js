@@ -175,6 +175,7 @@
   var KEY_COMMENT_ENTER_SEND = "nls_comment_enter_send";
   var KEY_STORY_GROWTH_COLLAPSED = "nls_story_growth_collapsed";
   var KEY_ANONYMOUS_IDENTICON_ENABLED = "nls_anonymous_identicon_enabled_v1";
+  var KEY_FOLD_ANONYMOUS_IN_RANK_STRIP = "nls_fold_anonymous_in_rank_strip_v1";
   var KEY_SUPPORT_VISUAL_EXPANDED = "nls_support_visual_expanded";
   var KEY_USAGE_TERMS_ACK = "nls_usage_terms_ack_v1";
   var KEY_VOICE_INPUT_DEVICE = "nls_voice_input_device";
@@ -233,6 +234,9 @@
   function normalizeAnonymousIdenticonEnabled(raw) {
     return raw !== false;
   }
+  function normalizeFoldAnonymousInRankStrip(raw) {
+    return raw !== false;
+  }
   var KEY_MARKETING_EXPORT_MASK_LABELS = "nls_marketing_export_mask_labels_v1";
   function normalizeMarketingExportMaskLabels(raw) {
     return raw === true;
@@ -248,40 +252,6 @@
   function giftUsersStorageKey(liveId) {
     const id = String(liveId || "").trim().toLowerCase();
     return `nls_gift_users_${id}`;
-  }
-
-  // src/lib/supportVisualExpanded.js
-  function normalizeSupportVisualExpanded(raw, opts = {}) {
-    const inlineMode = opts.inlineMode === true;
-    if (raw === true) return true;
-    if (raw === false) return false;
-    return inlineMode;
-  }
-
-  // src/lib/nlMainScrollReveal.js
-  function computeScrollDeltaToRevealInParent(parentRect, elRect, pad = 12) {
-    const deltaTop = elRect.top - parentRect.top;
-    const deltaBottom = elRect.bottom - parentRect.bottom;
-    if (deltaTop < pad) {
-      return deltaTop - pad;
-    }
-    if (deltaBottom > -pad) {
-      return deltaBottom + pad;
-    }
-    return 0;
-  }
-
-  // src/lib/commentComposeShortcuts.js
-  function commentComposeKeyAction(p) {
-    if (p.key !== "Enter") return "default";
-    if (p.isComposing) return "default";
-    const mod = Boolean(p.ctrlKey || p.metaKey);
-    if (mod) return "submit";
-    if (p.enterSendsComment) {
-      if (p.shiftKey) return "default";
-      return "submit";
-    }
-    return "default";
   }
 
   // src/lib/supportGrowthTileSrc.js
@@ -386,6 +356,121 @@
     const u = String(userId || "").trim();
     if (/^\d{5,14}$/.test(u) && isNiconicoSyntheticDefaultUserIconUrl(c, u)) return 1;
     return 2;
+  }
+
+  // src/lib/userRooms.js
+  var UNKNOWN_USER_KEY = "__unknown__";
+  function shortUserKeyDisplay(userKey) {
+    if (!userKey || userKey === UNKNOWN_USER_KEY) return "";
+    const s = String(userKey);
+    return s.length <= 18 ? s : `${s.slice(0, 8)}\u2026${s.slice(-6)}`;
+  }
+  function displayUserLabel(userKey, nickname) {
+    if (!userKey || userKey === UNKNOWN_USER_KEY) {
+      return "ID\u672A\u53D6\u5F97\uFF08DOM\u306B\u6295\u7A3F\u8005\u60C5\u5831\u306A\u3057\uFF09";
+    }
+    const name = anonymousNicknameFallback(userKey, nickname);
+    const shortId = shortUserKeyDisplay(userKey);
+    if (name) return `${name}\uFF08${shortId}\uFF09`;
+    return shortId;
+  }
+  function aggregateCommentsByUser(entries) {
+    const list = Array.isArray(entries) ? entries : [];
+    const map = /* @__PURE__ */ new Map();
+    for (const e of list) {
+      const uid = e?.userId ? String(e.userId).trim() : "";
+      const userKey = uid || UNKNOWN_USER_KEY;
+      const capturedAt = Number(e?.capturedAt || 0);
+      const text = String(e?.text || "").trim();
+      const nickname = String(e?.nickname || "").trim();
+      const rawAv = String(e?.avatarUrl || "").trim();
+      const avatarCandidate = isHttpOrHttpsUrl(rawAv) ? rawAv : "";
+      if (!map.has(userKey)) {
+        map.set(userKey, {
+          userKey,
+          nickname: "",
+          count: 0,
+          lastAt: 0,
+          lastText: "",
+          avatarUrl: ""
+        });
+      }
+      const row = map.get(userKey);
+      row.count += 1;
+      if (nickname) {
+        if (!row.nickname) row.nickname = nickname;
+        else if (nickname.length > row.nickname.length) row.nickname = nickname;
+      }
+      if (capturedAt >= row.lastAt) {
+        row.lastAt = capturedAt;
+        row.lastText = text.length > 60 ? `${text.slice(0, 60)}\u2026` : text;
+        if (userKey !== UNKNOWN_USER_KEY && avatarCandidate) row.avatarUrl = avatarCandidate;
+      }
+    }
+    return [...map.values()].sort((a, b) => b.lastAt - a.lastAt);
+  }
+
+  // src/lib/topSupportRankAnonymousFold.js
+  function isAnonymousLikeRoomKey(userKey) {
+    const key = String(userKey || "").trim();
+    if (!key) return true;
+    if (key === UNKNOWN_USER_KEY) return false;
+    return isAnonymousStyleNicoUserId(key);
+  }
+  function partitionRankedRoomsForStrip(ranked, opts) {
+    const list = Array.isArray(ranked) ? ranked : [];
+    const foldAnonymous = opts?.foldAnonymous !== false;
+    if (!foldAnonymous) return list.slice();
+    const unknownBucket = [];
+    const knownBucket = [];
+    const anonymousBucket = [];
+    for (const row of list) {
+      const key = String(row?.userKey ?? "");
+      if (key === UNKNOWN_USER_KEY) {
+        unknownBucket.push(row);
+        continue;
+      }
+      if (isAnonymousLikeRoomKey(key)) {
+        anonymousBucket.push(row);
+      } else {
+        knownBucket.push(row);
+      }
+    }
+    return [...unknownBucket, ...knownBucket, ...anonymousBucket];
+  }
+
+  // src/lib/supportVisualExpanded.js
+  function normalizeSupportVisualExpanded(raw, opts = {}) {
+    const inlineMode = opts.inlineMode === true;
+    if (raw === true) return true;
+    if (raw === false) return false;
+    return inlineMode;
+  }
+
+  // src/lib/nlMainScrollReveal.js
+  function computeScrollDeltaToRevealInParent(parentRect, elRect, pad = 12) {
+    const deltaTop = elRect.top - parentRect.top;
+    const deltaBottom = elRect.bottom - parentRect.bottom;
+    if (deltaTop < pad) {
+      return deltaTop - pad;
+    }
+    if (deltaBottom > -pad) {
+      return deltaBottom + pad;
+    }
+    return 0;
+  }
+
+  // src/lib/commentComposeShortcuts.js
+  function commentComposeKeyAction(p) {
+    if (p.key !== "Enter") return "default";
+    if (p.isComposing) return "default";
+    const mod = Boolean(p.ctrlKey || p.metaKey);
+    if (mod) return "submit";
+    if (p.enterSendsComment) {
+      if (p.shiftKey) return "default";
+      return "submit";
+    }
+    return "default";
   }
 
   // src/lib/userIdPreference.js
@@ -857,6 +942,429 @@
     return { showConcurrent, sparseConcurrent };
   }
 
+  // src/lib/popupWatchSnapshotRetry.js
+  async function retrySnapshotRequestUntilReady(requestOnce, opts = {}) {
+    const rawMax = opts.maxAttempts != null ? Number(opts.maxAttempts) : 3;
+    const maxAttempts = Number.isFinite(rawMax) && rawMax >= 1 ? Math.floor(rawMax) : 1;
+    const rawDelay = opts.baseDelayMs != null ? Number(opts.baseDelayMs) : 450;
+    const baseDelayMs = Number.isFinite(rawDelay) && rawDelay >= 0 ? Math.floor(rawDelay) : 450;
+    const sleep = typeof opts.sleep === "function" ? opts.sleep : (
+      /** @param {number} ms */
+      (ms) => new Promise((r) => setTimeout(r, ms))
+    );
+    let last;
+    for (let i = 0; i < maxAttempts; i++) {
+      last = await requestOnce();
+      if (last && last.snapshot != null) return last;
+      if (i < maxAttempts - 1) {
+        await sleep(baseDelayMs * (i + 1));
+      }
+    }
+    return last;
+  }
+
+  // src/lib/commentTickerNameLink.js
+  function canLinkCommentTickerName(userId) {
+    const s = String(userId || "").trim();
+    if (!s) return false;
+    return !isAnonymousStyleNicoUserId(s);
+  }
+  function buildCommentTickerNameHref(userId) {
+    if (!canLinkCommentTickerName(userId)) return "";
+    const s = String(userId || "").trim();
+    return `https://www.nicovideo.jp/user/${encodeURIComponent(s)}`;
+  }
+
+  // src/lib/htmlEscape.js
+  function escapeHtml(s) {
+    return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  function escapeAttr(s) {
+    return escapeHtml(s);
+  }
+
+  // src/lib/userProfileLinkHtml.js
+  function buildUserProfileLinkedLabelHtml(userKey, label) {
+    const text = String(label ?? "");
+    const escaped = escapeHtml(text);
+    const href = buildCommentTickerNameHref(userKey);
+    if (!href) return escaped;
+    return `<a href="${escapeAttr(href)}" target="_blank" rel="noopener noreferrer" class="nl-user-profile-link">${escaped}</a>`;
+  }
+
+  // src/lib/popupBooleanSettingController.js
+  function createBooleanSettingController(spec) {
+    if (!spec || typeof spec.key !== "string" || spec.key === "") {
+      throw new Error("createBooleanSettingController: spec.key is required");
+    }
+    const key = spec.key;
+    const normalize = typeof spec.normalize === "function" ? spec.normalize : (raw) => raw !== false;
+    const getCheckbox = typeof spec.getCheckbox === "function" ? spec.getCheckbox : () => null;
+    const applyRuntime = typeof spec.applyRuntime === "function" ? spec.applyRuntime : null;
+    function applyRaw(raw) {
+      const value = normalize(raw);
+      if (applyRuntime) applyRuntime(value);
+      const cb = getCheckbox();
+      if (cb) cb.checked = value;
+      return value;
+    }
+    return {
+      key,
+      applyRaw,
+      applyFromBag(bag) {
+        return applyRaw(bag ? bag[key] : void 0);
+      },
+      handleStorageChange(changes) {
+        if (!changes || !Object.prototype.hasOwnProperty.call(changes, key)) return false;
+        applyRaw(changes[key].newValue);
+        return true;
+      }
+    };
+  }
+
+  // src/lib/popupBooleanSettingsRegistry.js
+  function createBooleanSettingsRegistry() {
+    const controllers = [];
+    return {
+      register(controller) {
+        if (!controller || typeof controller.key !== "string" || controller.key === "") {
+          throw new Error("createBooleanSettingsRegistry#register: invalid controller");
+        }
+        controllers.push(controller);
+        return controller;
+      },
+      keys() {
+        return controllers.map((c) => c.key);
+      },
+      applyFromBag(bag) {
+        for (const c of controllers) c.applyFromBag(bag);
+      },
+      dispatchStorageChanges(changes) {
+        const hits = [];
+        for (const c of controllers) {
+          if (c.handleStorageChange(changes)) hits.push(c.key);
+        }
+        return hits;
+      },
+      size() {
+        return controllers.length;
+      }
+    };
+  }
+
+  // src/lib/popupFramePresets.js
+  var DEFAULT_FRAME_ID = "light";
+  var LEGACY_FRAME_ALIAS = Object.freeze({
+    trio: "light",
+    link: "light",
+    konta: "sunset",
+    tanunee: "midnight"
+  });
+  var FRAME_PRESETS = Object.freeze({
+    light: Object.freeze({
+      label: "\u30E9\u30A4\u30C8",
+      vars: Object.freeze({
+        "--nl-bg": "#fffaf2",
+        "--nl-bg-soft": "#eef8ff",
+        "--nl-surface": "#ffffff",
+        "--nl-text": "#1f2937",
+        "--nl-muted": "#5b6475",
+        "--nl-border": "#d5e3f5",
+        "--nl-accent": "#0f8fd8",
+        "--nl-accent-hover": "#0b73ad",
+        "--nl-header-start": "#0f8fd8",
+        "--nl-header-end": "#14b8a6",
+        "--nl-frame-outline": "rgb(255 255 255 / 22%)"
+      })
+    }),
+    dark: Object.freeze({
+      label: "\u30C0\u30FC\u30AF",
+      vars: Object.freeze({
+        "--nl-bg": "#0b1220",
+        "--nl-bg-soft": "#111827",
+        "--nl-surface": "#0f172a",
+        "--nl-text": "#e5e7eb",
+        "--nl-muted": "#94a3b8",
+        "--nl-border": "#243244",
+        "--nl-accent": "#60a5fa",
+        "--nl-accent-hover": "#3b82f6",
+        "--nl-header-start": "#1e293b",
+        "--nl-header-end": "#334155",
+        "--nl-frame-outline": "rgb(255 255 255 / 18%)"
+      })
+    }),
+    midnight: Object.freeze({
+      label: "\u30DF\u30C3\u30C9\u30CA\u30A4\u30C8",
+      vars: Object.freeze({
+        "--nl-bg": "#0b1022",
+        "--nl-bg-soft": "#1b1f3a",
+        "--nl-surface": "#10182f",
+        "--nl-text": "#e2e8f0",
+        "--nl-muted": "#9fb1ca",
+        "--nl-border": "#2a3761",
+        "--nl-accent": "#7dd3fc",
+        "--nl-accent-hover": "#38bdf8",
+        "--nl-header-start": "#1e1b4b",
+        "--nl-header-end": "#1d4ed8",
+        "--nl-frame-outline": "rgb(255 255 255 / 22%)"
+      })
+    }),
+    sunset: Object.freeze({
+      label: "\u30B5\u30F3\u30BB\u30C3\u30C8",
+      vars: Object.freeze({
+        "--nl-bg": "#fff7ed",
+        "--nl-bg-soft": "#ffedd5",
+        "--nl-surface": "#fffbf6",
+        "--nl-text": "#1f2937",
+        "--nl-muted": "#6b7280",
+        "--nl-border": "#f5d0b5",
+        "--nl-accent": "#ea580c",
+        "--nl-accent-hover": "#c2410c",
+        "--nl-header-start": "#fb923c",
+        "--nl-header-end": "#f43f5e",
+        "--nl-frame-outline": "rgb(255 255 255 / 30%)"
+      })
+    })
+  });
+  var DEFAULT_CUSTOM_FRAME = Object.freeze({
+    headerStart: "#0f8fd8",
+    headerEnd: "#14b8a6",
+    accent: "#0f8fd8"
+  });
+  function hasFramePreset(id) {
+    return Object.prototype.hasOwnProperty.call(FRAME_PRESETS, id);
+  }
+  function normalizeFrameId(raw) {
+    const id = String(raw || "").trim().toLowerCase();
+    if (!id) return "";
+    return LEGACY_FRAME_ALIAS[
+      /** @type {keyof typeof LEGACY_FRAME_ALIAS} */
+      id
+    ] || id;
+  }
+  function getFramePreset(id) {
+    return hasFramePreset(id) ? FRAME_PRESETS[
+      /** @type {keyof typeof FRAME_PRESETS} */
+      id
+    ] : null;
+  }
+  function frameLabel(frameId) {
+    return frameId === "custom" ? "\u30AB\u30B9\u30BF\u30E0" : getFramePreset(frameId)?.label || FRAME_PRESETS[DEFAULT_FRAME_ID].label;
+  }
+  function normalizeHexColor(value, fallback) {
+    const s = String(value || "").trim();
+    return /^#[0-9a-f]{6}$/i.test(s) ? s.toLowerCase() : fallback;
+  }
+  function darkenHexColor(hex, ratio) {
+    const source = normalizeHexColor(hex, "#0f8fd8").slice(1);
+    const clamp2 = (v) => Math.max(0, Math.min(255, Math.round(v)));
+    const r = clamp2(parseInt(source.slice(0, 2), 16) * (1 - ratio));
+    const g = clamp2(parseInt(source.slice(2, 4), 16) * (1 - ratio));
+    const b = clamp2(parseInt(source.slice(4, 6), 16) * (1 - ratio));
+    return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
+  }
+  function sanitizeCustomFrame(raw) {
+    const source = raw && typeof raw === "object" ? raw : {};
+    return {
+      headerStart: normalizeHexColor(
+        /** @type {{ headerStart?: unknown }} */
+        source.headerStart,
+        DEFAULT_CUSTOM_FRAME.headerStart
+      ),
+      headerEnd: normalizeHexColor(
+        /** @type {{ headerEnd?: unknown }} */
+        source.headerEnd,
+        DEFAULT_CUSTOM_FRAME.headerEnd
+      ),
+      accent: normalizeHexColor(
+        /** @type {{ accent?: unknown }} */
+        source.accent,
+        DEFAULT_CUSTOM_FRAME.accent
+      )
+    };
+  }
+  function resolveFrameVars(frameId, custom) {
+    if (frameId !== "custom") {
+      return (
+        /** @type {Record<string, string>} */
+        getFramePreset(frameId)?.vars || FRAME_PRESETS[DEFAULT_FRAME_ID].vars
+      );
+    }
+    const safe = sanitizeCustomFrame(custom);
+    return {
+      "--nl-bg": "#f7fbff",
+      "--nl-bg-soft": "#e8f4ff",
+      "--nl-surface": "#ffffff",
+      "--nl-text": "#1f2937",
+      "--nl-muted": "#5b6475",
+      "--nl-border": "#cfe0f4",
+      "--nl-accent": safe.accent,
+      "--nl-accent-hover": darkenHexColor(safe.accent, 0.2),
+      "--nl-header-start": safe.headerStart,
+      "--nl-header-end": safe.headerEnd,
+      "--nl-frame-outline": "rgb(255 255 255 / 28%)"
+    };
+  }
+
+  // src/lib/popupFrameCodec.js
+  function encodeBase64UrlUtf8(text) {
+    const bytes = new TextEncoder().encode(text);
+    let binary = "";
+    for (const b of bytes) binary += String.fromCharCode(b);
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
+  }
+  function decodeBase64UrlUtf8(text) {
+    let base64 = String(text || "").replace(/-/g, "+").replace(/_/g, "/");
+    const pad = base64.length % 4;
+    if (pad) base64 += "=".repeat(4 - pad);
+    const binary = atob(base64);
+    const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  }
+  function createFrameShareCode(frameId, custom) {
+    const normalized = normalizeFrameId(frameId);
+    const safeId = normalized === "custom" || hasFramePreset(normalized) ? normalized : DEFAULT_FRAME_ID;
+    const payload = {
+      v: 1,
+      frame: safeId,
+      custom: sanitizeCustomFrame(custom)
+    };
+    const encoded = encodeBase64UrlUtf8(JSON.stringify(payload));
+    return `nlsframe.${encoded}`;
+  }
+  function parseFrameShareCode(raw) {
+    const code = String(raw || "").trim();
+    if (!code) {
+      throw new Error("\u5171\u6709\u30B3\u30FC\u30C9\u304C\u7A7A\u3067\u3059\u3002");
+    }
+    const payloadText = code.startsWith("nlsframe.") ? decodeBase64UrlUtf8(code.slice("nlsframe.".length)) : code;
+    const payload = JSON.parse(payloadText);
+    const source = payload && typeof payload === "object" ? payload : {};
+    const frameValue = normalizeFrameId(
+      /** @type {{ frame?: unknown }} */
+      source.frame || ""
+    );
+    const frameId = frameValue === "custom" || hasFramePreset(frameValue) ? frameValue : DEFAULT_FRAME_ID;
+    return {
+      frameId,
+      custom: sanitizeCustomFrame(
+        /** @type {{ custom?: unknown }} */
+        source.custom || {}
+      )
+    };
+  }
+
+  // src/lib/selfPostedMatcher.js
+  var SELF_POST_MATCH_EARLY_MS = 30 * 1e3;
+  var SELF_POST_MATCH_LATE_MS = 10 * 60 * 1e3;
+  var SELF_POST_RECENT_TTL_MS = 24 * 60 * 60 * 1e3;
+  function filterValidSelfPostedRecents(raw, now = Date.now()) {
+    if (!raw || typeof raw !== "object") return [];
+    const items = (
+      /** @type {{ items?: unknown }} */
+      raw.items
+    );
+    if (!Array.isArray(items)) return [];
+    const out = [];
+    for (const x of items) {
+      if (!x || typeof x !== "object") continue;
+      const rec = (
+        /** @type {{liveId?: unknown, at?: unknown, textNorm?: unknown}} */
+        x
+      );
+      if (typeof rec.liveId === "string" && typeof rec.textNorm === "string" && typeof rec.at === "number" && now - rec.at < SELF_POST_RECENT_TTL_MS) {
+        out.push({ liveId: rec.liveId, textNorm: rec.textNorm, at: rec.at });
+      }
+    }
+    return out;
+  }
+  function prepareSelfPostedMatchRecents(recents, liveId) {
+    const lid = String(liveId || "").trim().toLowerCase();
+    if (!lid) return [];
+    const src = Array.isArray(recents) ? recents : [];
+    return src.map((it, itemIndex) => ({
+      itemIndex,
+      liveId: String(it?.liveId || "").trim().toLowerCase(),
+      at: Number(it?.at) || 0,
+      textNorm: String(it?.textNorm || "")
+    })).filter((it) => it.liveId === lid && it.at > 0 && it.textNorm).sort((a, b) => a.at - b.at || a.itemIndex - b.itemIndex).map(({ itemIndex, at, textNorm }) => ({ itemIndex, at, textNorm }));
+  }
+  function matchSelfPostedRecents(entries, recents, opts = {}) {
+    const earlyMs = Number.isFinite(opts.earlyMs) ? (
+      /** @type {number} */
+      opts.earlyMs
+    ) : SELF_POST_MATCH_EARLY_MS;
+    const lateMs = Number.isFinite(opts.lateMs) ? (
+      /** @type {number} */
+      opts.lateMs
+    ) : SELF_POST_MATCH_LATE_MS;
+    const matchedIds = /* @__PURE__ */ new Set();
+    const consumedIndexes = /* @__PURE__ */ new Set();
+    const entryList = Array.isArray(entries) ? entries : [];
+    const recentList = Array.isArray(recents) ? recents : [];
+    if (!entryList.length || !recentList.length) {
+      return { matchedIds, consumedIndexes };
+    }
+    const byText = /* @__PURE__ */ new Map();
+    for (const e of entryList) {
+      if (!e || !e.textNorm || !e.id) continue;
+      const bucket = byText.get(e.textNorm) || [];
+      bucket.push(e);
+      byText.set(e.textNorm, bucket);
+    }
+    for (const bucket of byText.values()) {
+      bucket.sort((a, b) => {
+        if (a.capturedAt !== b.capturedAt) return a.capturedAt - b.capturedAt;
+        return a.index - b.index;
+      });
+    }
+    for (const recent of recentList) {
+      const bucket = byText.get(recent.textNorm);
+      if (!bucket?.length) continue;
+      let best = null;
+      let bestScore = Number.POSITIVE_INFINITY;
+      let bestIndex = Number.POSITIVE_INFINITY;
+      for (const candidate of bucket) {
+        if (matchedIds.has(candidate.id)) continue;
+        const cap = candidate.capturedAt;
+        if (cap < recent.at - earlyMs || cap > recent.at + lateMs) continue;
+        const delta = cap - recent.at;
+        const score = Math.abs(delta) + (delta >= 0 ? 0 : earlyMs + 1);
+        if (score < bestScore || score === bestScore && candidate.index < bestIndex) {
+          best = candidate;
+          bestScore = score;
+          bestIndex = candidate.index;
+        }
+      }
+      if (!best) continue;
+      matchedIds.add(best.id);
+      consumedIndexes.add(recent.itemIndex);
+    }
+    return { matchedIds, consumedIndexes };
+  }
+  function matchesAnySelfPostedRecent(entry, recents, liveId, opts = {}) {
+    const earlyMs = Number.isFinite(opts.earlyMs) ? (
+      /** @type {number} */
+      opts.earlyMs
+    ) : SELF_POST_MATCH_EARLY_MS;
+    const lateMs = Number.isFinite(opts.lateMs) ? (
+      /** @type {number} */
+      opts.lateMs
+    ) : SELF_POST_MATCH_LATE_MS;
+    const norm = String(entry?.textNorm || "");
+    if (!norm) return false;
+    const lid = String(liveId || "").trim().toLowerCase();
+    if (!lid) return false;
+    const cap = Number(entry?.capturedAt) || 0;
+    const list = Array.isArray(recents) ? recents : [];
+    for (const it of list) {
+      if (String(it?.liveId || "").toLowerCase() !== lid) continue;
+      if (it?.textNorm !== norm) continue;
+      if (cap >= it.at - earlyMs && cap <= it.at + lateMs) return true;
+    }
+    return false;
+  }
+
   // src/lib/watchConcurrentEstimateUiCopy.js
   var SPARSE_CONCURRENT_ESTIMATE_NOTE = "\u6765\u5834\u8005\u30FB\u7D71\u8A08\u304C\u672A\u53D6\u5F97\u306E\u305F\u3081\u63A8\u5B9A\u306F\u53C2\u8003\u5024";
   function concurrentResolutionMethodTitlePart(method) {
@@ -931,58 +1439,6 @@
       best = pickNewer(list[i], best);
     }
     return best;
-  }
-
-  // src/lib/userRooms.js
-  var UNKNOWN_USER_KEY = "__unknown__";
-  function shortUserKeyDisplay(userKey) {
-    if (!userKey || userKey === UNKNOWN_USER_KEY) return "";
-    const s = String(userKey);
-    return s.length <= 18 ? s : `${s.slice(0, 8)}\u2026${s.slice(-6)}`;
-  }
-  function displayUserLabel(userKey, nickname) {
-    if (!userKey || userKey === UNKNOWN_USER_KEY) {
-      return "ID\u672A\u53D6\u5F97\uFF08DOM\u306B\u6295\u7A3F\u8005\u60C5\u5831\u306A\u3057\uFF09";
-    }
-    const name = anonymousNicknameFallback(userKey, nickname);
-    const shortId = shortUserKeyDisplay(userKey);
-    if (name) return `${name}\uFF08${shortId}\uFF09`;
-    return shortId;
-  }
-  function aggregateCommentsByUser(entries) {
-    const list = Array.isArray(entries) ? entries : [];
-    const map = /* @__PURE__ */ new Map();
-    for (const e of list) {
-      const uid = e?.userId ? String(e.userId).trim() : "";
-      const userKey = uid || UNKNOWN_USER_KEY;
-      const capturedAt = Number(e?.capturedAt || 0);
-      const text = String(e?.text || "").trim();
-      const nickname = String(e?.nickname || "").trim();
-      const rawAv = String(e?.avatarUrl || "").trim();
-      const avatarCandidate = isHttpOrHttpsUrl(rawAv) ? rawAv : "";
-      if (!map.has(userKey)) {
-        map.set(userKey, {
-          userKey,
-          nickname: "",
-          count: 0,
-          lastAt: 0,
-          lastText: "",
-          avatarUrl: ""
-        });
-      }
-      const row = map.get(userKey);
-      row.count += 1;
-      if (nickname) {
-        if (!row.nickname) row.nickname = nickname;
-        else if (nickname.length > row.nickname.length) row.nickname = nickname;
-      }
-      if (capturedAt >= row.lastAt) {
-        row.lastAt = capturedAt;
-        row.lastText = text.length > 60 ? `${text.slice(0, 60)}\u2026` : text;
-        if (userKey !== UNKNOWN_USER_KEY && avatarCandidate) row.avatarUrl = avatarCandidate;
-      }
-    }
-    return [...map.values()].sort((a, b) => b.lastAt - a.lastAt);
   }
 
   // src/lib/userSupportGridAccent.js
@@ -1431,14 +1887,6 @@
     );
   }
 
-  // src/lib/htmlEscape.js
-  function escapeHtml(s) {
-    return String(s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-  }
-  function escapeAttr(s) {
-    return escapeHtml(s);
-  }
-
   // src/lib/storyUserLaneGuideHtml.js
   function storyUserLaneGuideLine(src, textEscaped) {
     return `<div class="nl-story-userlane-guide__line"><img class="nl-story-userlane-guide__face" src="${escapeAttr(src)}" alt="" width="24" height="24" decoding="async" /><span class="nl-story-userlane-guide__text">${textEscaped}</span></div>`;
@@ -1447,7 +1895,7 @@
     return storyUserLaneGuideLine(
       faceLink,
       escapeHtml(
-        "\u308A\u3093\u304F: \u30CB\u30B3\u751F\u306E\u30E6\u30FC\u30B6\u30FC\u8B58\u5225\u5B50\uFF08\u6570\u5024ID\u30FB\u533F\u540D\u306E a: \u5F62\u5F0F\uFF09\u304C\u4ED8\u3044\u305F\u5FDC\u63F4\u3060\u3051\u304C\u3053\u306E\u5217\u306B\u8F09\u308B\u3088\u3002\u4E26\u3073\u3067\u306F\u3001\u500B\u4EBA\u30B5\u30E0\u30CD\u304C\u53D6\u308C\u305F\u4EBA\u3092\u3044\u3061\u3070\u3093\u624B\u524D\u306B\u5BC4\u305B\u308B\u3088\u3002\u8868\u793A\u540D\u304C\u5F31\u3044\u5834\u5408\u3067\u3082\u3001\u30B5\u30E0\u30CD\u304C\u78BA\u5B9F\u306A\u3089 \u308A\u3093\u304F \u306B\u6B8B\u3059\u8A2D\u8A08\u3060\u3088\u3002"
+        "\u308A\u3093\u304F: \u6570\u5024\u30E6\u30FC\u30B6\u30FCID\uFF0B\u500B\u4EBA\u30B5\u30E0\u30CD\u304C\u63C3\u3063\u305F\u5FDC\u63F4\u3060\u3051\u3001\u3053\u306E\u5217\u306B\u8F09\u305B\u308B\u3088\u3002\u533F\u540D\uFF08a:\uFF09\u306F\u30AB\u30B9\u30BF\u30E0\u8868\u793A\u540D\u3084\u30B5\u30E0\u30CD\u304C\u898B\u3048\u3066\u3044\u3066\u3082\u4E0A\u306B\u306F\u51FA\u3055\u305A\u3001\u4E0B\u306E\u6BB5\u306B\u6D41\u3059\u8A2D\u8A08\u3060\u3088\u3002"
       )
     );
   }
@@ -1463,7 +1911,7 @@
     return storyUserLaneGuideLine(
       faceTanu,
       escapeHtml(
-        "\u305F\u306C\u59C9: ID\u304C\u53D6\u308C\u3066\u3044\u306A\u3044\u30B3\u30E1\u30F3\u30C8\u306F\u3001\u3053\u306E\u5217\u306B\u306F\u8F09\u305B\u306A\u3044\u3088\uFF08\u533A\u5225\u3067\u304D\u306A\u3044\u304B\u3089\uFF09\u3002\u3042\u3068\u53D6\u5F97\u304C\u8584\u3044\u4EBA\u306F\u4E26\u3073\u306E\u5F8C\u308D\u5BC4\u308A\u306B\u306A\u308A\u3084\u3059\u3044\u304B\u3089\u3001\u4E0B\u306E\u300C\u72B6\u6CC1\u306E\u8A73\u7D30\u300D\u3067\u6B20\u3051\u3092\u78BA\u8A8D\u3057\u3066\u306D\u3002"
+        "\u305F\u306C\u59C9: \u533F\u540D\uFF08a:\uFF09\u306E\u5FDC\u63F4\u3001\u8868\u793A\u540D\u3084\u30B5\u30E0\u30CD\u304C\u63C3\u308F\u306A\u3044\u5FDC\u63F4\u3001ID \u4E0D\u660E\u306F\u305C\u3093\u3076\u3053\u306E\u6BB5\u306B\u96C6\u3081\u308B\u3088\u3002\u4E0B\u306E\u300C\u72B6\u6CC1\u306E\u8A73\u7D30\u300D\u3067\u3069\u3053\u306E\u60C5\u5831\u304C\u6B20\u3051\u3066\u3044\u308B\u304B\u78BA\u8A8D\u3057\u3066\u306D\u3002"
       )
     );
   }
@@ -1517,8 +1965,16 @@
     el.hidden = false;
     const frag = document.createDocumentFragment();
     for (const p of items) {
-      const cell = document.createElement("span");
+      const fullUid = String(p.entry?.userId || "").trim();
+      const isLinkable = /^\d{5,14}$/.test(fullUid);
+      const cell = isLinkable ? document.createElement("a") : document.createElement("span");
       cell.className = "nl-story-userlane-cell";
+      if (isLinkable) {
+        cell.href = `https://www.nicovideo.jp/user/${fullUid}`;
+        cell.target = "_blank";
+        cell.rel = "noopener noreferrer";
+        cell.classList.add("nl-story-userlane-cell--linkable");
+      }
       const img = document.createElement("img");
       img.className = "nl-story-userlane-avatar";
       const requestedLane = p.displaySrc;
@@ -1530,7 +1986,6 @@
         io.storyTileUsesYukkuriTvStyle(requestedLane, displayLane)
       );
       img.alt = "";
-      const fullUid = String(p.entry?.userId || "").trim();
       const tip = fullUid && fullUid !== p.meta.idLine ? `${p.title} | ${fullUid}` : p.title;
       img.title = tip;
       cell.title = tip;
@@ -1920,6 +2375,7 @@
       }
       return {
         count: Math.max(0, Number(r?.count) || 0),
+        userKey,
         isUnknown,
         placeNumber,
         hasAccent,
@@ -1979,28 +2435,19 @@ ${body}`;
   function userLaneProfileCompletenessTier(entry, httpAvatarCandidate) {
     const uid = String(entry?.userId || "").trim();
     if (!uid) return 0;
+    if (isAnonymousStyleNicoUserId(uid)) return 1;
+    const observed = Boolean(entry?.avatarObserved);
     const ex = explainSupportGridDisplayTier({
       userId: uid,
       nickname: String(entry?.nickname || "").trim(),
       httpAvatarCandidate: String(httpAvatarCandidate ?? "").trim(),
       storedAvatarUrl: String(entry?.avatarUrl || "").trim(),
-      avatarObserved: Boolean(entry?.avatarObserved)
+      avatarObserved: observed
     });
-    let t = "tanu";
-    if (ex.hasPersonalThumb) {
-      const anon = isAnonymousStyleNicoUserId(uid);
-      t = anon && !ex.strongNick ? SUPPORT_GRID_TIER_KONTA : SUPPORT_GRID_TIER_LINK;
-    } else if (ex.strongNick && !isAnonymousStyleNicoUserId(uid)) {
-      t = SUPPORT_GRID_TIER_LINK;
-    } else if (ex.strongNick) {
-      t = SUPPORT_GRID_TIER_KONTA;
-    }
-    let n;
-    if (t === SUPPORT_GRID_TIER_LINK) n = 3;
-    else if (t === SUPPORT_GRID_TIER_KONTA) n = 2;
-    else n = 1;
-    if (isNiconicoAnonymousUserId(uid) && n === 2) return 1;
-    return n;
+    if (observed) return 3;
+    if (ex.hasPersonalThumb) return 3;
+    if (ex.strongNick) return 2;
+    return 1;
   }
   function buildStoryUserLaneCandidateRow(entry, entryIndex, httpFromGrowth, pickCtx) {
     const uidRaw = String(entry?.userId || "").trim();
@@ -3384,12 +3831,13 @@ ${yLabelsC}${xLabels}${bars}
     const rows = r.topUsers.slice(0, 20).map((u, i) => {
       const pct = u.count / Math.max(1, maxCount) * 100;
       const avImg = maskShare || !u.avatarUrl ? '<span class="mkt-rank-av mkt-rank-av--empty"></span>' : `<img src="${escapeHtml(u.avatarUrl)}" class="mkt-rank-av" alt="" loading="lazy">`;
-      const rawName = u.nickname || u.userId || "\u2014";
-      const name = maskShare ? maskLabelForShare(rawName) : rawName;
+      const uidForLabel = u.userId || UNKNOWN_USER_KEY;
+      const rawLabel = u.userId ? displayUserLabel(u.userId, u.nickname || "") : u.nickname || "\u2014";
+      const nameCellHtml = maskShare ? escapeHtml(maskLabelForShare(rawLabel)) : buildUserProfileLinkedLabelHtml(uidForLabel, rawLabel);
       return `<tr>
 <td class="mkt-rank-n">${i + 1}</td>
 <td>${avImg}</td>
-<td class="mkt-rank-name">${escapeHtml(name)}</td>
+<td class="mkt-rank-name">${nameCellHtml}</td>
 <td class="mkt-rank-bar"><div class="mkt-rank-bar__fill" style="width:${pct.toFixed(1)}%"></div><span class="mkt-rank-bar__label">${u.count}</span></td>
 </tr>`;
     }).join("");
@@ -3447,6 +3895,8 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
 .mkt-rank-av{width:28px;height:28px;border-radius:50%;object-fit:cover;display:block}
 .mkt-rank-av--empty{background:#334155}
 .mkt-rank-name{font-size:.85rem;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mkt-rank-name .nl-user-profile-link{color:#93c5fd;text-decoration:underline;text-underline-offset:2px}
+.mkt-rank-name .nl-user-profile-link:hover{color:#bfdbfe}
 .mkt-rank-bar{position:relative;height:22px;background:#0f172a;border-radius:4px;overflow:hidden}
 .mkt-rank-bar__fill{height:100%;background:linear-gradient(90deg,#3b82f6,#6366f1);border-radius:4px}
 .mkt-rank-bar__label{position:absolute;right:6px;top:2px;font-size:.75rem;color:#f8fafc;font-weight:600}
@@ -4097,6 +4547,34 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
   var FLUSH_MIN_INTERVAL_MS = 6e4;
   var lastFlushAt = 0;
   var BROADCAST_SESSION_SUMMARY_LOG_PREFIX = "[broadcastSessionSummaryFlush]";
+  var TRANSIENT_IDB_ERROR_NAMES = /* @__PURE__ */ new Set([
+    "InvalidStateError",
+    "AbortError",
+    "QuotaExceededError",
+    "TransactionInactiveError",
+    "TimeoutError",
+    "UnknownError"
+  ]);
+  function describeIdbError(err) {
+    if (err && typeof err === "object" && "name" in err) {
+      const e = (
+        /** @type {{ name?: string, message?: string }} */
+        err
+      );
+      const name = String(e.name || "Error");
+      const msg = String(e.message || "").trim();
+      return msg ? `${name}: ${msg}` : name;
+    }
+    return String(err);
+  }
+  function isTransientIdbError(err) {
+    if (!err || typeof err !== "object") return false;
+    const name = String(
+      /** @type {{ name?: string }} */
+      err.name || ""
+    );
+    return TRANSIENT_IDB_ERROR_NAMES.has(name);
+  }
   function peakConcurrentEstimateFromSnapshot(snapshot) {
     if (!snapshot || typeof snapshot !== "object") return null;
     const vcRaw = snapshot.viewerCountFromDom;
@@ -4184,10 +4662,17 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       db = await openBroadcastSessionSummaryDb();
       await appendBroadcastSessionSummarySample(db, row);
     } catch (err) {
-      console.warn(
-        `${BROADCAST_SESSION_SUMMARY_LOG_PREFIX} failed to append summary sample`,
-        err
-      );
+      const detail = describeIdbError(err);
+      if (isTransientIdbError(err)) {
+        console.debug(
+          `${BROADCAST_SESSION_SUMMARY_LOG_PREFIX} transient IndexedDB error, skipping sample: ${detail}`
+        );
+      } else {
+        console.warn(
+          `${BROADCAST_SESSION_SUMMARY_LOG_PREFIX} failed to append summary sample: ${detail}`,
+          err
+        );
+      }
     } finally {
       try {
         db?.close();
@@ -4352,6 +4837,15 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     null
   );
   var _lastTopSupportRankStripStableKey = null;
+  function resetPerBroadcastPopupCachesIfLiveIdChanged(nextLiveId) {
+    const norm = String(nextLiveId || "").trim().toLowerCase();
+    if (norm === watchPopupLastPaintedLiveId) return;
+    watchPopupLastPaintedLiveId = norm;
+    _lastTopSupportRankStripStableKey = null;
+    _prevSupportCount = null;
+    _prevViewerCount = null;
+    _prevConcurrentEstimated = null;
+  }
   function setCountDisplay(value, watchSnapshot = null) {
     const countEl = $("count");
     if (countEl) {
@@ -4396,6 +4890,50 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       });
     }
     if (!Number.isNaN(num)) _prevSupportCount = num;
+  }
+  async function updateIngestHeartbeatDisplay(liveId) {
+    const el = (
+      /** @type {HTMLElement|null} */
+      $("liveStatCommentsIngest")
+    );
+    if (!el) return;
+    const lid = String(liveId || "").trim().toLowerCase();
+    if (!lid) {
+      el.hidden = true;
+      el.textContent = "";
+      el.classList.remove("is-stale");
+      return;
+    }
+    try {
+      const bag = await chrome.storage.local.get(KEY_COMMENT_INGEST_LOG);
+      const parsed = parseCommentIngestLog(bag[KEY_COMMENT_INGEST_LOG]);
+      let latest = null;
+      for (let i = parsed.items.length - 1; i >= 0; i--) {
+        const it = parsed.items[i];
+        if (it.liveId === lid) {
+          latest = it;
+          break;
+        }
+      }
+      if (!latest) {
+        el.hidden = true;
+        el.textContent = "";
+        el.classList.remove("is-stale");
+        return;
+      }
+      const ageSec = Math.max(0, Math.round((Date.now() - latest.t) / 1e3));
+      const stale = ageSec > 5 * 60;
+      el.hidden = false;
+      el.classList.toggle("is-stale", stale);
+      const ageLabel = ageSec < 60 ? `${ageSec}\u79D2\u524D` : ageSec < 3600 ? `${Math.floor(ageSec / 60)}\u5206\u524D` : `${Math.floor(ageSec / 3600)}\u6642\u9593\u524D`;
+      const sourceLabel = latest.source === "ndgr" ? "NDGR" : latest.source === "visible" ? "\u753B\u9762" : latest.source === "mutation" ? "\u753B\u9762" : latest.source === "deep" ? "\u4E00\u62EC" : "\u53D6\u308A\u8FBC\u307F";
+      el.textContent = stale ? `\u6700\u7D42\u53D6\u308A\u8FBC\u307F ${ageLabel}\uFF08\u3057\u3070\u3089\u304F\u66F4\u65B0\u304C\u3042\u308A\u307E\u305B\u3093\uFF09` : `\u2713 \u6700\u7D42\u53D6\u308A\u8FBC\u307F ${ageLabel}\u30FB${sourceLabel}`;
+      el.title = stale ? "\u76F4\u8FD15\u5206\u3067\u65B0\u3057\u3044\u53D6\u308A\u8FBC\u307F\u304C\u3042\u308A\u307E\u305B\u3093\u3002watch \u30BF\u30D6\u3092\u524D\u9762\u306B\u3059\u308B\u30FB\u518D\u8AAD\u307F\u8FBC\u307F\u3067\u56DE\u5FA9\u3059\u308B\u3053\u3068\u304C\u3042\u308A\u307E\u3059\u3002" : "\u62E1\u5F35\u304C\u76F4\u8FD1\u53D6\u308A\u8FBC\u3093\u3060\u7D4C\u8DEF\u3068\u7D4C\u904E\u6642\u9593\u3002\u3053\u3053\u304C\u52D5\u3044\u3066\u3044\u308C\u3070\u53D6\u308A\u8FBC\u307F\u306F\u751F\u304D\u3066\u3044\u307E\u3059\u3002";
+    } catch {
+      el.hidden = true;
+      el.textContent = "";
+      el.classList.remove("is-stale");
+    }
   }
   function commentTickerDisplayLabel(entry, liveId, entries) {
     if (!entry) return "";
@@ -4444,9 +4982,11 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     const textShown = truncateText(rawText || textFallback, 72);
     const tip = label ? `${noPrefix}${label}\uFF1A${rawText || "\uFF08\u30B3\u30E1\u30F3\u30C8\u672C\u6587\u306A\u3057\uFF09"}` : `${noPrefix}${rawText || "\uFF08\u30B3\u30E1\u30F3\u30C8\u672C\u6587\u306A\u3057\uFF09"}`;
     const labelHtml = label ? `<span class="nl-ticker-latest__name">${escapeHtml(label)}</span><span class="nl-ticker-latest__colon">\uFF1A</span>` : "";
-    segA.innerHTML = `<span class="nl-ticker-item nl-ticker-latest" aria-live="polite"><span class="nl-ticker-latest__row"><img class="nl-ticker-latest__avatar" alt="" src="${escapeHtml(avatarSrc)}">` + labelHtml + `<span class="nl-ticker-latest__text">${escapeHtml(textShown)}</span></span></span>`;
+    const userPageHref = buildCommentTickerNameHref(latest.userId);
+    const rowInnerHtml = `<span class="nl-ticker-latest__row"><img class="nl-ticker-latest__avatar" alt="" src="${escapeHtml(avatarSrc)}">` + labelHtml + `<span class="nl-ticker-latest__text">${escapeHtml(textShown)}</span></span>`;
+    segA.innerHTML = userPageHref ? `<a class="nl-ticker-item nl-ticker-latest nl-ticker-latest--linkable" aria-live="polite" href="${escapeAttr(userPageHref)}" target="_blank" rel="noopener noreferrer">${rowInnerHtml}</a>` : `<span class="nl-ticker-item nl-ticker-latest" aria-live="polite">${rowInnerHtml}</span>`;
     const line = (
-      /** @type {HTMLSpanElement|null} */
+      /** @type {HTMLElement|null} */
       segA.querySelector(".nl-ticker-latest")
     );
     if (line) line.title = tip;
@@ -4726,6 +5266,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     snapshot: null
   };
   var watchPopupRefreshGeneration = 0;
+  var watchPopupLastPaintedLiveId = "";
   function markPopupRefreshContentPainted() {
     try {
       document.documentElement.setAttribute("data-nl-popup-content-painted", "1");
@@ -4875,159 +5416,10 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     liveId: "",
     deepTried: false
   };
-  var DEFAULT_FRAME_ID = "light";
-  var LEGACY_FRAME_ALIAS = {
-    trio: "light",
-    link: "light",
-    konta: "sunset",
-    tanunee: "midnight"
-  };
-  var FRAME_PRESETS = {
-    light: {
-      label: "\u30E9\u30A4\u30C8",
-      vars: {
-        "--nl-bg": "#fffaf2",
-        "--nl-bg-soft": "#eef8ff",
-        "--nl-surface": "#ffffff",
-        "--nl-text": "#1f2937",
-        "--nl-muted": "#5b6475",
-        "--nl-border": "#d5e3f5",
-        "--nl-accent": "#0f8fd8",
-        "--nl-accent-hover": "#0b73ad",
-        "--nl-header-start": "#0f8fd8",
-        "--nl-header-end": "#14b8a6",
-        "--nl-frame-outline": "rgb(255 255 255 / 22%)"
-      }
-    },
-    dark: {
-      label: "\u30C0\u30FC\u30AF",
-      vars: {
-        "--nl-bg": "#0b1220",
-        "--nl-bg-soft": "#111827",
-        "--nl-surface": "#0f172a",
-        "--nl-text": "#e5e7eb",
-        "--nl-muted": "#94a3b8",
-        "--nl-border": "#243244",
-        "--nl-accent": "#60a5fa",
-        "--nl-accent-hover": "#3b82f6",
-        "--nl-header-start": "#1e293b",
-        "--nl-header-end": "#334155",
-        "--nl-frame-outline": "rgb(255 255 255 / 18%)"
-      }
-    },
-    midnight: {
-      label: "\u30DF\u30C3\u30C9\u30CA\u30A4\u30C8",
-      vars: {
-        "--nl-bg": "#0b1022",
-        "--nl-bg-soft": "#1b1f3a",
-        "--nl-surface": "#10182f",
-        "--nl-text": "#e2e8f0",
-        "--nl-muted": "#9fb1ca",
-        "--nl-border": "#2a3761",
-        "--nl-accent": "#7dd3fc",
-        "--nl-accent-hover": "#38bdf8",
-        "--nl-header-start": "#1e1b4b",
-        "--nl-header-end": "#1d4ed8",
-        "--nl-frame-outline": "rgb(255 255 255 / 22%)"
-      }
-    },
-    sunset: {
-      label: "\u30B5\u30F3\u30BB\u30C3\u30C8",
-      vars: {
-        "--nl-bg": "#fff7ed",
-        "--nl-bg-soft": "#ffedd5",
-        "--nl-surface": "#fffbf6",
-        "--nl-text": "#1f2937",
-        "--nl-muted": "#6b7280",
-        "--nl-border": "#f5d0b5",
-        "--nl-accent": "#ea580c",
-        "--nl-accent-hover": "#c2410c",
-        "--nl-header-start": "#fb923c",
-        "--nl-header-end": "#f43f5e",
-        "--nl-frame-outline": "rgb(255 255 255 / 30%)"
-      }
-    }
-  };
-  var DEFAULT_CUSTOM_FRAME = Object.freeze({
-    headerStart: "#0f8fd8",
-    headerEnd: "#14b8a6",
-    accent: "#0f8fd8"
-  });
-  function hasFramePreset(id) {
-    return Object.prototype.hasOwnProperty.call(FRAME_PRESETS, id);
-  }
-  function normalizeFrameId(raw) {
-    const id = String(raw || "").trim().toLowerCase();
-    if (!id) return "";
-    return LEGACY_FRAME_ALIAS[
-      /** @type {keyof typeof LEGACY_FRAME_ALIAS} */
-      id
-    ] || id;
-  }
-  function getFramePreset(id) {
-    return hasFramePreset(id) ? FRAME_PRESETS[
-      /** @type {keyof typeof FRAME_PRESETS} */
-      id
-    ] : null;
-  }
   var popupFrameState = {
     id: DEFAULT_FRAME_ID,
     custom: { ...DEFAULT_CUSTOM_FRAME }
   };
-  function normalizeHexColor(value, fallback) {
-    const s = String(value || "").trim();
-    return /^#[0-9a-f]{6}$/i.test(s) ? s.toLowerCase() : fallback;
-  }
-  function darkenHexColor(hex, ratio) {
-    const source = normalizeHexColor(hex, "#0f8fd8").slice(1);
-    const clamp2 = (v) => Math.max(0, Math.min(255, Math.round(v)));
-    const r = clamp2(parseInt(source.slice(0, 2), 16) * (1 - ratio));
-    const g = clamp2(parseInt(source.slice(2, 4), 16) * (1 - ratio));
-    const b = clamp2(parseInt(source.slice(4, 6), 16) * (1 - ratio));
-    return `#${r.toString(16).padStart(2, "0")}${g.toString(16).padStart(2, "0")}${b.toString(16).padStart(2, "0")}`;
-  }
-  function sanitizeCustomFrame(raw) {
-    const source = raw && typeof raw === "object" ? raw : {};
-    return {
-      headerStart: normalizeHexColor(
-        /** @type {{ headerStart?: unknown }} */
-        source.headerStart,
-        DEFAULT_CUSTOM_FRAME.headerStart
-      ),
-      headerEnd: normalizeHexColor(
-        /** @type {{ headerEnd?: unknown }} */
-        source.headerEnd,
-        DEFAULT_CUSTOM_FRAME.headerEnd
-      ),
-      accent: normalizeHexColor(
-        /** @type {{ accent?: unknown }} */
-        source.accent,
-        DEFAULT_CUSTOM_FRAME.accent
-      )
-    };
-  }
-  function resolveFrameVars(frameId, custom) {
-    if (frameId !== "custom") {
-      return getFramePreset(frameId)?.vars || FRAME_PRESETS[DEFAULT_FRAME_ID].vars;
-    }
-    const safe = sanitizeCustomFrame(custom);
-    return {
-      "--nl-bg": "#f7fbff",
-      "--nl-bg-soft": "#e8f4ff",
-      "--nl-surface": "#ffffff",
-      "--nl-text": "#1f2937",
-      "--nl-muted": "#5b6475",
-      "--nl-border": "#cfe0f4",
-      "--nl-accent": safe.accent,
-      "--nl-accent-hover": darkenHexColor(safe.accent, 0.2),
-      "--nl-header-start": safe.headerStart,
-      "--nl-header-end": safe.headerEnd,
-      "--nl-frame-outline": "rgb(255 255 255 / 28%)"
-    };
-  }
-  function frameLabel(frameId) {
-    return frameId === "custom" ? "\u30AB\u30B9\u30BF\u30E0" : getFramePreset(frameId)?.label || FRAME_PRESETS[DEFAULT_FRAME_ID].label;
-  }
   function renderFrameSelection(frameId) {
     const labelEl = $("frameCurrentLabel");
     if (labelEl) labelEl.textContent = frameLabel(frameId);
@@ -5094,52 +5486,6 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       [KEY_POPUP_FRAME]: popupFrameState.id,
       [KEY_POPUP_FRAME_CUSTOM]: popupFrameState.custom
     });
-  }
-  function encodeBase64UrlUtf8(text) {
-    const bytes = new TextEncoder().encode(text);
-    let binary = "";
-    for (const b of bytes) binary += String.fromCharCode(b);
-    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-  }
-  function decodeBase64UrlUtf8(text) {
-    let base64 = text.replace(/-/g, "+").replace(/_/g, "/");
-    const pad = base64.length % 4;
-    if (pad) base64 += "=".repeat(4 - pad);
-    const binary = atob(base64);
-    const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
-    return new TextDecoder().decode(bytes);
-  }
-  function createFrameShareCode(frameId, custom) {
-    const normalized = normalizeFrameId(frameId);
-    const safeId = normalized === "custom" || hasFramePreset(normalized) ? normalized : DEFAULT_FRAME_ID;
-    const payload = {
-      v: 1,
-      frame: safeId,
-      custom: sanitizeCustomFrame(custom)
-    };
-    const encoded = encodeBase64UrlUtf8(JSON.stringify(payload));
-    return `nlsframe.${encoded}`;
-  }
-  function parseFrameShareCode(raw) {
-    const code = String(raw || "").trim();
-    if (!code) {
-      throw new Error("\u5171\u6709\u30B3\u30FC\u30C9\u304C\u7A7A\u3067\u3059\u3002");
-    }
-    const payloadText = code.startsWith("nlsframe.") ? decodeBase64UrlUtf8(code.slice("nlsframe.".length)) : code;
-    const payload = JSON.parse(payloadText);
-    const source = payload && typeof payload === "object" ? payload : {};
-    const frameValue = normalizeFrameId(
-      /** @type {{ frame?: unknown }} */
-      source.frame || ""
-    );
-    const frameId = frameValue === "custom" || hasFramePreset(frameValue) ? frameValue : DEFAULT_FRAME_ID;
-    return {
-      frameId,
-      custom: sanitizeCustomFrame(
-        /** @type {{ custom?: unknown }} */
-        source.custom || {}
-      )
-    };
   }
   function setFrameShareStatus(message, kind = "idle") {
     const status = $("frameShareStatus");
@@ -5349,15 +5695,61 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
   });
   var anonymousIdenticonRuntimeEnabled = true;
   var anonymousIdenticonDataUrlCache = /* @__PURE__ */ new Map();
-  function applyAnonymousIdenticonRuntimeFromBag(bag) {
-    const on = normalizeAnonymousIdenticonEnabled(
-      bag?.[KEY_ANONYMOUS_IDENTICON_ENABLED]
-    );
-    if (on !== anonymousIdenticonRuntimeEnabled) {
-      anonymousIdenticonDataUrlCache.clear();
-    }
-    anonymousIdenticonRuntimeEnabled = on;
-  }
+  var foldAnonymousInRankStripRuntimeEnabled = true;
+  var popupBooleanSettingsRegistry = createBooleanSettingsRegistry();
+  var anonymousIdenticonSettingController = popupBooleanSettingsRegistry.register(
+    createBooleanSettingController({
+      key: KEY_ANONYMOUS_IDENTICON_ENABLED,
+      normalize: normalizeAnonymousIdenticonEnabled,
+      getCheckbox: () => (
+        /** @type {HTMLInputElement|null} */
+        $("anonymousIdenticonEnabled")
+      ),
+      applyRuntime: (value) => {
+        if (value !== anonymousIdenticonRuntimeEnabled) {
+          anonymousIdenticonDataUrlCache.clear();
+        }
+        anonymousIdenticonRuntimeEnabled = value;
+      }
+    })
+  );
+  var foldAnonymousInRankStripSettingController = popupBooleanSettingsRegistry.register(
+    createBooleanSettingController({
+      key: KEY_FOLD_ANONYMOUS_IN_RANK_STRIP,
+      normalize: normalizeFoldAnonymousInRankStrip,
+      getCheckbox: () => (
+        /** @type {HTMLInputElement|null} */
+        $("foldAnonymousInRankStrip")
+      ),
+      applyRuntime: (value) => {
+        if (value !== foldAnonymousInRankStripRuntimeEnabled) {
+          _lastTopSupportRankStripStableKey = null;
+        }
+        foldAnonymousInRankStripRuntimeEnabled = value;
+      }
+    })
+  );
+  popupBooleanSettingsRegistry.register(
+    createBooleanSettingController({
+      key: KEY_VOICE_AUTOSEND,
+      // 既定 true（`raw !== false`）: 既存実装と互換
+      normalize: (raw) => raw !== false,
+      getCheckbox: () => (
+        /** @type {HTMLInputElement|null} */
+        $("voiceAutoSend")
+      )
+    })
+  );
+  popupBooleanSettingsRegistry.register(
+    createBooleanSettingController({
+      key: KEY_COMMENT_ENTER_SEND,
+      normalize: isCommentEnterSendEnabled,
+      getCheckbox: () => (
+        /** @type {HTMLInputElement|null} */
+        $("commentEnterSend")
+      )
+    })
+  );
   function getCachedAnonymousIdenticonDataUrl(userId) {
     if (!anonymousIdenticonRuntimeEnabled) return "";
     const u = String(userId || "").trim();
@@ -5382,9 +5774,6 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
   }
   var MAX_SELF_POSTED_ITEMS = 48;
   var SELF_POST_DUPLICATE_WINDOW_MS = 5e3;
-  var SELF_POST_MATCH_LATE_MS = 10 * 60 * 1e3;
-  var SELF_POST_MATCH_EARLY_MS = 30 * 1e3;
-  var SELF_POST_RECENT_TTL_MS = 24 * 60 * 60 * 1e3;
   var selfPostedRecentsCache = [];
   var SELF_POST_MATCH_CACHE = {
     entriesRef: (
@@ -5435,11 +5824,8 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
   }
   function applySelfPostedRecentsFromBag(bag) {
     try {
-      const raw = bag[KEY_SELF_POSTED_RECENTS];
-      const items = raw && typeof raw === "object" && Array.isArray(raw.items) ? raw.items : [];
-      const now = Date.now();
-      selfPostedRecentsCache = items.filter(
-        (x) => x && typeof x.liveId === "string" && typeof x.textNorm === "string" && typeof x.at === "number" && now - x.at < SELF_POST_RECENT_TTL_MS
+      selfPostedRecentsCache = filterValidSelfPostedRecents(
+        bag[KEY_SELF_POSTED_RECENTS]
       );
     } catch {
       selfPostedRecentsCache = [];
@@ -5503,15 +5889,11 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     }
     const norm = normalizeCommentText(entry.text);
     if (!norm) return false;
-    const cap = Number(entry.capturedAt) || 0;
-    for (const it of selfPostedRecentsCache) {
-      if (String(it.liveId).toLowerCase() !== lid) continue;
-      if (it.textNorm !== norm) continue;
-      if (cap >= it.at - SELF_POST_MATCH_EARLY_MS && cap <= it.at + SELF_POST_MATCH_LATE_MS) {
-        return true;
-      }
-    }
-    return false;
+    return matchesAnySelfPostedRecent(
+      { textNorm: norm, capturedAt: Number(entry.capturedAt) || 0 },
+      selfPostedRecentsCache,
+      lid
+    );
   }
   var popupUserCommentProfileMap = (
     /** @type {null|Record<string, { nickname?: string, avatarUrl?: string, updatedAt: number }>} */
@@ -5694,65 +6076,27 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
   function matchSelfPostedRecentsToEntries(entries, liveId) {
     const list = Array.isArray(entries) ? entries : [];
     const lid = String(liveId || "").trim().toLowerCase();
-    const matchedIds = /* @__PURE__ */ new Set();
-    const consumedIndexes = /* @__PURE__ */ new Set();
     if (!lid || !list.length || !selfPostedRecentsCache.length) {
-      return { matchedIds, consumedIndexes };
+      return { matchedIds: /* @__PURE__ */ new Set(), consumedIndexes: /* @__PURE__ */ new Set() };
     }
-    const recents = selfPostedRecentsCache.map((it, itemIndex) => ({
-      itemIndex,
-      liveId: String(it?.liveId || "").trim().toLowerCase(),
-      at: Number(it?.at) || 0,
-      textNorm: String(it?.textNorm || "")
-    })).filter((it) => it.liveId === lid && it.at > 0 && it.textNorm).sort((a, b) => a.at - b.at || a.itemIndex - b.itemIndex);
+    const recents = prepareSelfPostedMatchRecents(selfPostedRecentsCache, lid);
     if (!recents.length) {
-      return { matchedIds, consumedIndexes };
+      return { matchedIds: /* @__PURE__ */ new Set(), consumedIndexes: /* @__PURE__ */ new Set() };
     }
-    const byText = /* @__PURE__ */ new Map();
+    const matchEntries = [];
     for (let i = 0; i < list.length; i += 1) {
       const entry = list[i];
       const textNorm = normalizeCommentText(entry?.text);
       const id = popupEntryStableId(entry, lid);
       if (!textNorm || !id) continue;
-      const bucket = byText.get(textNorm) || [];
-      bucket.push({
+      matchEntries.push({
         id,
+        textNorm,
         capturedAt: Number(entry?.capturedAt || 0),
         index: i
       });
-      byText.set(textNorm, bucket);
     }
-    for (const bucket of byText.values()) {
-      bucket.sort((a, b) => {
-        if (a.capturedAt !== b.capturedAt) return a.capturedAt - b.capturedAt;
-        return a.index - b.index;
-      });
-    }
-    for (const recent of recents) {
-      const bucket = byText.get(recent.textNorm);
-      if (!bucket?.length) continue;
-      let best = null;
-      let bestScore = Number.POSITIVE_INFINITY;
-      let bestIndex = Number.POSITIVE_INFINITY;
-      for (const candidate of bucket) {
-        if (matchedIds.has(candidate.id)) continue;
-        const cap = candidate.capturedAt;
-        if (cap < recent.at - SELF_POST_MATCH_EARLY_MS || cap > recent.at + SELF_POST_MATCH_LATE_MS) {
-          continue;
-        }
-        const delta = cap - recent.at;
-        const score = Math.abs(delta) + (delta >= 0 ? 0 : SELF_POST_MATCH_EARLY_MS + 1);
-        if (score < bestScore || score === bestScore && candidate.index < bestIndex) {
-          best = candidate;
-          bestScore = score;
-          bestIndex = candidate.index;
-        }
-      }
-      if (!best) continue;
-      matchedIds.add(best.id);
-      consumedIndexes.add(recent.itemIndex);
-    }
-    return { matchedIds, consumedIndexes };
+    return matchSelfPostedRecents(matchEntries, recents);
   }
   function reconcileStoredOwnPostedEntries(entries, liveId) {
     const list = Array.isArray(entries) ? entries : [];
@@ -6650,11 +6994,34 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       }
     }
     userEl.textContent = storyGrowthDisplayLabel(entry, lidForOwn);
+    const detailLinkableUid = /^\d{5,14}$/.test(userId) ? userId : /^\d{5,14}$/.test(viewerUid) && ownPosted ? viewerUid : "";
     if (userId) {
-      userMetaEl.textContent = `ID: ${userId}`;
+      if (detailLinkableUid) {
+        const a = document.createElement("a");
+        a.href = `https://www.nicovideo.jp/user/${detailLinkableUid}`;
+        a.target = "_blank";
+        a.rel = "noopener noreferrer";
+        a.textContent = `ID: ${userId}`;
+        a.className = "nl-story-detail-user-link";
+        userMetaEl.textContent = "";
+        userMetaEl.appendChild(a);
+      } else {
+        userMetaEl.textContent = `ID: ${userId}`;
+      }
     } else if (ownPosted) {
       if (viewerUid) {
-        userMetaEl.textContent = `ID\uFF08\u30D8\u30C3\u30C0\u30FC\u304B\u3089\u63A8\u5B9A\uFF09: ${viewerUid}`;
+        if (detailLinkableUid) {
+          const a = document.createElement("a");
+          a.href = `https://www.nicovideo.jp/user/${detailLinkableUid}`;
+          a.target = "_blank";
+          a.rel = "noopener noreferrer";
+          a.textContent = `ID\uFF08\u30D8\u30C3\u30C0\u30FC\u304B\u3089\u63A8\u5B9A\uFF09: ${viewerUid}`;
+          a.className = "nl-story-detail-user-link";
+          userMetaEl.textContent = "";
+          userMetaEl.appendChild(a);
+        } else {
+          userMetaEl.textContent = `ID\uFF08\u30D8\u30C3\u30C0\u30FC\u304B\u3089\u63A8\u5B9A\uFF09: ${viewerUid}`;
+        }
       } else if (viewerNick) {
         userMetaEl.textContent = `\u8868\u793A\u540D\uFF08\u30D8\u30C3\u30C0\u30FC\uFF09: ${viewerNick}`;
       } else {
@@ -7562,15 +7929,16 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         lineClass += " nl-top-support-rank__line--has-accent";
         lineStyle = ` style="--nl-rank-accent:${escapeAttr(m.accentColorCss)}"`;
       }
-      return `<div class="${lineClass}"${lineStyle} role="listitem" title="${full}">
-        ${placeHtml}
+      const isLinkable = !m.isUnknown && !isAnonymousStyleNicoUserId(m.userKey);
+      const linkHref = isLinkable ? `https://www.nicovideo.jp/user/${escapeAttr(m.userKey)}` : "";
+      const innerHtml = `${placeHtml}
         <span class="nl-top-support-rank__count">${m.count}\u4EF6</span>
         <span class="nl-top-support-rank__thumb-wrap">
           <img class="nl-top-support-rank__thumb" src="${escapeAttr(displayThumb)}" alt="" decoding="async"${thumbRp} />
         </span>
         <span class="nl-top-support-rank__id" title="${idTitle}">${idText}</span>
-        <span class="nl-top-support-rank__name">${nameText}</span>
-      </div>`;
+        <span class="nl-top-support-rank__name">${nameText}</span>`;
+      return isLinkable ? `<a class="${lineClass} nl-top-support-rank__line--linkable"${lineStyle} role="listitem" title="${full}" href="${linkHref}" target="_blank" rel="noopener noreferrer">${innerHtml}</a>` : `<div class="${lineClass}"${lineStyle} role="listitem" title="${full}">${innerHtml}</div>`;
     }).join("");
     strip.innerHTML = `<p class="nl-top-support-rank__note">\u8A18\u9332\u5185\u30FB\u30E6\u30FC\u30B6\u30FC\u5225\u306E\u5FDC\u63F4\u4EF6\u6570\u304C\u591A\u3044\u9806\u3067\u3059\u3002</p><div class="nl-top-support-rank__list" role="list">${html}</div>`;
     const thumbs = strip.querySelectorAll("img.nl-top-support-rank__thumb");
@@ -7620,10 +7988,15 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       ul.appendChild(li);
       return;
     }
-    const rankedRooms = rooms.map((room) => ({
-      ...room,
-      recentCount: recentMap.get(room.userKey) || 0
-    })).sort((a, b) => {
+    const rankedRooms = rooms.map((room) => {
+      const ownAvatar = String(room.avatarUrl || "").trim();
+      const enrichedAvatar = ownAvatar || (room.userKey && room.userKey !== UNKNOWN_USER_KEY ? rememberedAvatarUrlForUserId(room.userKey) : "");
+      return {
+        ...room,
+        avatarUrl: enrichedAvatar,
+        recentCount: recentMap.get(room.userKey) || 0
+      };
+    }).sort((a, b) => {
       if (b.count !== a.count) return b.count - a.count;
       const uidA = a.userKey === UNKNOWN_USER_KEY ? "" : a.userKey;
       const uidB = b.userKey === UNKNOWN_USER_KEY ? "" : b.userKey;
@@ -7636,7 +8009,10 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     const denseLayout = document.body?.classList.contains("nl-tight") || document.body?.classList.contains("nl-compact");
     const compactRooms = !INLINE_MODE;
     const MAX_VISIBLE_ROOMS = compactRooms ? 1 : denseLayout ? 2 : 3;
-    const stripSlice = rankedRooms.slice(0, TOP_SUPPORT_RANK_STRIP_MAX);
+    const stripCandidates = partitionRankedRoomsForStrip(rankedRooms, {
+      foldAnonymous: foldAnonymousInRankStripRuntimeEnabled
+    });
+    const stripSlice = stripCandidates.slice(0, TOP_SUPPORT_RANK_STRIP_MAX);
     const stripKey = topSupportRankStripStableKey(liveId, list.length, stripSlice);
     if (stripKey !== _lastTopSupportRankStripStableKey) {
       _lastTopSupportRankStripStableKey = stripKey;
@@ -8004,36 +8380,11 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     const allowed = /* @__PURE__ */ new Set(["0", "30000", "60000", "300000"]);
     sel.value = allowed.has(v) ? v : "0";
   }
-  async function applyVoiceAutosendFromStorage() {
-    const cb = (
-      /** @type {HTMLInputElement|null} */
-      $("voiceAutoSend")
-    );
-    if (!cb) return;
-    const bag = await chrome.storage.local.get(KEY_VOICE_AUTOSEND);
-    cb.checked = bag[KEY_VOICE_AUTOSEND] !== false;
-  }
-  async function applyCommentEnterSendFromStorage() {
-    const cb = (
-      /** @type {HTMLInputElement|null} */
-      $("commentEnterSend")
-    );
-    if (!cb) return;
-    const bag = await chrome.storage.local.get(KEY_COMMENT_ENTER_SEND);
-    cb.checked = isCommentEnterSendEnabled(bag[KEY_COMMENT_ENTER_SEND]);
-  }
-  async function applyAnonymousIdenticonFromStorage() {
-    const cb = (
-      /** @type {HTMLInputElement|null} */
-      $("anonymousIdenticonEnabled")
-    );
-    const bag = await chrome.storage.local.get(KEY_ANONYMOUS_IDENTICON_ENABLED);
-    applyAnonymousIdenticonRuntimeFromBag(bag);
-    if (cb) {
-      cb.checked = normalizeAnonymousIdenticonEnabled(
-        bag[KEY_ANONYMOUS_IDENTICON_ENABLED]
-      );
-    }
+  async function applyRegisteredBooleanSettingsFromStorage() {
+    const keys = popupBooleanSettingsRegistry.keys();
+    if (keys.length === 0) return;
+    const bag = await chrome.storage.local.get(keys);
+    popupBooleanSettingsRegistry.applyFromBag(bag);
   }
   var suppressSupportVisualTogglePersist = false;
   var ownSupportVisualPersistInFlight = false;
@@ -8467,7 +8818,19 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         ]);
       }
     }
-    rows.push(["\u516C\u5F0F\u3068\u306E\u5DEE\uFF08\u516C\u5F0F\u2212\u4E00\u89A7\uFF09", gap != null ? String(gap) : "\u2014"]);
+    {
+      let gapLabel;
+      if (gap == null) {
+        gapLabel = "\u2014";
+      } else if (gap > 0) {
+        gapLabel = `${gap}\uFF08\u516C\u5F0F\u304C\u3053\u308C\u3060\u3051\u591A\u3044\uFF1D\u53D6\u308A\u8FBC\u3081\u3066\u3044\u306A\u3044\u53EF\u80FD\u6027\uFF09`;
+      } else if (gap < 0) {
+        gapLabel = `${Math.abs(gap)}\uFF08\u8A18\u9332\u304C\u5148\u884C\u30FB\u516C\u5F0F\u8868\u793A\u306E\u66F4\u65B0\u5F85\u3061\u306E\u3053\u3068\u304C\u3042\u308A\u307E\u3059\uFF09`;
+      } else {
+        gapLabel = "0\uFF08\u4E00\u81F4\uFF09";
+      }
+      rows.push(["\u516C\u5F0F\u3068\u306E\u5DEE\uFF08\u516C\u5F0F\u2212\u4E00\u89A7\uFF09", gapLabel]);
+    }
     rows.push([
       "\u5DEE\u304C\u51FA\u308B\u4E3B\u306A\u7406\u7531\uFF08\u53C2\u8003\uFF09",
       "\u753B\u9762\u306B\u8F09\u3063\u3066\u3044\u306A\u3044\u30B3\u30E1\u30F3\u30C8\u306F\u53D6\u308A\u8FBC\u3081\u307E\u305B\u3093\u3002\u7A2E\u985E\u306E\u6271\u3044\u306E\u9055\u3044\u30FB\u901A\u4FE1\u306E\u5207\u308C\u30FB\u30B5\u30A4\u30C8\u306E\u4F5C\u308A\u5909\u308F\u308A\u306A\u3069\u304C\u91CD\u306A\u308A\u5F97\u307E\u3059\uFF08\u4E0B\u306E\u300C\u7A2E\u985E\u306E\u5185\u8A33\u300D\u3082\u53C2\u7167\uFF09\u3002"
@@ -8589,9 +8952,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     document.documentElement.classList.toggle("nl-calm-motion", Boolean(enabled));
   }
   function applyRecordHeroRecordingDataset(toggle) {
-    const hero = document.querySelector(".nl-record-hero");
-    if (!(hero instanceof HTMLElement)) return;
-    hero.dataset.nlRecording = toggle.checked ? "on" : "off";
+    document.documentElement.dataset.nlRecording = toggle.checked ? "on" : "off";
   }
   async function refresh() {
     if (!hasExtensionContext()) {
@@ -8601,6 +8962,8 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     }
     renderExtensionContextBanner(false);
     setTimeout(revealPopupPrimaryOnce, 1200);
+    const refreshGen = ++watchPopupRefreshGeneration;
+    const isFreshRefresh = () => refreshGen === watchPopupRefreshGeneration;
     const liveEl = $("liveId");
     const toggle = (
       /** @type {HTMLInputElement} */
@@ -8634,6 +8997,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         const displayEntries = buildDisplayCommentEntries(arr, lv);
         STORY_AVATAR_DIAG_STATE.selfShown = countOwnPostedEntries(displayEntries, lv);
         setCountDisplay(String(displayEntries.length), watchSnapshot);
+        void updateIngestHeartbeatDisplay(lv);
         renderCommentTicker(
           /** @type {PopupCommentEntry[]} */
           displayEntries
@@ -8697,7 +9061,8 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
           KEY_STORAGE_WRITE_ERROR,
           KEY_COMMENT_PANEL_STATUS,
           KEY_MARKETING_EXPORT_MASK_LABELS,
-          KEY_ANONYMOUS_IDENTICON_ENABLED
+          KEY_ANONYMOUS_IDENTICON_ENABLED,
+          KEY_FOLD_ANONYMOUS_IN_RANK_STRIP
         ])
       ]);
       applySelfPostedRecentsFromBag(openBag);
@@ -8719,16 +9084,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
           openBag[KEY_MARKETING_EXPORT_MASK_LABELS]
         );
       }
-      const anonIdnHydrate = (
-        /** @type {HTMLInputElement|null} */
-        $("anonymousIdenticonEnabled")
-      );
-      if (anonIdnHydrate) {
-        anonIdnHydrate.checked = normalizeAnonymousIdenticonEnabled(
-          openBag[KEY_ANONYMOUS_IDENTICON_ENABLED]
-        );
-      }
-      applyAnonymousIdenticonRuntimeFromBag(openBag);
+      popupBooleanSettingsRegistry.applyFromBag(openBag);
       const { url, fromActiveTab } = resolveWatchUrlFromTabAndStash(
         tabs[0],
         openBag[KEY_LAST_WATCH_URL]
@@ -8826,6 +9182,8 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       }
       syncVoiceCommentButton();
       if (!isNicoLiveWatchUrl(url)) {
+        if (!isFreshRefresh()) return;
+        resetPerBroadcastPopupCachesIfLiveIdChanged("");
         if (liveEl) liveEl.textContent = "\uFF08\u30CB\u30B3\u751Fwatch\u3092\u958B\u3044\u3066\u304F\u3060\u3055\u3044\uFF09";
         setCountDisplay("-");
         renderCommentTicker([]);
@@ -8862,6 +9220,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
           profileGaps: null
         });
         hideCommentVelocityLine();
+        void updateIngestHeartbeatDisplay("");
         void renderSessionSummaryComparePanel("");
         void renderGiftQuickStatsPanel("");
         markPopupRefreshContentPainted();
@@ -8873,6 +9232,8 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         liveEl.textContent = lv && !fromActiveTab ? `${lv}\uFF08\u76F4\u8FD1\u306E\u8996\u8074\u30DA\u30FC\u30B8\uFF09` : lv || "-";
       }
       if (!lv) {
+        if (!isFreshRefresh()) return;
+        resetPerBroadcastPopupCachesIfLiveIdChanged("");
         setCountDisplay("-");
         renderCommentTicker([]);
         exportBtn.disabled = true;
@@ -8908,6 +9269,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
           profileGaps: null
         });
         hideCommentVelocityLine();
+        void updateIngestHeartbeatDisplay("");
         void renderSessionSummaryComparePanel("");
         void renderGiftQuickStatsPanel("");
         markPopupRefreshContentPainted();
@@ -8999,11 +9361,15 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         0
       );
       const shouldDeep = !INTERCEPT_BACKFILL_STATE.deepTried && arr.length >= 30 && missingIdCount >= Math.ceil(arr.length * 0.4);
+      resetPerBroadcastPopupCachesIfLiveIdChanged(lv);
       if (!snapshotCacheHit) {
-        paintWatchPopupUi();
-        markPopupRefreshContentPainted();
-        revealPopupPrimaryOnce();
+        if (isFreshRefresh()) {
+          paintWatchPopupUi();
+          markPopupRefreshContentPainted();
+          revealPopupPrimaryOnce();
+        }
         const snapResult = await requestWatchPageSnapshotFromOpenTab(url);
+        if (!isFreshRefresh()) return;
         watchMetaCache.snapshot = snapResult.snapshot;
         watchSnapshot = watchMetaCache.snapshot;
         const strippedAfterSnap = stripViewerAvatarContamination(
@@ -9014,10 +9380,11 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         if (strippedAfterSnap.patched > 0) {
           arr = strippedAfterSnap.next;
           await storageSetSafe({ [key]: arr });
+          if (!isFreshRefresh()) return;
         }
         STORY_AVATAR_DIAG_STATE.stripped += strippedAfterSnap.patched;
       }
-      const refreshGen = ++watchPopupRefreshGeneration;
+      if (!isFreshRefresh()) return;
       if (thumbCountEl) thumbCountEl.textContent = "\u2026";
       paintWatchPopupUi();
       markPopupRefreshContentPainted();
@@ -9340,7 +9707,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     }
     throw lastErr;
   }
-  async function requestWatchPageSnapshotFromOpenTab(watchUrl) {
+  async function requestWatchPageSnapshotFromOpenTabOnce(watchUrl) {
     const candidates = await collectWatchTabCandidates(watchUrl);
     if (!candidates.length) {
       return {
@@ -9384,6 +9751,15 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       snapshot: null,
       error: "watch\u30DA\u30FC\u30B8\u304B\u3089\u306E\u60C5\u5831\u53D6\u5F97\u306B\u5931\u6557\u3057\u307E\u3057\u305F\u3002\u653E\u9001\u30BF\u30D6\u3092\u958B\u3044\u305F\u72B6\u614B\u3067\u30DD\u30C3\u30D7\u30A2\u30C3\u30D7\u3092\u518D\u5EA6\u958B\u3044\u3066\u304F\u3060\u3055\u3044\u3002"
     };
+  }
+  async function requestWatchPageSnapshotFromOpenTab(watchUrl, opts = {}) {
+    return retrySnapshotRequestUntilReady(
+      () => requestWatchPageSnapshotFromOpenTabOnce(watchUrl),
+      {
+        maxAttempts: opts.maxAttempts ?? 3,
+        baseDelayMs: opts.baseDelayMs ?? 450
+      }
+    );
   }
   async function requestPostCommentToOpenTab(text, watchUrl) {
     const trimmed = String(text || "").trim();
@@ -9539,12 +9915,13 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     const htmlReportSaveGuideCardHtml = buildHtmlReportSaveGuideCardHtml(yukkuriAvatars);
     const roomRows = aggregateCommentsByUser(comments).map((room) => {
       const label = displayUserLabel(room.userKey, room.nickname);
+      const labelHtml = buildUserProfileLinkedLabelHtml(room.userKey, label);
       const search = escapeAttr(
         `${label} ${room.nickname || ""} ${room.userKey} ${room.lastText || ""} ${room.count}`.toLowerCase()
       );
       return `
       <tr class="search-item" data-search="${search}">
-        <td>${escapeHtml(label)}</td>
+        <td>${labelHtml}</td>
         <td>${room.count}</td>
         <td>${escapeHtml(room.lastText || "")}</td>
       </tr>
@@ -9555,6 +9932,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       const text = String(c.text || "").trim();
       const userId = c.userId ? String(c.userId) : "";
       const userLabel = displayUserLabel(userId || UNKNOWN_USER_KEY);
+      const userLabelHtml = buildUserProfileLinkedLabelHtml(userId, userLabel);
       const search = escapeAttr(
         `${commentNo} ${text} ${userId} ${userLabel} ${c.liveId || ""}`.toLowerCase()
       );
@@ -9562,7 +9940,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       <tr class="search-item" data-search="${search}">
         <td>${idx + 1}</td>
         <td>${escapeHtml(commentNo || "-")}</td>
-        <td>${escapeHtml(userLabel)}</td>
+        <td>${userLabelHtml}</td>
         <td>${escapeHtml(text || "-")}</td>
         <td>${escapeHtml(formatDateTime(c.capturedAt || 0))}</td>
       </tr>
@@ -9697,6 +10075,12 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       }
       th { color: #bfdbfe; font-weight: 700; font-size: 11px; }
       td { color: var(--text); }
+      .nl-user-profile-link {
+        color: #93c5fd;
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+      .nl-user-profile-link:hover { color: #bfdbfe; }
       .pill {
         display: inline-block;
         border-radius: 999px;
@@ -10218,8 +10602,24 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       }, STORAGE_REFRESH_MAX_WAIT_MS);
     }
   }
+  function paintVersionBadge() {
+    const valueEl = (
+      /** @type {HTMLElement|null} */
+      $("nlVersionBadgeValue")
+    );
+    if (!valueEl) return;
+    try {
+      const manifest = chrome.runtime.getManifest();
+      const version = String(manifest?.version || "").trim() || "?";
+      const buildId = "0418-1339" ? String("0418-1339") : "dev";
+      valueEl.textContent = `v${version}\u30FBb${buildId}`;
+    } catch {
+      valueEl.textContent = "\u2014";
+    }
+  }
   function initPopup() {
     installExtensionContextErrorGuard();
+    paintVersionBadge();
     void globalThis.chrome?.storage?.local?.get(KEY_CALM_PANEL_MOTION)?.then((b) => {
       applyCalmPanelMotionClass(
         normalizeCalmPanelMotion(b[KEY_CALM_PANEL_MOTION], {
@@ -10282,6 +10682,10 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     const anonymousIdenticonEnabled = (
       /** @type {HTMLInputElement|null} */
       $("anonymousIdenticonEnabled")
+    );
+    const foldAnonymousInRankStrip = (
+      /** @type {HTMLInputElement|null} */
+      $("foldAnonymousInRankStrip")
     );
     const commentEnterSend = (
       /** @type {HTMLInputElement|null} */
@@ -11163,13 +11567,21 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       }
     });
     anonymousIdenticonEnabled?.addEventListener("change", async () => {
+      const next = !!anonymousIdenticonEnabled.checked;
       try {
-        await storageSetSafe({
-          [KEY_ANONYMOUS_IDENTICON_ENABLED]: anonymousIdenticonEnabled.checked
-        });
+        await storageSetSafe({ [KEY_ANONYMOUS_IDENTICON_ENABLED]: next });
       } catch {
       }
-      await applyAnonymousIdenticonFromStorage();
+      anonymousIdenticonSettingController.applyRaw(next);
+      safeRefresh();
+    });
+    foldAnonymousInRankStrip?.addEventListener("change", async () => {
+      const next = !!foldAnonymousInRankStrip.checked;
+      try {
+        await storageSetSafe({ [KEY_FOLD_ANONYMOUS_IN_RANK_STRIP]: next });
+      } catch {
+      }
+      foldAnonymousInRankStripSettingController.applyRaw(next);
       safeRefresh();
     });
     const storyGrowthCollapseBtn = $("storyGrowthCollapseBtn");
@@ -11483,11 +11895,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
         document.documentElement.setAttribute("data-nl-support-wired", "");
         void applyThumbSelectFromStorage().catch(() => {
         });
-        void applyVoiceAutosendFromStorage().catch(() => {
-        });
-        void applyCommentEnterSendFromStorage().catch(() => {
-        });
-        void applyAnonymousIdenticonFromStorage().catch(() => {
+        void applyRegisteredBooleanSettingsFromStorage().catch(() => {
         });
         void applyStoryGrowthCollapsedFromStorage().catch(() => {
         });
@@ -11501,24 +11909,13 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       if (stCh && typeof stCh.addListener === "function") {
         stCh.addListener((changes, area) => {
           if (area !== "local") return;
+          popupBooleanSettingsRegistry.dispatchStorageChanges(changes);
           if (changes[KEY_POPUP_FRAME] || changes[KEY_POPUP_FRAME_CUSTOM]) {
             loadPopupFrameSettings().catch(() => {
             });
           }
           if (changes[KEY_THUMB_AUTO] || changes[KEY_THUMB_INTERVAL_MS]) {
             applyThumbSelectFromStorage().catch(() => {
-            });
-          }
-          if (changes[KEY_VOICE_AUTOSEND]) {
-            applyVoiceAutosendFromStorage().catch(() => {
-            });
-          }
-          if (changes[KEY_COMMENT_ENTER_SEND]) {
-            applyCommentEnterSendFromStorage().catch(() => {
-            });
-          }
-          if (changes[KEY_ANONYMOUS_IDENTICON_ENABLED]) {
-            applyAnonymousIdenticonFromStorage().catch(() => {
             });
           }
           if (changes[KEY_STORY_GROWTH_COLLAPSED]) {

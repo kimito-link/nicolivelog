@@ -65,6 +65,101 @@ describe('buildMarketingDashboardHtml', () => {
     expect(html).toContain('Alice');
   });
 
+  it('トップコメンターの数値 ID は niconico ユーザーページへのリンクで包まれる（手元用）', () => {
+    // minimal() の user u1..u10 は数値でないため、リンク化されない。
+    // 数値 ID を持つレポートを作って挙動を確認する。
+    /** @type {import('./commentRecord.js').StoredComment[]} */
+    const comments = [
+      {
+        id: 'x1',
+        liveId: 'lv123',
+        commentNo: '1',
+        text: 'hello',
+        userId: '88210441',
+        nickname: 'のら',
+        avatarUrl: '',
+        capturedAt: Date.now(),
+        vpos: 0,
+        is184: false,
+        selfPosted: false
+      }
+    ];
+    const html = buildMarketingDashboardHtml(aggregateMarketingReport(comments, 'lv123'));
+    expect(html).toContain('href="https://www.nicovideo.jp/user/88210441"');
+    expect(html).toContain('target="_blank"');
+    expect(html).toContain('rel="noopener noreferrer"');
+    // displayUserLabel により「のら（88210441）」形式で表示されリンクで包まれる。
+    expect(html).toContain('>のら（88210441）</a>');
+  });
+
+  it('複数の匿名 (a:xxxx) ユーザーを TOP に載せると、shortId 付きラベルで識別できる', () => {
+    // 旧実装は `nickname || userId` だけだったため、nickname='匿名' が複数人並ぶと
+    // ランキング上で見分けが付かなかった。displayUserLabel を通して
+    // 「匿名（<shortId>）」形になり、ユーザごとに区別できる。
+    // shortUserKeyDisplay は 18 文字までは丸ごと出す（a:XXX…YYY に切るのは 19 文字以上）。
+    /** @type {import('./commentRecord.js').StoredComment[]} */
+    const comments = [
+      {
+        id: 'a1',
+        liveId: 'lv123',
+        commentNo: '1',
+        text: 'hi',
+        userId: 'a:AbCdEfGhIjKlMnOp',
+        nickname: '匿名',
+        avatarUrl: '',
+        capturedAt: Date.now(),
+        vpos: 0,
+        is184: true,
+        selfPosted: false
+      },
+      {
+        id: 'a2',
+        liveId: 'lv123',
+        commentNo: '2',
+        text: 'hi',
+        userId: 'a:ZyWvUtSrQpOnMlKj',
+        nickname: '匿名',
+        avatarUrl: '',
+        capturedAt: Date.now(),
+        vpos: 0,
+        is184: true,
+        selfPosted: false
+      }
+    ];
+    const html = buildMarketingDashboardHtml(aggregateMarketingReport(comments, 'lv123'));
+    // 2 人とも nickname は「匿名」だが、ラベルに shortId が付くので識別できる。
+    // a:AbCdEfGhIjKlMnOp はちょうど 18 文字なのでそのまま表示される。
+    expect(html).toContain('匿名（a:AbCdEfGhIjKlMnOp）');
+    expect(html).toContain('匿名（a:ZyWvUtSrQpOnMlKj）');
+    // リンクにはなっていない（匿名はプロフィールページが無い）
+    expect(html).not.toContain('href="https://www.nicovideo.jp/user/a:');
+  });
+
+  it('maskShareLabels のときはトップコメンター名をリンクにしない（共有配慮）', () => {
+    // 伏せ字名をリンクで包むと、リンク先（/user/<uid>）から本人を特定できて台無しになる。
+    /** @type {import('./commentRecord.js').StoredComment[]} */
+    const comments = [
+      {
+        id: 'x1',
+        liveId: 'lv123',
+        commentNo: '1',
+        text: 'hello',
+        userId: '88210441',
+        nickname: 'のら',
+        avatarUrl: '',
+        capturedAt: Date.now(),
+        vpos: 0,
+        is184: false,
+        selfPosted: false
+      }
+    ];
+    const html = buildMarketingDashboardHtml(
+      aggregateMarketingReport(comments, 'lv123'),
+      { maskShareLabels: true }
+    );
+    expect(html).not.toContain('href="https://www.nicovideo.jp/user/88210441"');
+  });
+
   it('時間帯ヒートマップが含まれる', () => {
     const html = buildMarketingDashboardHtml(minimal());
     expect(html).toContain('時間帯ヒートマップ');

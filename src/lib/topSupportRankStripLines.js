@@ -21,6 +21,7 @@ import { anonymousNicknameFallback } from './nicoAnonymousDisplay.js';
 /**
  * @typedef {{
  *   count: number,
+ *   userKey: string,
  *   isUnknown: boolean,
  *   placeNumber: number | null,
  *   hasAccent: boolean,
@@ -117,6 +118,7 @@ export function topSupportRankLineModels(stripRooms, opts) {
 
     return {
       count: Math.max(0, Number(r?.count) || 0),
+      userKey,
       isUnknown,
       placeNumber,
       hasAccent,

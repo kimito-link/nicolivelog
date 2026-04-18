@@ -101,9 +101,6 @@ import {
 import { countRecentActiveUsers } from '../lib/concurrentEstimate.js';
 import { summarizeOfficialCommentHistory } from '../lib/officialStatsWindow.js';
 import { buildWatchSnapshotOfficialFields } from '../lib/watchSnapshotOfficialFields.js';
-import {
-  pickStrongestAvatarUrlForUser
-} from '../lib/supportGrowthTileSrc.js';
 import { mergeUserIdForEnrichment } from '../lib/userIdPreference.js';
 import {
   COMMENT_INGEST_SOURCE,
@@ -111,7 +108,7 @@ import {
 } from '../lib/commentIngestLog.js';
 import { migrateFloatingInlinePanelToDockOnce } from '../lib/migrateInlinePanelFloatToDock.js';
 import { createPersistCoalescer } from '../lib/persistThrottle.js';
-import { enrichmentAvatarWithCanonicalFallback } from '../lib/enrichmentAvatarFallback.js';
+import { resolveUserEntryAvatarSignals } from '../lib/userEntryAvatarResolve.js';
 import { buildSilentErrorPayload, isContextInvalidatedError as isCtxInvalidated } from '../lib/reportSilentError.js';
 import { cleanNdgrChatRows } from '../lib/cleanNdgrChatRows.js';
 import { trimMapToMax } from '../lib/trimMap.js';
@@ -135,6 +132,12 @@ import {
   shouldRunEndedBulkHarvest
 } from '../lib/watchProgramEndState.js';
 import { hydrateInterceptAvatarMapFromProfile } from '../lib/interceptAvatarHydration.js';
+import {
+  KEY_COMMENT_PANEL_AUTO_RESTORE,
+  LATEST_COMMENT_BUTTON_SELECTOR,
+  decideCommentPanelRestoreAction,
+  normalizeCommentPanelAutoRestoreEnabled
+} from '../lib/commentPanelHealthProbe.js';
 
 /**
  * @typedef {{ commentNo: string, text: string, userId: string|null, avatarUrl?: string, avatarObserved?: boolean }} ParsedCommentRow
@@ -3354,6 +3357,23 @@ function collectWatchPageSnapshot() {
       !/^https?:\/\//i.test(text)
     );
   });
+  /*
+   * 配信者名の優先順位:
+   *   1. embedded-data の program.supplier.name  — ニコ生が表示する「配信表示名」そのもの
+   *   2. streamLink テキスト                     — /user/{id}/live_programs リンクのアンカーテキスト
+   *   3. meta author / twitter:creator           — ページレベルのメタ情報
+   *   4. DOM [class*="userName"] フォールバック   — コメント欄等の汚染リスクあり（最終手段）
+   *
+   * ユーザーが配信上のニックネームを変えている場合（例: アカウント名 きラリ → 配信表示名 太ももちゃん）、
+   * streamLink は「きラリ」を返すが、embedded-data supplier.name は「太ももちゃん」を返す。
+   * 視聴者が画面で見る名前に合わせるため embedded-data を最優先にする。
+   */
+  const embeddedProps = (() => {
+    try { return extractEmbeddedDataProps(document); } catch { return null; }
+  })();
+  const broadcasterNameFromEmbedded = clean(
+    embeddedProps?.program?.supplier?.name ?? ''
+  );
   const broadcasterNameFromMeta = clean(
     metaGet(metaMap, ['author', 'twitter:creator', 'profile:username'])
   );
@@ -3362,20 +3382,26 @@ function collectWatchPageSnapshot() {
     document.querySelector('[class*="userName"], [class*="streamerName"]')
       ?.textContent || ''
   );
-  /*
-   * streamLink（user の live_programs へのリンク）が取れないとき、[class*="userName"] は
-   * コメント欄・サポーター・「好きなもの」タグ等の先頭にマッチしやすい。
-   * メタ author 等を先に使い、広い DOM クエリは最後の手段にする。
-   */
   const broadcasterName =
+    broadcasterNameFromEmbedded ||
     broadcasterNameFromStreamLink ||
     broadcasterNameFromMeta ||
     broadcasterNameFromDomFallback;
 
   const broadcasterUserId = (() => {
+    // 1. streamLink href から
     const href = String(streamLink?.getAttribute('href') || '');
     const m = href.match(/\/user\/(\d+)/);
-    return m ? m[1] : '';
+    if (m) return m[1];
+    // 2. embedded-data の supplier.programProviderId / pageUrl から
+    const supplierId = String(
+      embeddedProps?.program?.supplier?.programProviderId ??
+      embeddedProps?.program?.supplier?.id ?? ''
+    ).trim();
+    if (/^\d+$/.test(supplierId)) return supplierId;
+    const pageUrl = String(embeddedProps?.program?.supplier?.pageUrl ?? '');
+    const m2 = pageUrl.match(/\/user\/(\d+)/);
+    return m2 ? m2[1] : '';
   })();
 
   const thumbnailUrl = toAbsoluteUrl(
@@ -3602,8 +3628,7 @@ function collectWatchPageSnapshot() {
     broadcasterUserId,
     broadcasterLevel: (() => {
       try {
-        const props = extractEmbeddedDataProps(document);
-        const lv = props?.program?.supplier?.level ?? props?.socialGroup?.level ?? props?.user?.userLevel;
+        const lv = embeddedProps?.program?.supplier?.level ?? embeddedProps?.socialGroup?.level ?? embeddedProps?.user?.userLevel;
         if (typeof lv === 'number' && Number.isFinite(lv) && lv > 0) return lv;
         const parsed = parseInt(String(lv), 10);
         return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -3627,9 +3652,8 @@ function collectWatchPageSnapshot() {
         const age = (Date.now() - programBeginAtMs) / 60000;
         if (age >= 0) return Math.round(age);
       }
-      // Priority 2: embedded-data props
-      const props = extractEmbeddedDataProps(document);
-      const beginMs = props ? pickProgramBeginAt(props) : null;
+      // Priority 2: embedded-data props（上で取得済みの embeddedProps を再利用）
+      const beginMs = embeddedProps ? pickProgramBeginAt(embeddedProps) : null;
       if (beginMs != null && Number.isFinite(beginMs)) {
         const age = (Date.now() - beginMs) / 60000;
         if (age >= 0) return Math.round(age);
@@ -4245,22 +4269,20 @@ function enrichRowsWithInterceptedUserIds(rows) {
       userId && isHttpAvatarUrl(interceptedAvatars.get(String(userId)))
         ? String(interceptedAvatars.get(String(userId)) || '').trim()
         : '';
-    const canonicalFallback = enrichmentAvatarWithCanonicalFallback(
-      userId, interceptEntryAv, interceptMapAv, rowAv
-    );
-    const av = pickStrongestAvatarUrlForUser(userId, [
-      interceptEntryAv,
-      interceptMapAv,
+    // 表示用 URL と tier 判定用の観測信号を userEntryAvatarResolve に一任する。
+    // ここで 2 本を混ぜない設計が「視認性／混入の再発」を止めるための要。
+    const { displayAvatarUrl, avatarObserved } = resolveUserEntryAvatarSignals({
+      userId,
       rowAv,
-      canonicalFallback
-    ]);
-    const observed = Boolean(rowAv || interceptEntryAv || interceptMapAv);
+      interceptEntryAv,
+      interceptMapAv
+    });
     return {
       ...r,
       userId,
       ...(nickname ? { nickname } : {}),
-      ...(av ? { avatarUrl: av } : {}),
-      ...(observed ? { avatarObserved: true } : {})
+      ...(displayAvatarUrl ? { avatarUrl: displayAvatarUrl } : {}),
+      ...(avatarObserved ? { avatarObserved: true } : {})
     };
   });
 }
@@ -4414,12 +4436,13 @@ function pruneAutoBackupLives(state) {
 let persistCommentRowsChain = Promise.resolve();
 
 const MIN_PERSIST_INTERVAL_MS = INGEST_TIMING.coalescerMinMs;
+const PERSIST_BURST_THRESHOLD = INGEST_TIMING.coalescerBurstThreshold;
 
 const persistCoalescer = createPersistCoalescer(async (/** @type {ParsedCommentRow[]} */ batch) => {
   const job = persistCommentRowsChain.then(() => persistCommentRowsImpl(batch));
   persistCommentRowsChain = job.catch((err) => reportSilentErrorToStorage('persist', err));
   await job;
-}, MIN_PERSIST_INTERVAL_MS);
+}, MIN_PERSIST_INTERVAL_MS, PERSIST_BURST_THRESHOLD);
 
 /**
  * @param {ParsedCommentRow[]|null|undefined} rows
@@ -5147,6 +5170,113 @@ function scanVisibleCommentsNow() {
   const rows = extractCommentsFromNode(root);
   void persistCommentRows(rows, { source: COMMENT_INGEST_SOURCE.VISIBLE });
   void syncCommentHarvestPanelStatus();
+  // 注: probeAndRestoreCommentPanelHealth はここでは呼ばない。
+  // scroll イベントで発火すると、ユーザが古いコメントを読むために手動で
+  // 上にスクロールしているときにも発火してしまい、せっかく上げた位置を
+  // 最下部に戻して邪魔してしまう。定期 tick（LIVE_PANEL_SCAN_MS 間隔）から
+  // だけ呼ぶことで、ユーザ操作と衝突しないようにする。
+}
+
+/**
+ * 設定（デフォルト ON）。false が storage に明示保存されているときだけ OFF。
+ * @type {boolean}
+ */
+let commentPanelAutoRestoreEnabled = true;
+/**
+ * 前回 `click_latest_button` / `scroll_panel_into_view` を実行した epoch ms。
+ * 0 or 負値 = まだ一度も実行していない。
+ * @type {number}
+ */
+let lastCommentPanelRestoreActionAt = 0;
+
+async function readCommentPanelAutoRestoreFromStorage() {
+  if (!hasExtensionContext()) return;
+  try {
+    const bag = await chrome.storage.local.get(KEY_COMMENT_PANEL_AUTO_RESTORE);
+    commentPanelAutoRestoreEnabled = normalizeCommentPanelAutoRestoreEnabled(
+      bag[KEY_COMMENT_PANEL_AUTO_RESTORE]
+    );
+  } catch (err) {
+    if (!isContextInvalidatedError(err)) {
+      // no-op: storage 失敗時は既定値（true）のまま
+    }
+  }
+}
+
+/**
+ * コメントパネルが「下に流れて見えない／viewport 外に追いやられている」状態を
+ * 検出して、可能なら復旧アクションを 1 つだけ実行する。
+ * 純粋モジュール `commentPanelHealthProbe` に判断を委ねる（DOM 触りはここだけ）。
+ */
+async function probeAndRestoreCommentPanelHealth() {
+  if (!commentPanelAutoRestoreEnabled) return;
+  if (!hasExtensionContext()) return;
+  if (!recording || !liveId || !locationAllowsCommentRecording()) return;
+
+  const panel = findNicoCommentPanel(document);
+  /** @type {{ top: number, height: number } | null} */
+  let panelRect = null;
+  if (panel && typeof panel.getBoundingClientRect === 'function') {
+    try {
+      const r = panel.getBoundingClientRect();
+      panelRect = { top: r.top, height: r.height };
+    } catch {
+      panelRect = null;
+    }
+  }
+
+  const host = findCommentListScrollHost(document);
+  /** @type {{ scrollTop: number, scrollHeight: number, clientHeight: number } | null} */
+  let scrollHost = null;
+  if (host) {
+    scrollHost = {
+      scrollTop: Number(host.scrollTop) || 0,
+      scrollHeight: Number(host.scrollHeight) || 0,
+      clientHeight: Number(host.clientHeight) || 0
+    };
+  }
+
+  /** @type {HTMLButtonElement | null} */
+  let latestButton = null;
+  try {
+    latestButton = /** @type {HTMLButtonElement | null} */ (
+      document.querySelector(LATEST_COMMENT_BUTTON_SELECTOR)
+    );
+  } catch {
+    latestButton = null;
+  }
+
+  const decision = decideCommentPanelRestoreAction({
+    enabled: true,
+    now: Date.now(),
+    lastActionAt: lastCommentPanelRestoreActionAt,
+    panelPresent: !!panel,
+    panelRect,
+    viewportHeight: Number(window.innerHeight) || 0,
+    scrollHost,
+    hasLatestButton: !!latestButton
+  });
+
+  if (decision.action === 'click_latest_button') {
+    if (!latestButton) return;
+    try {
+      latestButton.click();
+      lastCommentPanelRestoreActionAt = Date.now();
+    } catch {
+      // 押せなかったときは次 tick で再挑戦（lastActionAt を更新しない）
+    }
+    return;
+  }
+
+  if (decision.action === 'scroll_panel_into_view') {
+    if (!panel || typeof panel.scrollIntoView !== 'function') return;
+    try {
+      panel.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'auto' });
+      lastCommentPanelRestoreActionAt = Date.now();
+    } catch {
+      // no-op: scrollIntoView が未対応のブラウザは次 tick で諦める
+    }
+  }
 }
 
 function attachCommentScrollHook() {
@@ -5288,6 +5418,7 @@ async function start() {
   if (!shouldRunWatchContentInThisFrame()) return;
   recording = await readRecordingFlag();
   await readDeepHarvestQuietUiFromStorage();
+  await readCommentPanelAutoRestoreFromStorage();
   if (isWatchInlinePanelTopFrame()) {
     ensurePageFrameStyle();
     await migrateFloatingInlinePanelToDockOnce({
@@ -5379,6 +5510,12 @@ async function start() {
         .catch(() => {});
     }
 
+    if (changes[KEY_COMMENT_PANEL_AUTO_RESTORE]) {
+      commentPanelAutoRestoreEnabled = normalizeCommentPanelAutoRestoreEnabled(
+        changes[KEY_COMMENT_PANEL_AUTO_RESTORE].newValue
+      );
+    }
+
     if (changes[KEY_DEEP_HARVEST_QUIET_UI]) {
       deepHarvestQuietUi = isDeepHarvestQuietUiEnabled(
         changes[KEY_DEEP_HARVEST_QUIET_UI].newValue
@@ -5444,6 +5581,7 @@ async function start() {
       return;
     }
     scanVisibleCommentsNow();
+    void probeAndRestoreCommentPanelHealth();
   }, LIVE_PANEL_SCAN_MS);
 
   setInterval(() => {

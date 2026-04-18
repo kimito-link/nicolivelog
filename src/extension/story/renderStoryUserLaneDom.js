@@ -88,8 +88,20 @@ function fillLaneTier(el, items, io) {
   el.hidden = false;
   const frag = document.createDocumentFragment();
   for (const p of items) {
-    const cell = document.createElement('span');
+    const fullUid = String(p.entry?.userId || '').trim();
+    // 数値 ID（5〜14桁）ならニコニコのユーザーページにリンク
+    const isLinkable = /^\d{5,14}$/.test(fullUid);
+    const cell = isLinkable
+      ? document.createElement('a')
+      : document.createElement('span');
     cell.className = 'nl-story-userlane-cell';
+    if (isLinkable) {
+      /** @type {HTMLAnchorElement} */ (cell).href =
+        `https://www.nicovideo.jp/user/${fullUid}`;
+      /** @type {HTMLAnchorElement} */ (cell).target = '_blank';
+      /** @type {HTMLAnchorElement} */ (cell).rel = 'noopener noreferrer';
+      cell.classList.add('nl-story-userlane-cell--linkable');
+    }
 
     const img = document.createElement('img');
     img.className = 'nl-story-userlane-avatar';
@@ -102,7 +114,6 @@ function fillLaneTier(el, items, io) {
       io.storyTileUsesYukkuriTvStyle(requestedLane, displayLane)
     );
     img.alt = '';
-    const fullUid = String(p.entry?.userId || '').trim();
     const tip =
       fullUid && fullUid !== p.meta.idLine
         ? `${p.title} | ${fullUid}`

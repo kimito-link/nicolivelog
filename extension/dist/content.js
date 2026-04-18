@@ -2675,12 +2675,16 @@
   }
 
   // src/lib/persistThrottle.js
-  function createPersistCoalescer(flushFn, minIntervalMs = 300) {
+  function createPersistCoalescer(flushFn, minIntervalMs = 300, burstThreshold = 0) {
     let buffer = [];
     let timer = null;
     let lastFlushTime = 0;
     function enqueue(rows) {
       buffer.push(...rows);
+      if (burstThreshold > 0 && buffer.length >= burstThreshold) {
+        void flush();
+        return;
+      }
       if (timer) return;
       const delay2 = lastFlushTime ? Math.max(0, minIntervalMs - (Date.now() - lastFlushTime)) : 0;
       timer = setTimeout(flush, delay2);
@@ -2710,6 +2714,28 @@
   function enrichmentAvatarWithCanonicalFallback(userId, interceptEntryAv, interceptMapAv, rowAv) {
     if (interceptEntryAv || interceptMapAv || rowAv) return "";
     return niconicoDefaultUserIconUrl(userId);
+  }
+
+  // src/lib/userEntryAvatarResolve.js
+  function resolveUserEntryAvatarSignals(input) {
+    const userId = String(input?.userId || "").trim();
+    const rowAv = String(input?.rowAv || "").trim();
+    const interceptEntryAv = String(input?.interceptEntryAv || "").trim();
+    const interceptMapAv = String(input?.interceptMapAv || "").trim();
+    const avatarObserved = Boolean(rowAv || interceptEntryAv || interceptMapAv);
+    const canonicalFallback = enrichmentAvatarWithCanonicalFallback(
+      userId,
+      interceptEntryAv,
+      interceptMapAv,
+      rowAv
+    );
+    const displayAvatarUrl = pickStrongestAvatarUrlForUser(userId, [
+      interceptEntryAv,
+      interceptMapAv,
+      rowAv,
+      canonicalFallback
+    ]) || "";
+    return { displayAvatarUrl, avatarObserved };
   }
 
   // src/lib/reportSilentError.js
@@ -2822,6 +2848,9 @@
       interceptReconcileMs: 320,
       endedHarvestCheckMs: 4e3,
       coalescerMinMs: 300,
+      // 高流量時は 300ms 待たずに早期 flush（体感レイテンシ短縮）。
+      // NDGR_CHAT_ROWS_POST_CHUNK=220 より少し上に置き、1チャンク=即flushを避ける。
+      coalescerBurstThreshold: 260,
       visibleScanDelayMs: 380,
       pageFrameLoopMs: 360
     }
@@ -3053,6 +3082,56 @@
       added += 1;
     }
     return added;
+  }
+
+  // src/lib/commentPanelHealthProbe.js
+  var LATEST_COMMENT_BUTTON_SELECTOR = 'button.indicator[aria-label="\u6700\u65B0\u30B3\u30E1\u30F3\u30C8\u306B\u623B\u308B"]';
+  var COMMENT_PANEL_RESTORE_COOLDOWN_MS = 10 * 1e3;
+  var COMMENT_PANEL_SCROLLED_UP_THRESHOLD_PX = 200;
+  var COMMENT_PANEL_OUT_OF_VIEWPORT_RATIO = 0.9;
+  var KEY_COMMENT_PANEL_AUTO_RESTORE = "nls_comment_panel_auto_restore_enabled";
+  function normalizeCommentPanelAutoRestoreEnabled(raw) {
+    return raw !== false;
+  }
+  function decideCommentPanelRestoreAction(input) {
+    const i = input || /** @type {CommentPanelHealthInput} */
+    {};
+    if (!i.enabled) return { action: "none", reason: "disabled" };
+    const cooldownMs = Number.isFinite(i.cooldownMs) ? (
+      /** @type {number} */
+      i.cooldownMs
+    ) : COMMENT_PANEL_RESTORE_COOLDOWN_MS;
+    const lastAt = Number(i.lastActionAt) || 0;
+    const now = Number(i.now) || 0;
+    if (lastAt > 0 && now - lastAt < cooldownMs) {
+      return { action: "none", reason: "cooldown" };
+    }
+    if (!i.panelPresent) return { action: "none", reason: "panel_missing" };
+    const vh = Number(i.viewportHeight) || 0;
+    if (vh > 0 && i.panelRect && Number.isFinite(i.panelRect.top) && Number.isFinite(i.panelRect.height)) {
+      const top = Number(i.panelRect.top);
+      const height = Number(i.panelRect.height);
+      const bottom = top + height;
+      if (top > vh * COMMENT_PANEL_OUT_OF_VIEWPORT_RATIO || bottom <= 0) {
+        return { action: "scroll_panel_into_view", reason: "out_of_viewport" };
+      }
+    }
+    if (i.hasLatestButton) {
+      return { action: "click_latest_button", reason: "scrolled_up_button" };
+    }
+    const host = i.scrollHost;
+    if (host && Number.isFinite(host.scrollTop) && Number.isFinite(host.scrollHeight) && Number.isFinite(host.clientHeight)) {
+      const scrollTop = Number(host.scrollTop);
+      const scrollHeight = Number(host.scrollHeight);
+      const clientHeight = Number(host.clientHeight);
+      if (scrollHeight > clientHeight + 100) {
+        const bottomGap = scrollHeight - clientHeight - scrollTop;
+        if (bottomGap > COMMENT_PANEL_SCROLLED_UP_THRESHOLD_PX) {
+          return { action: "click_latest_button", reason: "scrolled_up_gap" };
+        }
+      }
+    }
+    return { action: "none", reason: "healthy" };
   }
 
   // src/extension/content-entry.js
@@ -5538,6 +5617,16 @@
       const text = clean(a.textContent);
       return /\/user\/\d+/.test(href) && /\/live_programs(?:\?|$)/.test(href) && text && !/^https?:\/\//i.test(text);
     });
+    const embeddedProps = (() => {
+      try {
+        return extractEmbeddedDataProps(document);
+      } catch {
+        return null;
+      }
+    })();
+    const broadcasterNameFromEmbedded = clean(
+      embeddedProps?.program?.supplier?.name ?? ""
+    );
     const broadcasterNameFromMeta = clean(
       metaGet(metaMap, ["author", "twitter:creator", "profile:username"])
     );
@@ -5545,11 +5634,18 @@
     const broadcasterNameFromDomFallback = clean(
       document.querySelector('[class*="userName"], [class*="streamerName"]')?.textContent || ""
     );
-    const broadcasterName = broadcasterNameFromStreamLink || broadcasterNameFromMeta || broadcasterNameFromDomFallback;
+    const broadcasterName = broadcasterNameFromEmbedded || broadcasterNameFromStreamLink || broadcasterNameFromMeta || broadcasterNameFromDomFallback;
     const broadcasterUserId = (() => {
       const href = String(streamLink?.getAttribute("href") || "");
       const m = href.match(/\/user\/(\d+)/);
-      return m ? m[1] : "";
+      if (m) return m[1];
+      const supplierId = String(
+        embeddedProps?.program?.supplier?.programProviderId ?? embeddedProps?.program?.supplier?.id ?? ""
+      ).trim();
+      if (/^\d+$/.test(supplierId)) return supplierId;
+      const pageUrl = String(embeddedProps?.program?.supplier?.pageUrl ?? "");
+      const m2 = pageUrl.match(/\/user\/(\d+)/);
+      return m2 ? m2[1] : "";
     })();
     const thumbnailUrl = toAbsoluteUrl(
       clean(metaGet(metaMap, ["og:image", "twitter:image"]))
@@ -5748,8 +5844,7 @@
       broadcasterUserId,
       broadcasterLevel: (() => {
         try {
-          const props = extractEmbeddedDataProps(document);
-          const lv = props?.program?.supplier?.level ?? props?.socialGroup?.level ?? props?.user?.userLevel;
+          const lv = embeddedProps?.program?.supplier?.level ?? embeddedProps?.socialGroup?.level ?? embeddedProps?.user?.userLevel;
           if (typeof lv === "number" && Number.isFinite(lv) && lv > 0) return lv;
           const parsed = parseInt(String(lv), 10);
           return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -5774,8 +5869,7 @@
           const age = (Date.now() - programBeginAtMs) / 6e4;
           if (age >= 0) return Math.round(age);
         }
-        const props = extractEmbeddedDataProps(document);
-        const beginMs = props ? pickProgramBeginAt(props) : null;
+        const beginMs = embeddedProps ? pickProgramBeginAt(embeddedProps) : null;
         if (beginMs != null && Number.isFinite(beginMs)) {
           const age = (Date.now() - beginMs) / 6e4;
           if (age >= 0) return Math.round(age);
@@ -6285,25 +6379,18 @@
       const rowAv = String(r.avatarUrl || "").trim();
       const interceptEntryAv = canUseInterceptMeta && isHttpAvatarUrl(entry?.av) ? String(entry?.av || "").trim() : "";
       const interceptMapAv = userId && isHttpAvatarUrl(interceptedAvatars.get(String(userId))) ? String(interceptedAvatars.get(String(userId)) || "").trim() : "";
-      const canonicalFallback = enrichmentAvatarWithCanonicalFallback(
+      const { displayAvatarUrl, avatarObserved } = resolveUserEntryAvatarSignals({
         userId,
-        interceptEntryAv,
-        interceptMapAv,
-        rowAv
-      );
-      const av = pickStrongestAvatarUrlForUser(userId, [
-        interceptEntryAv,
-        interceptMapAv,
         rowAv,
-        canonicalFallback
-      ]);
-      const observed = Boolean(rowAv || interceptEntryAv || interceptMapAv);
+        interceptEntryAv,
+        interceptMapAv
+      });
       return {
         ...r,
         userId,
         ...nickname ? { nickname } : {},
-        ...av ? { avatarUrl: av } : {},
-        ...observed ? { avatarObserved: true } : {}
+        ...displayAvatarUrl ? { avatarUrl: displayAvatarUrl } : {},
+        ...avatarObserved ? { avatarObserved: true } : {}
       };
     });
   }
@@ -6413,11 +6500,12 @@
   }
   var persistCommentRowsChain = Promise.resolve();
   var MIN_PERSIST_INTERVAL_MS = INGEST_TIMING.coalescerMinMs;
+  var PERSIST_BURST_THRESHOLD = INGEST_TIMING.coalescerBurstThreshold;
   var persistCoalescer = createPersistCoalescer(async (batch) => {
     const job = persistCommentRowsChain.then(() => persistCommentRowsImpl(batch));
     persistCommentRowsChain = job.catch((err) => reportSilentErrorToStorage("persist", err));
     await job;
-  }, MIN_PERSIST_INTERVAL_MS);
+  }, MIN_PERSIST_INTERVAL_MS, PERSIST_BURST_THRESHOLD);
   function persistCommentRows(rows, _opts = {}) {
     const gate = diagnosePersistGate({
       hasRows: !!rows?.length,
@@ -7027,6 +7115,78 @@
     void persistCommentRows(rows, { source: COMMENT_INGEST_SOURCE.VISIBLE });
     void syncCommentHarvestPanelStatus();
   }
+  var commentPanelAutoRestoreEnabled = true;
+  var lastCommentPanelRestoreActionAt = 0;
+  async function readCommentPanelAutoRestoreFromStorage() {
+    if (!hasExtensionContext()) return;
+    try {
+      const bag = await chrome.storage.local.get(KEY_COMMENT_PANEL_AUTO_RESTORE);
+      commentPanelAutoRestoreEnabled = normalizeCommentPanelAutoRestoreEnabled(
+        bag[KEY_COMMENT_PANEL_AUTO_RESTORE]
+      );
+    } catch (err) {
+      if (!isContextInvalidatedError2(err)) {
+      }
+    }
+  }
+  async function probeAndRestoreCommentPanelHealth() {
+    if (!commentPanelAutoRestoreEnabled) return;
+    if (!hasExtensionContext()) return;
+    if (!recording || !liveId || !locationAllowsCommentRecording()) return;
+    const panel = findNicoCommentPanel(document);
+    let panelRect = null;
+    if (panel && typeof panel.getBoundingClientRect === "function") {
+      try {
+        const r = panel.getBoundingClientRect();
+        panelRect = { top: r.top, height: r.height };
+      } catch {
+        panelRect = null;
+      }
+    }
+    const host = findCommentListScrollHost(document);
+    let scrollHost = null;
+    if (host) {
+      scrollHost = {
+        scrollTop: Number(host.scrollTop) || 0,
+        scrollHeight: Number(host.scrollHeight) || 0,
+        clientHeight: Number(host.clientHeight) || 0
+      };
+    }
+    let latestButton = null;
+    try {
+      latestButton = /** @type {HTMLButtonElement | null} */
+      document.querySelector(LATEST_COMMENT_BUTTON_SELECTOR);
+    } catch {
+      latestButton = null;
+    }
+    const decision = decideCommentPanelRestoreAction({
+      enabled: true,
+      now: Date.now(),
+      lastActionAt: lastCommentPanelRestoreActionAt,
+      panelPresent: !!panel,
+      panelRect,
+      viewportHeight: Number(window.innerHeight) || 0,
+      scrollHost,
+      hasLatestButton: !!latestButton
+    });
+    if (decision.action === "click_latest_button") {
+      if (!latestButton) return;
+      try {
+        latestButton.click();
+        lastCommentPanelRestoreActionAt = Date.now();
+      } catch {
+      }
+      return;
+    }
+    if (decision.action === "scroll_panel_into_view") {
+      if (!panel || typeof panel.scrollIntoView !== "function") return;
+      try {
+        panel.scrollIntoView({ block: "nearest", inline: "nearest", behavior: "auto" });
+        lastCommentPanelRestoreActionAt = Date.now();
+      } catch {
+      }
+    }
+  }
   function attachCommentScrollHook() {
     const host = findCommentListScrollHost(document);
     if (!host || scrollHooked.has(host)) return false;
@@ -7142,6 +7302,7 @@
     if (!shouldRunWatchContentInThisFrame()) return;
     recording = await readRecordingFlag();
     await readDeepHarvestQuietUiFromStorage();
+    await readCommentPanelAutoRestoreFromStorage();
     if (isWatchInlinePanelTopFrame()) {
       ensurePageFrameStyle();
       await migrateFloatingInlinePanelToDockOnce({
@@ -7228,6 +7389,11 @@
         readThumbSettings().then(() => applyThumbSchedule()).catch(() => {
         });
       }
+      if (changes[KEY_COMMENT_PANEL_AUTO_RESTORE]) {
+        commentPanelAutoRestoreEnabled = normalizeCommentPanelAutoRestoreEnabled(
+          changes[KEY_COMMENT_PANEL_AUTO_RESTORE].newValue
+        );
+      }
       if (changes[KEY_DEEP_HARVEST_QUIET_UI]) {
         deepHarvestQuietUi = isDeepHarvestQuietUiEnabled(
           changes[KEY_DEEP_HARVEST_QUIET_UI].newValue
@@ -7279,6 +7445,7 @@
         return;
       }
       scanVisibleCommentsNow();
+      void probeAndRestoreCommentPanelHealth();
     }, LIVE_PANEL_SCAN_MS);
     setInterval(() => {
       tryPeriodicQuietDeepHarvest();

@@ -7,6 +7,8 @@ import { escapeHtml } from './htmlEscape.js';
 import { maskLabelForShare } from './privacyDisplay.js';
 import { MKT_ADVISOR_AVATAR_DATA_URI } from './marketingHtmlAdvisorAvatars.js';
 import { buildMarketingEmbedScriptInnerText } from './marketingReportEmbed.js';
+import { buildUserProfileLinkedLabelHtml } from './userProfileLinkHtml.js';
+import { displayUserLabel, UNKNOWN_USER_KEY } from './userRooms.js';
 
 /**
  * @param {'tanu' | 'link' | 'konta'} role
@@ -599,12 +601,21 @@ function sectionTopUsers(r, maskShare = false) {
         maskShare || !u.avatarUrl
           ? '<span class="mkt-rank-av mkt-rank-av--empty"></span>'
           : `<img src="${escapeHtml(u.avatarUrl)}" class="mkt-rank-av" alt="" loading="lazy">`;
-      const rawName = u.nickname || u.userId || '—';
-      const name = maskShare ? maskLabelForShare(rawName) : rawName;
+      // ランキング内で複数の匿名 (a:xxxx) ユーザーがすべて「匿名」と表示されて
+      // 識別不能になる問題を避けるため、共通の displayUserLabel を通して
+      // 「nickname（shortId）」形にする。数値 ID のときは niconico プロフィール
+      // へのリンクで包む。maskShare 時はリンクにせず、マスクだけ適用する。
+      const uidForLabel = u.userId || UNKNOWN_USER_KEY;
+      const rawLabel = u.userId
+        ? displayUserLabel(u.userId, u.nickname || '')
+        : u.nickname || '—';
+      const nameCellHtml = maskShare
+        ? escapeHtml(maskLabelForShare(rawLabel))
+        : buildUserProfileLinkedLabelHtml(uidForLabel, rawLabel);
       return `<tr>
 <td class="mkt-rank-n">${i + 1}</td>
 <td>${avImg}</td>
-<td class="mkt-rank-name">${escapeHtml(name)}</td>
+<td class="mkt-rank-name">${nameCellHtml}</td>
 <td class="mkt-rank-bar"><div class="mkt-rank-bar__fill" style="width:${pct.toFixed(1)}%"></div><span class="mkt-rank-bar__label">${u.count}</span></td>
 </tr>`;
     })
@@ -671,6 +682,8 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
 .mkt-rank-av{width:28px;height:28px;border-radius:50%;object-fit:cover;display:block}
 .mkt-rank-av--empty{background:#334155}
 .mkt-rank-name{font-size:.85rem;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.mkt-rank-name .nl-user-profile-link{color:#93c5fd;text-decoration:underline;text-underline-offset:2px}
+.mkt-rank-name .nl-user-profile-link:hover{color:#bfdbfe}
 .mkt-rank-bar{position:relative;height:22px;background:#0f172a;border-radius:4px;overflow:hidden}
 .mkt-rank-bar__fill{height:100%;background:linear-gradient(90deg,#3b82f6,#6366f1);border-radius:4px}
 .mkt-rank-bar__label{position:absolute;right:6px;top:2px;font-size:.75rem;color:#f8fafc;font-weight:600}

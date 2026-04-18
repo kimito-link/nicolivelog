@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ja" data-nl-usage-terms-ack="1" data-nl-popup-primary-cloak="1">
+<html lang="ja" data-nl-usage-terms-ack="1" data-nl-popup-primary-cloak="1" data-nl-recording="on">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -138,14 +138,6 @@
         margin-bottom: 6px;
         padding-top: 6px;
         padding-bottom: 6px;
-      }
-
-      /* watch 埋め込み: 親ページの透過オーバーレイ等でクリックが奪われにくくする */
-      html.nl-inline-embed-watch body label.nl-record-hero__toggle,
-      html.nl-inline-embed-watch body .nl-record-hero__toggle input[type='checkbox'] {
-        pointer-events: auto;
-        position: relative;
-        z-index: 2;
       }
 
       html.nl-inline body .nl-main {
@@ -651,6 +643,16 @@
         box-shadow: 0 0 0 2px color-mix(in srgb, var(--nl-user-accent) 48%, transparent);
       }
 
+      a.nl-story-userlane-cell--linkable {
+        text-decoration: none;
+        color: inherit;
+        cursor: pointer;
+        transition: background-color 0.12s;
+      }
+      a.nl-story-userlane-cell--linkable:hover {
+        background-color: color-mix(in srgb, var(--nl-border) 40%, transparent);
+      }
+
       /* 完成度の段（tier）が変わるところで折り返し、匿名の塊と手前のユーザーを視覚的に分ける */
       .nl-story-userlane-tier-break {
         flex: 0 0 100%;
@@ -1089,6 +1091,15 @@
         color: var(--nl-muted);
       }
 
+      .nl-story-detail-user-link {
+        color: var(--nl-muted);
+        text-decoration: underline;
+        text-underline-offset: 2px;
+      }
+      .nl-story-detail-user-link:hover {
+        color: var(--nl-text);
+      }
+
       .nl-story-detail-text {
         margin-top: 5px;
         font-size: 10.4px;
@@ -1145,6 +1156,34 @@
       html.nl-inline-embed-watch[data-nl-popup-primary-cloak='1'],
       html.nl-inline-embed-watch[data-nl-popup-primary-cloak='1'] body {
         background: transparent !important;
+      }
+
+      .nl-version-badge {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 4px;
+        padding: 3px 8px;
+        margin: 0 0 6px auto;
+        border-radius: 999px;
+        background: color-mix(in srgb, var(--nl-accent, #0f8fd8) 10%, transparent);
+        border: 1px solid color-mix(in srgb, var(--nl-accent, #0f8fd8) 35%, transparent);
+        color: var(--nl-accent, #0f8fd8);
+        font-size: 10px;
+        font-weight: 700;
+        line-height: 1.1;
+        font-variant-numeric: tabular-nums;
+        letter-spacing: 0.02em;
+        width: fit-content;
+        cursor: help;
+      }
+
+      .nl-version-badge__label {
+        opacity: 0.7;
+        font-weight: 600;
+      }
+
+      .nl-version-badge__value {
+        font-weight: 800;
       }
 
       .nl-usage-terms-gate {
@@ -2010,6 +2049,16 @@
         word-break: break-word;
       }
 
+      .nl-live-stat-sub--ingest {
+        color: var(--nl-accent, #0f8fd8);
+        font-weight: 700;
+      }
+
+      .nl-live-stat-sub--ingest.is-stale {
+        color: var(--nl-muted);
+        font-weight: 600;
+      }
+
       /* 応援ランキング専用ゾーン（記録カード内のゆっくりアイコン本体には触れない） */
       .nl-top-support-rank {
         width: 100%;
@@ -2059,6 +2108,16 @@
         line-height: 1.25;
         color: var(--nl-text);
         min-width: 0;
+      }
+
+      a.nl-top-support-rank__line--linkable {
+        text-decoration: none;
+        color: inherit;
+        border-radius: 4px;
+        transition: background-color 0.12s;
+      }
+      a.nl-top-support-rank__line--linkable:hover {
+        background-color: color-mix(in srgb, var(--nl-border) 40%, transparent);
       }
 
       .nl-top-support-rank__place {
@@ -2474,6 +2533,32 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+      }
+
+      /* 数値 ID ユーザーの場合、ティッカーの行全体を niconico ユーザーページへの
+         リンクに。既定は下線なし・色は継承で、視覚ノイズを抑える。
+         hover/focus 時は名前に下線＋背景を薄く色付けして可視化。 */
+      .nl-ticker-latest--linkable {
+        color: inherit;
+        text-decoration: none;
+        border-radius: 6px;
+        transition: background-color 120ms ease;
+      }
+
+      .nl-ticker-latest--linkable:hover {
+        background-color: rgb(59 130 246 / 8%);
+      }
+
+      .nl-ticker-latest--linkable:hover .nl-ticker-latest__name,
+      .nl-ticker-latest--linkable:focus-visible .nl-ticker-latest__name {
+        text-decoration: underline;
+        text-decoration-thickness: 1px;
+        text-underline-offset: 2px;
+      }
+
+      .nl-ticker-latest--linkable:focus-visible {
+        outline: 2px solid rgb(59 130 246 / 75%);
+        outline-offset: 1px;
       }
 
       .nl-ticker-latest__colon {
@@ -5739,6 +5824,16 @@
         aria-busy="true"
       >
       <div
+        id="nlVersionBadge"
+        class="nl-version-badge"
+        role="status"
+        aria-label="拡張バージョン（新ビルド反映の確認用）"
+        title="ここの数字が変わっていれば、新しいビルドが読み込まれています。反映されていない場合は chrome://extensions で「更新」→ watch ページを再読み込みしてください。"
+      >
+        <span class="nl-version-badge__label">ビルド</span>
+        <span id="nlVersionBadgeValue" class="nl-version-badge__value">—</span>
+      </div>
+      <div
         id="extensionContextBanner"
         class="nl-extension-context-banner"
         role="alert"
@@ -5779,6 +5874,12 @@
             class="nl-live-stat-sub nl-live-stat-sub--official"
             id="liveStatCommentsOfficial"
             hidden
+          ></div>
+          <div
+            class="nl-live-stat-sub nl-live-stat-sub--ingest"
+            id="liveStatCommentsIngest"
+            hidden
+            aria-live="polite"
           ></div>
         </div>
         <div
@@ -6645,6 +6746,29 @@
           >LP「匿名 Identicon」</a
         >
         もどうぞ。
+      </p>
+      <label
+        class="nl-anonymous-identicon-opt"
+        data-nl-toolbar-only
+        title="応援ランクストリップ（上部の小さなサムネ行）で、匿名（a:xxxxx やハッシュ系）ユーザーを件数上位でも後ろに回し、数値IDのユーザーを先に並べます。既定オン。"
+      >
+        <input
+          type="checkbox"
+          id="foldAnonymousInRankStrip"
+          autocomplete="off"
+          checked
+          aria-describedby="foldAnonymousInRankStripHint"
+        />
+        <span
+          >応援ランク上位を固定ファン優先にする（匿名大量のときでも数値 ID のユーザーを前に出します）</span
+        >
+      </label>
+      <p
+        id="foldAnonymousInRankStripHint"
+        class="nl-anonymous-identicon-hint"
+        data-nl-toolbar-only
+      >
+        匿名コメント（アイコンが取れない <code>a:xxxxx</code> 等）が件数トップに並ぶと、顔の見える固定ファンが折り畳まれて見えなくなるのを防ぎます（<strong>既定オン</strong>）。
       </p>
       <ul id="userRoomList" aria-live="polite" data-nl-toolbar-only></ul>
 
