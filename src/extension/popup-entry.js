@@ -7770,10 +7770,29 @@ function initPopup() {
         }
       })
       .finally(() => {
+        const wasInitialRefresh = !initialRefreshDone;
         initialRefreshDone = true;
         requestAnimationFrame(() => {
           applyResponsivePopupLayout();
-          correctSupportVisualScrollIfOpen();
+          if (wasInitialRefresh && INLINE_MODE) {
+            /*
+             * インライン iframe の初回描画では、上部の stat card
+             * （記録 / 推定同時接続 / 来場者数）を必ず見せたい。
+             *
+             * supportVisualDetails が inline デフォルトで open のとき、
+             * 展開された本文（アイコングリッド）が .nl-main より高いと
+             * correctSupportVisualScrollIfOpen が body.bottom を合わせに
+             * 下方向スクロールをかけ、上端の stat card が隠れてしまう。
+             * ユーザ操作なしの初回描画時に限り、reveal scroll をスキップして
+             * scrollTop=0 に寄せ、stat card を起点に表示する。
+             */
+            const main = /** @type {HTMLElement|null} */ (
+              document.querySelector('.nl-main')
+            );
+            if (main) main.scrollTop = 0;
+          } else {
+            correctSupportVisualScrollIfOpen();
+          }
         });
       });
   };
