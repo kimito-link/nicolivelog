@@ -365,6 +365,145 @@ test.describe('inline panel alignment', () => {
     expect(top).toBeGreaterThan(80);
   });
 
+  /*
+   * Bug #3 回帰ガード: below → floating → below の往復で、floating モードが付けた
+   * width / maxWidth / marginLeft / boxSizing / position / top / right ... がホスト
+   * インラインスタイルに残留していないことを保証する。
+   * 旧 clearInlineHostFloatingLayout は width / maxWidth / marginLeft / boxSizing を
+   * reset 対象に入れていなかったため、below に戻した直後のパネル幅・余白が壊れていた。
+   */
+  test('below → floating → below で前モードの残留スタイルが消える（Bug #3 回帰ガード）', async ({
+    context
+  }) => {
+    await setInlinePanelModes(context, {
+      widthMode: null,
+      placement: 'below'
+    });
+
+    const page = await context.newPage();
+    await page.goto(MOCK_WATCH, { waitUntil: 'load', timeout: 60_000 });
+    await page.evaluate(injectTwoColumnPlayerRow);
+
+    await expect
+      .poll(() => hostPlacementMetrics(page), { timeout: 25_000 })
+      .toMatchObject({
+        display: 'block',
+        parentTag: 'BODY',
+        prevElementId: 'mock-player-row',
+        floatingClass: false
+      });
+
+    // floating へ
+    await setInlinePanelModes(context, {
+      widthMode: null,
+      placement: 'floating'
+    });
+    await expect
+      .poll(() => hostPlacementMetrics(page), { timeout: 25_000 })
+      .toMatchObject({ display: 'block', position: 'fixed' });
+
+    // below に戻す
+    await setInlinePanelModes(context, {
+      widthMode: null,
+      placement: 'below'
+    });
+
+    await expect
+      .poll(() => hostPlacementMetrics(page), { timeout: 25_000 })
+      .toMatchObject({
+        display: 'block',
+        parentTag: 'BODY',
+        prevElementId: 'mock-player-row',
+        floatingClass: false
+      });
+
+    // インラインスタイル側の残留を直接検証（computed style ではなく element.style を見る）
+    const residue = await page.evaluate((hostId) => {
+      const host = globalThis.document.getElementById(hostId);
+      if (!host) return null;
+      return {
+        position: host.style.position,
+        top: host.style.top,
+        right: host.style.right,
+        bottom: host.style.bottom,
+        maxHeight: host.style.maxHeight,
+        zIndex: host.style.zIndex,
+        boxShadow: host.style.boxShadow,
+        borderRadius: host.style.borderRadius,
+        background: host.style.background,
+        hasFloatingClass: host.classList.contains('nls-inline-host--floating'),
+        hasDockBottomClass: host.classList.contains('nls-inline-host--dock-bottom')
+      };
+    }, INLINE_HOST_ID);
+
+    expect(residue, 'below に戻したあと host DOM が残っている').not.toBeNull();
+    // floating 時に書いた inline style が「空文字」に戻っていることを確認
+    expect(residue.position).toBe('');
+    expect(residue.top).toBe('');
+    expect(residue.right).toBe('');
+    expect(residue.bottom).toBe('');
+    expect(residue.maxHeight).toBe('');
+    expect(residue.zIndex).toBe('');
+    expect(residue.boxShadow).toBe('');
+    expect(residue.borderRadius).toBe('');
+    expect(residue.background).toBe('');
+    expect(residue.hasFloatingClass).toBe(false);
+    expect(residue.hasDockBottomClass).toBe(false);
+  });
+
+  /*
+   * Bug #3 回帰ガード: dock_bottom → floating の遷移で、dock_bottom が付けた
+   * width:100% / maxWidth:100% / borderRadius: '14px 14px 0 0' が残って
+   * floating の丸角・幅を潰さないことを保証する。
+   */
+  test('dock_bottom → floating で下ドック由来の 100% 幅 / 角丸が floating を潰さない（Bug #3 回帰ガード）', async ({
+    context
+  }) => {
+    await setInlinePanelModes(context, {
+      widthMode: null,
+      placement: 'dock_bottom'
+    });
+
+    const page = await context.newPage();
+    await page.goto(MOCK_WATCH, { waitUntil: 'load', timeout: 60_000 });
+    await page.evaluate(injectTwoColumnPlayerRow);
+
+    await expect
+      .poll(() => hostPlacementMetrics(page), { timeout: 25_000 })
+      .toMatchObject({ display: 'block', position: 'fixed' });
+
+    await setInlinePanelModes(context, {
+      widthMode: null,
+      placement: 'floating'
+    });
+
+    await expect
+      .poll(() => hostPlacementMetrics(page), { timeout: 25_000 })
+      .toMatchObject({ display: 'block', position: 'fixed' });
+
+    const inline = await page.evaluate((hostId) => {
+      const host = globalThis.document.getElementById(hostId);
+      if (!host) return null;
+      return {
+        width: host.style.width,
+        maxWidth: host.style.maxWidth,
+        borderRadius: host.style.borderRadius,
+        hasFloatingClass: host.classList.contains('nls-inline-host--floating'),
+        hasDockBottomClass: host.classList.contains('nls-inline-host--dock-bottom')
+      };
+    }, INLINE_HOST_ID);
+
+    expect(inline, 'floating に切り替えたあと host DOM が残っている').not.toBeNull();
+    // floating が書き直したはずの値であり、dock_bottom の 100% / 上丸角のみ
+    // ではないこと（残留チェック）
+    expect(inline.hasFloatingClass).toBe(true);
+    expect(inline.hasDockBottomClass).toBe(false);
+    expect(inline.width).not.toBe('100%');
+    expect(inline.maxWidth).not.toBe('100%');
+    // floating は 14px 一律。dock_bottom の '14px 14px 0 0' 残留だと不等
+    expect(inline.borderRadius).toBe('14px');
+  });
+
   test('floating から beside へ切り替えると fixed 表示を外して row 内へ戻る', async ({
     context
   }) => {

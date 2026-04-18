@@ -9813,7 +9813,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
       return;
     }
     renderExtensionContextBanner(false);
-    setTimeout(revealPopupPrimaryOnce, 1200);
+    setTimeout(revealPopupPrimaryOnce, 400);
     const refreshGen = ++watchPopupRefreshGeneration;
     const isFreshRefresh = () => refreshGen === watchPopupRefreshGeneration;
     const liveEl = $("liveId");
@@ -11439,7 +11439,7 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     try {
       const manifest = chrome.runtime.getManifest();
       const version = String(manifest?.version || "").trim() || "?";
-      const buildId = "0418-2116" ? String("0418-2116") : "dev";
+      const buildId = "0418-2129" ? String("0418-2129") : "dev";
       valueEl.textContent = `v${version}\u30FBb${buildId}`;
     } catch {
       valueEl.textContent = "\u2014";
@@ -12786,5 +12786,20 @@ body{margin:0;font-family:'Segoe UI','Hiragino Sans',sans-serif;background:#0f17
     document.addEventListener("DOMContentLoaded", initPopup);
   } else {
     initPopup();
+  }
+  if (typeof window !== "undefined") {
+    const finalRevealFallback = () => {
+      setTimeout(() => {
+        try {
+          revealPopupPrimaryOnce();
+        } catch {
+        }
+      }, 800);
+    };
+    if (document.readyState === "complete") {
+      finalRevealFallback();
+    } else {
+      window.addEventListener("load", finalRevealFallback, { once: true });
+    }
   }
 })();

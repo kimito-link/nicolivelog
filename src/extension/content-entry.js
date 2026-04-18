@@ -122,6 +122,7 @@ import {
 import { DEEP_HARVEST_REASONS } from '../lib/deepHarvestReason.js';
 import { formatPipelinePhase } from '../lib/commentPipelineLog.js';
 import { planDeepExportSweep } from '../lib/deepExportPolicy.js';
+import { applyInlineHostPlacementReset } from '../lib/inlineHostLayoutReset.js';
 import {
   mergeNdgrBacklogWithCap,
   shouldDeferNdgrFlushUntilLiveId
@@ -1675,24 +1676,18 @@ function inlinePopupHostIsCorrectlyPlaced(host, hostParent, insertAfter) {
   );
 }
 
-/** 画面上固定モード用のインラインスタイルを消し、プレイヤー周りへの再挿入に備える */
+/**
+ * placement 切替時に host 要素から前モードのインラインスタイル / クラス / aria-hidden を落とす。
+ *
+ * 旧実装は floating / dock_bottom を「外すとき」だけを想定していたが、
+ *   - below/beside → floating で renderInlinePanelFloatingHost() が先に呼ばれて cleanup を通らない
+ *   - width / maxWidth / marginLeft / boxSizing / display / opacity / pointerEvents が漏れ
+ * というバグ #3「パネル位置を変えるとおかしくなる」を生んでいた。
+ * 正本リストは `../lib/inlineHostLayoutReset.js` に一本化し、ここは DOM 側の入口。
+ */
 function clearInlineHostFloatingLayout(host) {
   if (!(host instanceof HTMLElement)) return;
-  host.classList.remove('nls-inline-host--floating');
-  host.classList.remove('nls-inline-host--dock-bottom');
-  host.style.position = '';
-  host.style.top = '';
-  host.style.right = '';
-  host.style.left = '';
-  host.style.bottom = '';
-  host.style.maxHeight = '';
-  host.style.overflow = '';
-  host.style.overflowX = '';
-  host.style.overflowY = '';
-  host.style.boxShadow = '';
-  host.style.borderRadius = '';
-  host.style.background = '';
-  host.style.zIndex = '';
+  applyInlineHostPlacementReset(host);
 }
 
 /**
@@ -1701,7 +1696,10 @@ function clearInlineHostFloatingLayout(host) {
  */
 function renderInlinePanelFloatingHost() {
   const host = ensureInlinePopupHost();
-  host.classList.remove('nls-inline-host--dock-bottom');
+  // 前モード（below/beside/dock_bottom）の残留スタイル・クラスを先に完全リセット。
+  // これを飛ばすと marginLeft / width などが前モードの値のまま上書きされ、
+  // 「パネル位置を変えると画面外に飛ぶ / 横幅が残る」バグ #3 を再現する。
+  clearInlineHostFloatingLayout(host);
   const viewport = nlsViewportSize();
   let vh = Number(viewport.innerHeight) || 0;
   if (vh < 200) vh = 640;

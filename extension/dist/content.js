@@ -2958,6 +2958,50 @@
     };
   }
 
+  // src/lib/inlineHostLayoutReset.js
+  var INLINE_HOST_RESETTABLE_STYLE_PROPERTIES = Object.freeze([
+    "position",
+    "top",
+    "right",
+    "left",
+    "bottom",
+    "width",
+    "maxWidth",
+    "maxHeight",
+    "marginLeft",
+    "boxSizing",
+    "overflow",
+    "overflowX",
+    "overflowY",
+    "boxShadow",
+    "borderRadius",
+    "background",
+    "zIndex",
+    "display",
+    "opacity",
+    "pointerEvents"
+  ]);
+  var INLINE_HOST_PLACEMENT_CLASSES = Object.freeze([
+    "nls-inline-host--floating",
+    "nls-inline-host--dock-bottom"
+  ]);
+  function applyInlineHostPlacementReset(host) {
+    if (!host) return;
+    if (host.classList && typeof host.classList.remove === "function") {
+      for (const cls of INLINE_HOST_PLACEMENT_CLASSES) {
+        host.classList.remove(cls);
+      }
+    }
+    if (host.style) {
+      for (const prop of INLINE_HOST_RESETTABLE_STYLE_PROPERTIES) {
+        host.style[prop] = "";
+      }
+    }
+    if (typeof host.removeAttribute === "function") {
+      host.removeAttribute("aria-hidden");
+    }
+  }
+
   // src/lib/ndgrBacklog.js
   function shouldDeferNdgrFlushUntilLiveId(opts) {
     const recording2 = Boolean(opts?.recording);
@@ -4357,25 +4401,11 @@
   }
   function clearInlineHostFloatingLayout(host) {
     if (!(host instanceof HTMLElement)) return;
-    host.classList.remove("nls-inline-host--floating");
-    host.classList.remove("nls-inline-host--dock-bottom");
-    host.style.position = "";
-    host.style.top = "";
-    host.style.right = "";
-    host.style.left = "";
-    host.style.bottom = "";
-    host.style.maxHeight = "";
-    host.style.overflow = "";
-    host.style.overflowX = "";
-    host.style.overflowY = "";
-    host.style.boxShadow = "";
-    host.style.borderRadius = "";
-    host.style.background = "";
-    host.style.zIndex = "";
+    applyInlineHostPlacementReset(host);
   }
   function renderInlinePanelFloatingHost() {
     const host = ensureInlinePopupHost();
-    host.classList.remove("nls-inline-host--dock-bottom");
+    clearInlineHostFloatingLayout(host);
     const viewport = nlsViewportSize();
     let vh = Number(viewport.innerHeight) || 0;
     if (vh < 200) vh = 640;

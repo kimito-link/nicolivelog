@@ -1182,10 +1182,32 @@
         scrollbar-gutter: stable;
       }
 
-      /* 初回のみ: メイン UI をハイドレート完了まで隠し、段階描画のちらつきを抑える（#usageTermsGate は外に出す） */
+      /* 初回のみ: メイン UI をハイドレート完了まで覆い、段階描画のちらつきを抑える（#usageTermsGate は外に出す）。
+       *
+       * 旧実装は `visibility: hidden` で JS の revealPopupPrimaryOnce() 呼び出し漏れが即 "本体だけ
+       * 真っ白／真っ黒で空" という致命的な表示事故になっていた（パネル位置切替時に iframe が再生成され、
+       * module-level の popupPrimaryRevealDone が false に戻る経路で顕在化）。
+       *
+       * 新実装は JS state に依存しない CSS アニメーションを保険として走らせ、450ms 後には必ず自動で
+       * fade-in する。JS が通常ルートで reveal すれば removeAttribute でこのブロックが外れて即可視。
+       * 例外ルートでも「見えない UI」が延々と続くことを CSS 側で防ぐ。 */
       html[data-nl-popup-primary-cloak='1'] .nl-popup-primary {
-        visibility: hidden;
+        opacity: 0;
         pointer-events: none;
+        animation: nl-popup-primary-cloak-auto-reveal 320ms 450ms ease-out forwards;
+      }
+      @keyframes nl-popup-primary-cloak-auto-reveal {
+        to {
+          opacity: 1;
+          pointer-events: auto;
+        }
+      }
+      /* prefers-reduced-motion ではアニメーションを短くし、即 reveal に寄せる */
+      @media (prefers-reduced-motion: reduce) {
+        html[data-nl-popup-primary-cloak='1'] .nl-popup-primary {
+          animation-duration: 0ms;
+          animation-delay: 200ms;
+        }
       }
 
       /* cloak 中の inline-embed-watch: 親ホストの暗い背景を透かして白フラッシュを防ぐ */

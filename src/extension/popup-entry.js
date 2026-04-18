@@ -5790,7 +5790,11 @@ async function refresh() {
     return;
   }
   renderExtensionContextBanner(false);
-  setTimeout(revealPopupPrimaryOnce, 1200);
+  // 以前は 1200ms の保険だけに頼っていたが、稀に初期化パスが途中停止したとき
+  // "本体だけ空" が 1.2 秒以上も続くのが悪印象だったため短縮。CSS 側に 450ms の
+  // auto-reveal アニメーションを入れてあるので、この保険が発火しないときでも
+  // ユーザーが見えなくなることはない（二重の防衛）。
+  setTimeout(revealPopupPrimaryOnce, 400);
 
   // 世代番号は refresh の最初に確保する。放送切替で新しい refresh が走った後、古い refresh の
   // await から戻ってきた paintWatchPopupUi が新しい放送の描画を上書きしないよう、以降の paint は
@@ -9078,4 +9082,24 @@ if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initPopup);
 } else {
   initPopup();
+}
+
+// 最終安全網: initPopup や refresh が throw / 中断しても、window load 後に
+// 800ms（CSS の auto-reveal 後）で必ず cloak を外す。JS state に依らない
+// 2 重の防衛で「本体だけ空白」現象（Bug #3 系列）が再発しないようにする。
+if (typeof window !== 'undefined') {
+  const finalRevealFallback = () => {
+    setTimeout(() => {
+      try {
+        revealPopupPrimaryOnce();
+      } catch {
+        // no-op
+      }
+    }, 800);
+  };
+  if (document.readyState === 'complete') {
+    finalRevealFallback();
+  } else {
+    window.addEventListener('load', finalRevealFallback, { once: true });
+  }
 }
