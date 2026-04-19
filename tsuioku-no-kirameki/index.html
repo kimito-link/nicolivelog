@@ -885,6 +885,14 @@
         color:rgba(212,228,240,.72);
         font-size:clamp(.72rem,2.2vw,.8rem)
       }
+      .footer-note__links{
+        margin-top:10px;
+        display:flex;gap:18px;justify-content:center;flex-wrap:wrap;
+      }
+      .footer-note__links a{
+        color:rgba(212,228,240,.88);text-decoration:underline;text-underline-offset:3px;
+      }
+      .footer-note__links a:hover{color:#fff}
       .lp-policy-board{
         border:1px solid rgba(88,62,28,.12);
         border-radius:var(--r2);
@@ -2980,6 +2988,62 @@
         display:flex;align-items:center;justify-content:center;
         font-size:.62rem;font-weight:700;color:#94a3b8;
       }
+
+      /*
+       * Phase H: コメンター活発度色分け（拡張 v0.1.6 実装済み）
+       * 実機 popup.html の `.nl-story-userlane-cell[data-nl-activity]` と同じ意味で、
+       * アバターの左上に「どのくらい喋ってる人か」を示す小さなドットを出す。
+       *   vocal  = 暖色 : 3 件以上（活発）
+       *   light  = 緑   : 1〜2 件（発言あり）
+       *   casual = 出さない : 0 件
+       */
+      .lp-icon-crowd__cell[data-nl-activity]{position:relative}
+      .lp-icon-crowd__cell[data-nl-activity]::before{
+        content:'';
+        position:absolute;
+        left:6px;
+        top:6px;
+        width:10px;height:10px;
+        border-radius:999px;
+        border:1.5px solid rgba(255,252,247,.98);
+        box-sizing:border-box;
+        z-index:2;
+        pointer-events:none;
+      }
+      .lp-icon-crowd__cell[data-nl-activity='vocal']::before{
+        background:#ffb347;
+        box-shadow:0 0 6px rgba(255,179,71,.7);
+      }
+      .lp-icon-crowd__cell[data-nl-activity='light']::before{
+        background:#6ec077;
+      }
+      .lp-icon-crowd__cell[data-nl-activity='casual']::before{display:none}
+      .lp-icon-crowd__cell--vocal-bg{
+        background:color-mix(in srgb,#ffb347 14%,rgba(255,252,247,.96));
+      }
+
+      /* 活発度の凡例（りんく/こん太/たぬ姉の段とは別の軸、という位置づけを示す小さな一覧） */
+      .lp-activity-legend{
+        display:flex;flex-wrap:wrap;gap:10px 14px;
+        margin:12px 0 0;padding:10px 12px;
+        border-radius:14px;
+        background:rgba(255,252,247,.92);
+        border:1px solid rgba(88,62,28,.12);
+      }
+      .lp-activity-legend__item{
+        display:flex;align-items:center;gap:8px;
+        font-size:.74rem;line-height:1.45;color:var(--text-secondary);
+        min-width:0;
+      }
+      .lp-activity-legend__dot{
+        width:12px;height:12px;border-radius:999px;flex-shrink:0;
+        border:1.5px solid rgba(255,252,247,.98);
+        box-shadow:0 0 0 1px rgba(88,62,28,.18);
+      }
+      .lp-activity-legend__dot--vocal{background:#ffb347;box-shadow:0 0 6px rgba(255,179,71,.65),0 0 0 1px rgba(88,62,28,.18)}
+      .lp-activity-legend__dot--light{background:#6ec077}
+      .lp-activity-legend__dot--casual{background:transparent;border-style:dashed;border-color:rgba(88,62,28,.35)}
+      .lp-activity-legend__item strong{color:var(--ink)}
       .lp-icon-crowd__id{
         font-size:.62rem;line-height:1.3;font-weight:600;
         color:var(--ink);
@@ -7501,32 +7565,32 @@
                   </div>
                 </div>
                 <div class="lp-icon-crowd__band-cells" role="list" aria-label="優先1・個人サムネと表示名がそろった例">
-                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--rink" role="listitem">
+                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--rink lp-icon-crowd__cell--vocal-bg" role="listitem" data-nl-activity="vocal" title="活発（5件）">
                   <div class="lp-icon-crowd__avatar"><img src="../extension/images/yukkuri-charactore-english/konta/kitsune-yukkuri-smile-mouth-open.png" width="40" height="40" alt="" decoding="async"></div>
                   <span class="lp-icon-crowd__id">124751981</span>
                   <span class="lp-icon-crowd__nick">じゅんちー</span>
                 </div>
-                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--rink" role="listitem">
+                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--rink lp-icon-crowd__cell--vocal-bg" role="listitem" data-nl-activity="vocal" title="活発（4件）">
                   <div class="lp-icon-crowd__avatar"><img src="../extension/images/yukkuri-charactore-english/link/link-yukkuri-smile-mouth-open.png" width="40" height="40" alt="" decoding="async"></div>
                   <span class="lp-icon-crowd__id">88210441</span>
                   <span class="lp-icon-crowd__nick">nora</span>
                 </div>
-                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--rink" role="listitem">
+                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--rink" role="listitem" data-nl-activity="light" title="発言あり（2件）">
                   <div class="lp-icon-crowd__avatar"><img src="../extension/images/yukkuri-charactore-english/konta/kitsune-yukkuri-half-eyes-mouth-open.png" width="40" height="40" alt="" decoding="async"></div>
                   <span class="lp-icon-crowd__id">30492811</span>
                   <span class="lp-icon-crowd__nick">えだ</span>
                 </div>
-                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--rink" role="listitem">
+                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--rink" role="listitem" data-nl-activity="light" title="発言あり（1件）">
                   <div class="lp-icon-crowd__avatar"><img src="../extension/images/yukkuri-charactore-english/tanunee/tanuki-yukkuri-smile-mouth-open.png" width="40" height="40" alt="" decoding="async"></div>
                   <span class="lp-icon-crowd__id">guest_07</span>
                   <span class="lp-icon-crowd__nick">ゲスト</span>
                 </div>
-                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--rink" role="listitem">
+                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--rink" role="listitem" data-nl-activity="light" title="発言あり（2件）">
                   <div class="lp-icon-crowd__avatar"><img src="../extension/images/yukkuri-charactore-english/link/link-yukkuri-smile-mouth-closed.png" width="40" height="40" alt="" decoding="async"></div>
                   <span class="lp-icon-crowd__id">9912033</span>
                   <span class="lp-icon-crowd__nick">みかん</span>
                 </div>
-                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--rink" role="listitem">
+                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--rink" role="listitem" data-nl-activity="light" title="発言あり（1件）">
                   <div class="lp-icon-crowd__avatar"><img src="../extension/images/yukkuri-charactore-english/link/link-yukkuri-normal-mouth-open.png" width="40" height="40" alt="" decoding="async"></div>
                   <span class="lp-icon-crowd__id">4488120</span>
                   <span class="lp-icon-crowd__nick">たろう</span>
@@ -7547,42 +7611,42 @@
                   </div>
                 </div>
                 <div class="lp-icon-crowd__band-cells" role="list" aria-label="優先2・片方まで取れた例">
-                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--konta" role="listitem">
+                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--konta lp-icon-crowd__cell--vocal-bg" role="listitem" data-nl-activity="vocal" title="活発（3件）">
                   <div class="lp-icon-crowd__avatar"><img src="../extension/images/yukkuri-charactore-english/konta/kitsune-yukkuri-half-eyes-mouth-closed.png" width="40" height="40" alt="" decoding="async"></div>
                   <span class="lp-icon-crowd__id">16055877</span>
                   <span class="lp-icon-crowd__nick">（未取得）</span>
                 </div>
-                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--konta" role="listitem">
+                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--konta" role="listitem" data-nl-activity="light" title="発言あり（1件）">
                   <div class="lp-icon-crowd__avatar"><img src="../extension/images/yukkuri-charactore-english/link/link-yukkuri-half-eyes-mouth-closed.png" width="40" height="40" alt="" decoding="async"></div>
                   <span class="lp-icon-crowd__id">77882104</span>
                   <span class="lp-icon-crowd__nick">（未取得）</span>
                 </div>
-                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--konta" role="listitem">
+                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--konta" role="listitem" data-nl-activity="light" title="発言あり（1件）">
                   <div class="lp-icon-crowd__avatar"><img src="../extension/images/yukkuri-charactore-english/tanunee/tanuki-yukkuri-smile-mouth-open.png" width="40" height="40" alt="" decoding="async"></div>
                   <span class="lp-icon-crowd__id">a:nawQ-T0PpXx3iMsz</span>
                   <span class="lp-icon-crowd__nick">匿名</span>
                 </div>
-                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--konta" role="listitem">
+                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--konta" role="listitem" data-nl-activity="light" title="発言あり（2件）">
                   <div class="lp-icon-crowd__avatar lp-icon-crowd__avatar--silhouette" aria-hidden="true">●</div>
                   <span class="lp-icon-crowd__id">a:-yM0…</span>
                   <span class="lp-icon-crowd__nick">匿名</span>
                 </div>
-                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--konta" role="listitem">
+                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--konta" role="listitem" data-nl-activity="light" title="発言あり（1件）">
                   <div class="lp-icon-crowd__avatar lp-icon-crowd__avatar--silhouette" aria-hidden="true">●</div>
                   <span class="lp-icon-crowd__id">a:0u26…</span>
                   <span class="lp-icon-crowd__nick">匿名</span>
                 </div>
-                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--konta" role="listitem">
+                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--konta" role="listitem" data-nl-activity="light" title="発言あり（1件）">
                   <div class="lp-icon-crowd__avatar lp-icon-crowd__avatar--silhouette" aria-hidden="true">●</div>
                   <span class="lp-icon-crowd__id">a:xGHr…</span>
                   <span class="lp-icon-crowd__nick">匿名</span>
                 </div>
-                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--konta" role="listitem">
+                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--konta" role="listitem" data-nl-activity="light" title="発言あり（2件）">
                   <div class="lp-icon-crowd__avatar lp-icon-crowd__avatar--silhouette" aria-hidden="true">●</div>
                   <span class="lp-icon-crowd__id">a:El_UaV2k…</span>
                   <span class="lp-icon-crowd__nick">匿名</span>
                 </div>
-                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--konta" role="listitem">
+                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--konta" role="listitem" data-nl-activity="light" title="発言あり（1件）">
                   <div class="lp-icon-crowd__avatar"><img src="../extension/images/yukkuri-charactore-english/tanunee/tanuki-yukkuri-smile-mouth-closed.png" width="40" height="40" alt="" decoding="async"></div>
                   <span class="lp-icon-crowd__id">204881</span>
                   <span class="lp-icon-crowd__nick">匿名</span>
@@ -7603,22 +7667,22 @@
                   </div>
                 </div>
                 <div class="lp-icon-crowd__band-cells" role="list" aria-label="優先3・取得がいちばん薄い例">
-                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--tanu" role="listitem">
+                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--tanu" role="listitem" data-nl-activity="light" title="発言あり（1件）">
                   <div class="lp-icon-crowd__avatar lp-icon-crowd__avatar--missing" aria-hidden="true">?</div>
                   <span class="lp-icon-crowd__id">715502</span>
                   <span class="lp-icon-crowd__nick">匿名</span>
                 </div>
-                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--tanu" role="listitem">
+                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--tanu" role="listitem" data-nl-activity="light" title="発言あり（2件）">
                   <div class="lp-icon-crowd__avatar lp-icon-crowd__avatar--missing" aria-hidden="true">?</div>
                   <span class="lp-icon-crowd__id">a:b7Kq…mZ</span>
                   <span class="lp-icon-crowd__nick">匿名</span>
                 </div>
-                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--tanu" role="listitem">
+                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--tanu" role="listitem" data-nl-activity="light" title="発言あり（1件）">
                   <div class="lp-icon-crowd__avatar lp-icon-crowd__avatar--missing" aria-hidden="true">?</div>
                   <span class="lp-icon-crowd__id">88001233</span>
                   <span class="lp-icon-crowd__nick">匿名</span>
                 </div>
-                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--tanu" role="listitem">
+                <div class="lp-icon-crowd__cell lp-icon-crowd__cell--tanu" role="listitem" data-nl-activity="light" title="発言あり（1件）">
                   <div class="lp-icon-crowd__avatar lp-icon-crowd__avatar--missing" aria-hidden="true">?</div>
                   <span class="lp-icon-crowd__id">662901</span>
                   <span class="lp-icon-crowd__nick">（未取得）</span>
@@ -7642,6 +7706,66 @@
               </div>
               <p class="lp-dev-grid-mock__debug" aria-label="架空の取得診断行">avatar保存 26/286 · uid 166/286 · nickname 240/286 · 公式コメント比 54%（見本）</p>
             </div>
+          </div>
+
+          <div class="board fade d2" id="lp-commenter-activity" style="margin-top:var(--space-md)" data-lp-feature="commenter-activity">
+            <h3>コメント回数で色分け（活発度）― v0.1.6 で追加</h3>
+            <p>
+              上の<strong>りんく／こん太／たぬ姉の段</strong>は「<strong>どのくらい情報がそろっているか</strong>」の軸でした（個人サムネ・表示名がそろっているほど上の段）。
+              ここから加わる「<strong>活発度の色分け</strong>」はそれとは<strong>別の軸</strong>で、「<strong>この放送でそのユーザーが何回コメントしたか</strong>」だけを見て、アイコンの<strong>左上に小さなドット</strong>を出します。段は混ぜ替えません。
+            </p>
+
+            <div class="yukkuri-thread" style="margin-top:var(--space-sm)">
+              <div class="y-row">
+                <div class="speaker">
+                  <img src="../extension/images/yukkuri-charactore-english/link/link-yukkuri-smile-mouth-open.png" alt="ゆっくりりんく" width="92" height="92" decoding="async">
+                  <span>ゆっくりりんく</span>
+                </div>
+                <div class="bubble">
+                  ドットは段とは関係ないのだ。<strong>りんく段の人にも</strong>、<strong>こん太段の人にも</strong>、<strong>たぬ姉段の人にも</strong>、同じルールで付くのだ。<strong>放送の中で何回コメントしたか</strong>、それだけを見ているのだ。
+                </div>
+              </div>
+              <div class="y-row reverse">
+                <div class="bubble">
+                  既定では「<strong>3 件以上で活発（暖色）</strong>」「<strong>1〜2 件で発言あり（緑）</strong>」「<strong>0 件はドットなし</strong>」なのだ。1 回つぶやいただけの人と、ずっと盛り上げてる人が一目で見分けられるのだ。
+                </div>
+                <div class="speaker">
+                  <img src="../extension/images/yukkuri-charactore-english/konta/kitsune-yukkuri-half-eyes-mouth-open.png" alt="ゆっくりこん太" width="92" height="92" decoding="async">
+                  <span>ゆっくりこん太</span>
+                </div>
+              </div>
+              <div class="y-row">
+                <div class="speaker">
+                  <img src="../extension/images/yukkuri-charactore-english/tanunee/tanuki-yukkuri-half-eyes-mouth-open.png" alt="ゆっくりたぬ姉" width="92" height="92" decoding="async">
+                  <span>ゆっくりたぬ姉</span>
+                </div>
+                <div class="bubble">
+                  <strong>段は「情報がどのくらい取れたか」</strong>、<strong>ドットは「その放送で何回喋ったか」</strong>なのだ。<strong>2 つの軸を重ねて</strong>読めるのが、今回の色分けの狙いなのだ。
+                </div>
+              </div>
+            </div>
+
+            <div class="lp-activity-legend" aria-label="活発度ドットの凡例">
+              <div class="lp-activity-legend__item">
+                <span class="lp-activity-legend__dot lp-activity-legend__dot--vocal" aria-hidden="true"></span>
+                <span><strong>活発</strong>（暖色ドット＋うっすら暖色背景）：3 件以上</span>
+              </div>
+              <div class="lp-activity-legend__item">
+                <span class="lp-activity-legend__dot lp-activity-legend__dot--light" aria-hidden="true"></span>
+                <span><strong>発言あり</strong>（緑ドット）：1〜2 件</span>
+              </div>
+              <div class="lp-activity-legend__item">
+                <span class="lp-activity-legend__dot lp-activity-legend__dot--casual" aria-hidden="true"></span>
+                <span><strong>ドットなし</strong>：0 件（今の仕様では段に乗らない想定）</span>
+              </div>
+            </div>
+
+            <p style="margin-top:var(--space-sm);font-size:.82rem;color:var(--text-secondary)">
+              上のりんく／こん太／たぬ姉段の見本にも、同じドットをうっすら重ねています。拡張の実機では、アイコンに<strong>マウスを重ねる</strong>と「活発（5件）」「発言あり（2件）」のように件数も吹き出しで出るのだ（スクリーンリーダーでも<strong>件数まで読み上げ</strong>されるのだ）。
+            </p>
+            <p style="margin-top:var(--space-xs);font-size:.76rem;color:var(--text-secondary)">
+              ※ この色分けは「この放送でコメントした人」に対してだけ行います。<strong>無言で観ているだけの人</strong>（サイレント観戦）は別の仕組みで把握する必要があり、今後の検討対象です。
+            </p>
           </div>
 
           <div class="board lp-top-commenters-board fade d3" id="lp-top-commenters" style="margin-top:var(--space-md)">
@@ -9785,6 +9909,7 @@
     <footer class="footer-note">
       <div class="shell">
         <div>追憶の煌めき v0.1.0 ― Kimito-Link Project</div>
+        <div class="footer-note__links"><a href="privacy.html">プライバシーポリシー</a></div>
       </div>
     </footer>
 
