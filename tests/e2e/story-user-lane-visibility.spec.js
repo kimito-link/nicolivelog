@@ -121,20 +121,6 @@ test.describe('応援レーン可視性の契約（Phase 0 baseline）', () => {
     const stack = popup.locator('#sceneStoryUserLaneStack');
     await expect(stack).toBeVisible({ timeout: 20_000 });
 
-    // link / konta / tanu のどこかに非匿名 userId のタイルが 1 つ以上ある
-    // （個別列の位置は現行 / 新設計で変わり得るので、3 段合算で検証）
-    // 非匿名 userId のタイル（'132035068' もしくは '13318026'）が少なくとも 1 つ存在
-    const anyNonAnonymousTile = popup.locator(
-      '#sceneStoryUserLaneLink a[data-user-id^="1"], ' +
-        '#sceneStoryUserLaneKonta a[data-user-id^="1"], ' +
-        '#sceneStoryUserLaneTanu a[data-user-id^="1"], ' +
-        // data-user-id 属性が付いていないビルドのためのフォールバック: img の alt や title
-        '#sceneStoryUserLaneLink img[alt*="ケラ"], ' +
-        '#sceneStoryUserLaneKonta img[alt*="ケラ"], ' +
-        '#sceneStoryUserLaneLink img[alt*="ライス"], ' +
-        '#sceneStoryUserLaneKonta img[alt*="ライス"]'
-    );
-
     // 厳密には「非匿名ユーザー（a: で始まらない userId）のタイル数 >= 1」を期待。
     // 現行実装では data-user-id 属性を付けていない可能性があるため、
     // 「3 段合計の tile 数が seed 数 >= 2 を下回らない」という緩い不変も併用する。
