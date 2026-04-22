@@ -614,7 +614,15 @@ test.describe('lp-preview', () => {
     const target = page.locator('#lp-voice-konta-userpage-mock');
     await expect(target).toBeVisible();
     await expect(target).toHaveAttribute('data-lp-feature', 'voice-comment-konta-userpage-mock');
-    await expect(page.getByRole('heading', { name: /ゆっくりこん太/ })).toBeVisible();
+    /*
+     * LP 文言整理で alt / 本文の「ゆっくりこん太」→「こん太」への変更後、
+     * /こん太/ 部分一致だと複数見出しに当たって strict mode 違反になる
+     * （例: 「りんく・こん太・たぬ姉の解説」等）。
+     * このテストはハッシュ先のキャラ紹介カードが開いたかどうかを見たいので、
+     * 見出し ID で一意に locate して exact 一致に切り替える。
+     */
+    await expect(page.locator('#lp-voice-konta-userpage-mock-heading')).toBeVisible();
+    await expect(page.locator('#lp-voice-konta-userpage-mock-heading')).toHaveText('こん太');
   });
 
   test('HTML保存: #html-save にサムネ付き来場見本があり、390幅ではみ出しなし', async ({ page }) => {
