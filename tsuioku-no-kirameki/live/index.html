@@ -1,0 +1,336 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+    <title>いま支えている人 ― 君斗りんくの追憶のきらめき</title>
+
+    <link rel="icon" href="../images/favicon.ico" sizes="any">
+    <link rel="icon" type="image/png" sizes="32x32" href="../images/favicon-32.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="../images/apple-touch-icon.png">
+
+    <meta name="description" content="ニコニコ生放送で、いまこの瞬間に配信を支えている人（ギフト・広告）のランキング。配信者ではなく『応援した人』を主役にして表示します。">
+    <meta name="theme-color" content="#f7f1e7">
+    <meta name="robots" content="index,follow">
+    <link rel="canonical" href="https://tsuioku-no-kirameki.com/live/">
+    <meta property="og:type" content="website">
+    <meta property="og:url" content="https://tsuioku-no-kirameki.com/live/">
+    <meta property="og:title" content="いま支えている人 ― 追憶のきらめき">
+    <meta property="og:description" content="いまこの瞬間、誰が配信を支えているか。">
+
+    <!--
+      ★このリポの静的ページは CSS を全部 inline で持つ(共通CSSファイルは0件)。
+        新規ページもそれに揃える(勝手に共通CSSを新設して散らかさない)。
+      ★配色は articles/ と同じものを使う。
+    -->
+    <style>
+      :root {
+        --bg: #f7f1e7;
+        --bg-soft: #f1e7da;
+        --line: #e8dac4;
+        --ink: #1a1208;
+        --ink-sub: #4f4338;
+        --accent: #c98e2b;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; padding: 0; }
+      body {
+        background: var(--bg);
+        color: var(--ink);
+        font-family: system-ui, -apple-system, 'Segoe UI', 'Hiragino Kaku Gothic ProN', Meiryo, sans-serif;
+        line-height: 1.7;
+        -webkit-font-smoothing: antialiased;
+      }
+      .wrap { max-width: 960px; margin: 0 auto; padding: 24px 16px 64px; }
+      header.page { border-bottom: 2px solid var(--line); padding-bottom: 16px; margin-bottom: 20px; }
+      .home { display: inline-block; font-size: .85rem; color: var(--ink-sub); text-decoration: none; margin-bottom: 8px; }
+      .home:hover { text-decoration: underline; }
+      h1 { font-size: clamp(1.4rem, 4vw, 2rem); margin: 0 0 6px; letter-spacing: .02em; }
+      .lede { margin: 0; color: var(--ink-sub); font-size: .95rem; }
+      .meta { margin-top: 10px; font-size: .82rem; color: var(--ink-sub); }
+      .meta b { color: var(--ink); font-weight: 600; }
+
+      .live { border: 1px solid var(--line); border-radius: 10px; background: #fff; margin: 16px 0; overflow: hidden; }
+      .live > h2 { margin: 0; padding: 12px 14px; font-size: .95rem; background: var(--bg-soft); border-bottom: 1px solid var(--line); }
+      .live > h2 a { color: var(--ink); text-decoration: none; }
+      .live > h2 a:hover { text-decoration: underline; }
+      .live > h2 .now { margin-left: .6em; font-size: .82rem; font-weight: 400; color: var(--ink-sub); white-space: nowrap; }
+      .cols { display: grid; grid-template-columns: 1fr; gap: 0; }
+      @media (min-width: 720px) { .cols { grid-template-columns: 1fr 1fr; } }
+      .col { padding: 12px 14px; }
+      .col + .col { border-top: 1px solid var(--line); }
+      @media (min-width: 720px) { .col + .col { border-top: 0; border-left: 1px solid var(--line); } }
+      .col h3 { margin: 0 0 8px; font-size: .82rem; color: var(--ink-sub); font-weight: 600; }
+      .col h3 .sum { color: var(--accent); }
+
+      ol.rank { list-style: none; margin: 0; padding: 0; }
+      ol.rank li { display: flex; align-items: center; gap: 8px; padding: 5px 0; border-bottom: 1px dotted var(--line); }
+      ol.rank li:last-child { border-bottom: 0; }
+      .no { flex: 0 0 1.6em; text-align: right; font-variant-numeric: tabular-nums; color: var(--ink-sub); font-size: .85rem; }
+      .no.top { color: var(--accent); font-weight: 700; }
+      .ava { flex: 0 0 auto; width: 26px; height: 26px; border-radius: 50%; object-fit: cover; background: var(--bg-soft); display: inline-block; }
+      .nm { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .9rem; }
+      .nm a { color: var(--ink); text-decoration: none; }
+      .nm a:hover { text-decoration: underline; }
+      .pt { flex: 0 0 auto; font-variant-numeric: tabular-nums; font-size: .85rem; color: var(--ink-sub); }
+      .empty { color: var(--ink-sub); font-size: .85rem; margin: 0; }
+
+      /*
+        ★「動いている感じ」を出す。
+        ★POP(extension/popup.html の nl-story-pop)と同じ流儀にする:
+          scale は 1.045 程度までの【控えめ】な値。派手にしない。
+        ★光らせるのは【実際に数字が変わった行だけ】。全体を光らせると
+          「変わっていないのに動いて見える」＝嘘になるうえ、目が疲れる。
+      */
+      @keyframes nl-live-pop {
+        0% { transform: scale(1); background-color: transparent; }
+        40% { transform: scale(1.045); background-color: rgba(201, 142, 43, .16); }
+        100% { transform: scale(1); background-color: transparent; }
+      }
+      ol.rank li.is-bumped { animation: nl-live-pop 900ms ease-out; transform-origin: left center; }
+      /* ★新しく入ってきた人は、やわらかく現れる。 */
+      @keyframes nl-live-enter {
+        0% { opacity: 0; transform: translateY(-4px); }
+        100% { opacity: 1; transform: translateY(0); }
+      }
+      ol.rank li.is-new { animation: nl-live-enter 420ms ease-out; }
+      /* ★動きを減らす設定の人には出さない(既存ページと同じ配慮)。 */
+      @media (prefers-reduced-motion: reduce) {
+        ol.rank li.is-bumped, ol.rank li.is-new { animation: none; }
+      }
+
+      .note { margin-top: 28px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-soft); font-size: .82rem; color: var(--ink-sub); }
+      .note p { margin: 0 0 6px; }
+      .note p:last-child { margin-bottom: 0; }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header class="page">
+        <a class="home" href="/">← 追憶のきらめき</a>
+        <h1>いま支えている人</h1>
+        <p class="lede">ニコニコ生放送で、いまこの瞬間に配信を支えている人。</p>
+        <p class="meta" id="meta">読み込み中…</p>
+      </header>
+
+      <main id="list"></main>
+
+      <div class="note">
+        <p>★このページは<b>配信者ではなく「応援した人」</b>を並べます。</p>
+        <p><b>ギフト・広告のランキング</b>（名前・順位・ポイント）は、ニコニコ生放送が公開しているものを<b>そのまま</b>出しています。当サイトが独自に集計・改変した値ではありません。</p>
+        <p>★<b>「約○人（推定）」と並び順だけは当サイトの推定値です。</b>ニコニコ生放送に同時視聴数を知る手段が無いため、公開されている<b>累計の来場者数</b>と<b>放送の経過時間</b>から見積もっています（時間が経つほど視聴者が入れ替わる前提の減衰モデル）。実際の人数とは差があります。</p>
+        <p>放送中の番組のみを対象にしています。表示は定期的に更新されます。</p>
+      </div>
+    </div>
+
+    <script>
+      // ★外部依存を増やさないため素の JS で書く(このディレクトリはビルド対象外＝置くだけ)。
+      var elList = document.getElementById('list');
+      var elMeta = document.getElementById('meta');
+
+      var ESC_MAP = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+      function esc(s) {
+        return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return ESC_MAP[c]; });
+      }
+      function num(n) { return (Number(n) || 0).toLocaleString('ja-JP'); }
+
+      // ★http(s) 以外を弾く。
+      //   esc() は < > " ' を実体参照にするだけなので、javascript: で始まる文字列は
+      //   エスケープしても href として【そのまま有効】になる。
+      //   ★値の出どころはニコ生のAPIだが、外から来た値を無検証で href/src に入れない。
+      function safeHttpUrl(u) {
+        var v = String(u == null ? '' : u).trim();
+        return /^https?:\/\//i.test(v) ? v : '';
+      }
+
+      // ★行の形は koken(rankers) と nicoad(ranking) で違う。ここで1つに揃える。
+      function rowsFromGift(g) {
+        var a = (g && Array.isArray(g.rankers)) ? g.rankers : [];
+        return a.map(function (r) {
+          return {
+            rank: r.rank, name: r.supporterName, point: r.contribution,
+            avatar: r.supporterThumbnailUrl, url: r.userPageUrl
+          };
+        });
+      }
+      function rowsFromAd(d) {
+        var a = (d && Array.isArray(d.ranking)) ? d.ranking : [];
+        return a.map(function (r) {
+          return {
+            rank: r.rank, name: r.advertiserName, point: r.totalContribution,
+            avatar: r.thumbnailUrl, url: r.userPageUrl
+          };
+        });
+      }
+
+      function renderRows(rows, unit, liveId, kind) {
+        if (!rows.length) return '<p class="empty">まだいません</p>';
+        var html = rows.map(function (r) {
+          var n = Number(r.rank) || 0;
+          var cls = rowChange(rowKey(liveId, kind, r), Number(r.point) || 0);
+          var href = safeHttpUrl(r.url);
+          var nameHtml = href
+            ? '<a href="' + esc(href) + '" target="_blank" rel="noopener noreferrer">' + esc(r.name) + '</a>'
+            : esc(r.name);
+          // ★ニコ生は「アイコン未設定」に defaults/blank.jpg を返すが、これは実際には
+          //   読めない(実測: 63枚中4枚が失敗し、全部これだった)。★そのまま <img> にすると
+          //   壊れた画像アイコンが出るので、最初から素の丸(span)にする。
+          // ★inline onerror は使わない: このリポの既存ページに1件も無く(実測0件)、
+          //   CSP を足したときに黙って壊れる。読み込み失敗の面倒は下の bindAvatarFallback が見る。
+          var avatarSrc = safeHttpUrl(r.avatar);
+          var isBlank = /\/defaults\/blank\.jpg(\?|$)/.test(avatarSrc);
+          var ava = (avatarSrc && !isBlank)
+            ? '<img class="ava" src="' + esc(avatarSrc) + '" alt="" loading="lazy" decoding="async" referrerpolicy="no-referrer">'
+            : '<span class="ava"></span>';
+          return '<li' + (cls ? ' class="' + cls + '"' : '') + '><span class="no' + (n > 0 && n <= 3 ? ' top' : '') + '">' + (n || '-') + '</span>'
+            + ava + '<span class="nm">' + nameHtml + '</span>'
+            + '<span class="pt">' + num(r.point) + unit + '</span></li>';
+        }).join('');
+        return '<ol class="rank">' + html + '</ol>';
+      }
+
+      // ★読み込みに失敗したアイコンを素の丸へ落とす(壊れた画像アイコンを出さない)。
+      //   inline onerror を書かずに済ませるため、描画後に一度だけ張る。
+      function bindAvatarFallback(root) {
+        var imgs = root.querySelectorAll('img.ava');
+        for (var i = 0; i < imgs.length; i++) {
+          imgs[i].addEventListener('error', function () {
+            var span = document.createElement('span');
+            span.className = 'ava';
+            if (this.parentNode) this.parentNode.replaceChild(span, this);
+          }, { once: true });
+        }
+      }
+
+      // ★収集が古くなったことを画面で言う。
+      //   しきい値30分の根拠(★数字を発明しない): 収集は GitHub Actions の cron で
+      //   5分間隔に設定しているが、GitHub は負荷分散で実行を遅らせる仕様。
+      //   ★実測(2026-09-05)では 8〜13分間隔で動いていた。その2倍以上を「異常」とする。
+      var STALE_MIN = 30;
+      function freshnessText(capturedAt) {
+        var t = Number(capturedAt) || 0;
+        if (!t) return '';
+        var min = Math.floor((Date.now() - t) / 60000);
+        if (min < 0) return '';                 // ★時計ずれ。嘘を書くより何も言わない
+        if (min >= STALE_MIN) return '・⚠ ' + min + '分前の情報です（更新が止まっている可能性があります）';
+        if (min < 1) return '・たった今';
+        return '・' + min + '分前';
+      }
+
+      // ★並び順: 推定同時視聴が多い順。
+      //
+      //   ★ニコ生には【同時視聴数の API が無い】。これは推測ではなく、
+      //     この製品の src/lib/concurrentEstimate.js が実測の末に明記していること:
+      //     「ニコ生には同時接続 API がないため、複数の統計指標から推定する」
+      //   ⟹ 取れるのは【累計の来場者数】。そのまま並べると長時間配信が上に居座る。
+      //
+      //   ★式は発明しない。concurrentEstimate.js の Signal B(滞留率法)と同じものを使う:
+      //     rate = max(0.08, 0.48 × exp(-0.005 × 経過分))
+      //     推定同時視聴 = 累計来場者 × rate
+      //   ★値も同ファイルの retention 定義(peak .48 / decay .005 / floor .08 / fallback .4)と同一。
+      //   ★同ファイルの Signal A(アクティブコメンター法)は配信を実際に見ないと取れないので、
+      //     サーバから集めるこのページでは使えない。だから B だけを使う。
+      var RETENTION = { peak: 0.48, decay: 0.005, floor: 0.08, fallback: 0.4 };
+      function retentionRate(ageMin) {
+        if (typeof ageMin !== 'number' || !isFinite(ageMin) || ageMin < 0) return RETENTION.fallback;
+        return Math.max(RETENTION.floor, RETENTION.peak * Math.exp(-RETENTION.decay * ageMin));
+      }
+      function estimateConcurrent(l) {
+        var visitors = Number(l && l.watchCount) || 0;
+        if (!visitors) return 0;
+        var begin = Number(l && l.beginTime) || 0;
+        // ★beginTime が無ければ経過不明 ⟹ fallback が効く(retentionRate の仕様どおり)。
+        var ageMin = begin ? (Date.now() / 1000 - begin) / 60 : NaN;
+        return Math.round(visitors * retentionRate(ageMin));
+      }
+
+      // ★前回の値を覚えて「何が変わったか」を出す。
+      //   ★変わっていない行は光らせない。全部光らせると「動いて見える」だけの嘘になる。
+      var _prevPoints = {};   // "lv|種別|名前" -> ポイント
+      var _seenKeys = {};     // 初回描画で全部を「新規」にしないための記録
+      var _firstPaint = true;
+      // ★今回の描画で使ったキーだけを集める。描画の最後に古い記録を捨てる。
+      //   ★これが無いと配信が入れ替わるたびにキーが増え続け、開きっぱなしのタブで
+      //   数日〜数週間かけて数万件まで膨らむ(サーバ側には影響しないが端末が重くなる)。
+      var _touched = null;
+
+      function rowKey(liveId, kind, r) {
+        return liveId + '|' + kind + '|' + String(r.name || '');
+      }
+      /** その行が今回どう変わったか。'' / 'is-new' / 'is-bumped' */
+      function rowChange(key, point) {
+        var prev = _prevPoints[key];
+        _prevPoints[key] = point;
+        if (_touched) _touched[key] = point;
+        if (_firstPaint) { _seenKeys[key] = true; return ''; }
+        if (!_seenKeys[key]) { _seenKeys[key] = true; return 'is-new'; }
+        return (prev !== undefined && point > prev) ? 'is-bumped' : '';
+      }
+
+      function render(data) {
+        _touched = Object.create(null);   // ★この描画で実際に出た行だけを集める
+        var lives = (data && Array.isArray(data.lives)) ? data.lives : [];
+        if (!lives.length) {
+          elMeta.textContent = 'いま表示できる配信がありません。';
+          elList.innerHTML = '';
+          return;
+        }
+        // ★「何分前か」を出す。時刻だけだと見る人が暗算しないと鮮度が分からない。
+        // ★さらに重要なのは【古くなったことに気づける】こと。収集が止まったとき、
+        //   時刻だけ出す作りだと古い値が黙って表示され続け、誰も気づかない。
+        //   ⟹ しきい値を超えたら画面上で明示する(機械が見ている所だけが動く)。
+        elMeta.innerHTML = '放送中 <b>' + lives.length + '</b> 件' + esc(freshnessText(data.capturedAt));
+
+        // ★賑わっている順に並べ替える(元の配列は壊さない)。
+        var sorted = lives.slice().sort(function (a, b) { return estimateConcurrent(b) - estimateConcurrent(a); });
+
+        elList.innerHTML = sorted.map(function (l) {
+          var gift = rowsFromGift(l.gift);
+          var ad = rowsFromAd(l.ad);
+          var now = estimateConcurrent(l);
+          // ★「推定」と明記する。ニコ生が出している数字だと誤解させない。
+          var head = now
+            ? '<span class="now">👥 約' + num(now) + '人（推定）</span>'
+            : '';
+          return '<section class="live">'
+            + '<h2><a href="https://live.nicovideo.jp/watch/' + esc(l.liveId) + '" target="_blank" rel="noopener noreferrer">'
+            + esc(l.title || l.liveId) + '</a>' + head + '</h2>'
+            + '<div class="cols">'
+            + '<div class="col"><h3>ギフトで支えた人 <span class="sum">' + num(l.giftTotal) + 'pt</span></h3>'
+            + renderRows(gift, 'pt', l.liveId, 'gift') + '</div>'
+            + '<div class="col"><h3>広告で支えた人 <span class="sum">' + num(l.adTotal) + 'pt</span></h3>'
+            + renderRows(ad, 'pt', l.liveId, 'ad') + '</div>'
+            + '</div></section>';
+        }).join('');
+        bindAvatarFallback(elList);
+        // ★今回出なかった行の記録を捨てる(青天井を防ぐ)。
+        //   ★_seenKeys も同じ集合に揃える。片方だけ残すと「新規」の判定がズレる。
+        _prevPoints = _touched;
+        _seenKeys = Object.create(null);
+        for (var k in _touched) _seenKeys[k] = true;
+        _touched = null;
+        // ★初回は全行が「新規」になってしまうので、ここで初めて通常運転にする。
+        _firstPaint = false;
+      }
+
+      function load() {
+        fetch('/api/live-ranking', { cache: 'no-store' })
+          .then(function (r) {
+            if (r.status === 404) throw new Error('まだ集計されていません。しばらくお待ちください。');
+            if (!r.ok) throw new Error('読み込みに失敗しました (' + r.status + ')');
+            return r.json();
+          })
+          .then(render)
+          .catch(function (e) { elMeta.textContent = String(e && e.message ? e.message : e); });
+      }
+      load();
+      // ★見ていないときは止める(無駄に叩かない)。
+      setInterval(function () { if (!document.hidden) load(); }, 60000);
+      // ★裏タブの間は上の更新が止まるので、戻ってきた瞬間に取り直す。
+      //   これが無いと「何分前」が裏に居た時間ぶん古いまま最初に目に入る。
+      document.addEventListener('visibilitychange', function () {
+        if (!document.hidden) load();
+      });
+    </script>
+  </body>
+</html>
